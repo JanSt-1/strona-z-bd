@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>System Obsługi Zgłoszeń Serwisowych (React)</title>
+    <title>System Obsługi Zgłoszeń Serwisowych</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -16,19 +16,19 @@
 
     <style>
         :root {
-            --bg-color: #0b0f19;
-            --card-bg: rgba(22, 30, 49, 0.75);
-            --card-border: rgba(255, 255, 255, 0.08);
-            --primary: #3b82f6;
-            --primary-hover: #2563eb;
-            --accent: #06b6d4;
-            --text-main: #f1f5f9;
-            --text-muted: #94a3b8;
+            --bg-color: #025810;
+            --card-bg: rgba(0, 71, 30, 0.397);
+            --card-border: rgba(0, 196, 26, 0.596);
+            --primary: #005c1f;
+            --primary-hover: #005c1f;
+            --accent: #002911;
+            --text-main: #000000;
+            --text-muted: #121416;
             --success: #10b981;
             --warning: #f59e0b;
             --danger: #ef4444;
-            --input-bg: rgba(15, 23, 42, 0.6);
-            --input-border: rgba(255, 255, 255, 0.12);
+            --input-bg: rgb(255, 255, 255);
+            --input-border: rgba(0, 129, 17, 0.12);
         }
 
         * {
@@ -39,23 +39,27 @@
         }
 
         body {
-            background: radial-gradient(circle at 10% 20%, #172554 0%, #0b0f19 90%);
+            background-color: rgba(233, 230, 230, 0.966);
             color: var(--text-main);
             min-height: 100vh;
-            padding: 2rem 1rem;
+            padding: 0;
         }
 
         .container {
             max-width: 1100px;
             margin: 0 auto;
+            padding: 0 1rem 2rem 1rem;
         }
 
         header {
+            background-color: #005212;
             display: flex;
+            width: 100%;
+            height: 8vh;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 2.5rem;
-            padding-bottom: 1.25rem;
+            padding: 1.25rem 3rem 1.25rem 2rem;
             border-bottom: 1px solid var(--card-border);
         }
 
@@ -73,7 +77,7 @@
             display: grid;
             place-items: center;
             font-size: 1.25rem;
-            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+            box-shadow: 0 4px 15px rgba(0, 39, 20, 0.3);
         }
 
         .brand h1 {
@@ -104,7 +108,7 @@
         .nav-tabs {
             display: flex;
             gap: 0.5rem;
-            background: rgba(15, 23, 42, 0.6);
+            background: rgba(49, 241, 113, 0.6);
             padding: 4px;
             border-radius: 8px;
             border: 1px solid var(--card-border);
@@ -125,7 +129,7 @@
         .nav-btn.active {
             background: var(--primary);
             color: #fff;
-            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+            box-shadow: 0 2px 8px rgba(59, 246, 90, 0.35);
         }
 
         .card {
@@ -181,7 +185,7 @@
             font-size: 0.82rem;
             font-weight: 500;
             margin-bottom: 0.4rem;
-            color: #cbd5e1;
+            color: #151616;
         }
 
         input,
@@ -191,7 +195,7 @@
             border: 1px solid var(--input-border);
             border-radius: 8px;
             padding: 0.75rem 0.9rem;
-            color: #fff;
+            color: #000000;
             font-size: 0.9rem;
             outline: none;
             transition: border-color 0.2s;
@@ -200,7 +204,7 @@
         input:focus,
         textarea:focus {
             border-color: var(--primary);
-            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+            box-shadow: 0 0 0 2px rgba(1, 68, 18, 0.829);
         }
 
         textarea {
@@ -223,7 +227,7 @@
             cursor: pointer;
             transition: all 0.2s;
             margin-top: 1rem;
-            box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);
+            box-shadow: 0 4px 14px rgb(0, 150, 12);
         }
 
         .btn-submit:hover:not(:disabled) {
@@ -278,7 +282,7 @@
         .btn-logout {
             background: rgba(239, 68, 68, 0.15);
             border: 1px solid rgba(239, 68, 68, 0.3);
-            color: #f87171;
+            color: #ff0000;
             padding: 0.45rem 0.9rem;
             border-radius: 6px;
             cursor: pointer;
@@ -303,7 +307,7 @@
         }
 
         th {
-            background: rgba(15, 23, 42, 0.8);
+            background: rgba(17, 206, 33, 0.685);
             color: var(--text-muted);
             padding: 0.8rem 1rem;
             font-weight: 600;
@@ -449,14 +453,8 @@
             return (
                 <header>
                     <div className="brand">
-                        <div className="brand-icon">⚡</div>
-                        <div>
-                            <h1>
-                                Serwis-Tech
-                                <span className="react-badge">React 18</span>
-                            </h1>
-                            <p>System zgłoszeń serwisowych &amp; Panel zarządzania</p>
-                        </div>
+                        <img src="logo_mentor4.svg" width="200px" height="auto" alt="logo firmy">
+                        </img>
                     </div>
                     <div className="nav-tabs">
                         <button
@@ -954,16 +952,19 @@
             }
 
             return (
-                <div className="container">
+                <>
                     <Header activeTab={activeTab} setActiveTab={setActiveTab} />
-                    {activeTab === 'public' ? (
-                        <PublicTicketForm />
-                    ) : token ? (
-                        <Dashboard user={user} token={token} onLogout={handleLogout} />
-                    ) : (
-                        <LoginForm onLoginSuccess={handleLoginSuccess} />
-                    )}
-                </div>
+
+                    <main className="container">
+                        {activeTab === 'public' ? (
+                            <PublicTicketForm />
+                        ) : token ? (
+                            <Dashboard user={user} token={token} onLogout={handleLogout} />
+                        ) : (
+                            <LoginForm onLoginSuccess={handleLoginSuccess} />
+                        )}
+                    </main>
+                </>
             );
         }
 
