@@ -5,7 +5,7 @@ Projekt to pełny system backendowy i frontendowy do rejestracji i obsługi zgł
 Składa się z:
 - Serwera **Express.js** łączącego się asynchronicznie z bazą **MySQL** za pomocą puli połączeń (`mysql2/promise`).
 - Publicznego punktu przyjmowania zgłoszeń serwisowych (`POST /api/zgloszenia`).
-- Modułu uwierzytelniania pracowników/administratorów opartego o **JWT** (JSON Web Token) i haszowanie haseł **bcrypt** (`POST /api/login`).
+- Modułu uwierzytelniania pracowników/administratorów opartego o nazwę użytkownika (`username`), haszowanie haseł **bcrypt** oraz **JWT** (`POST /api/login`).
 - Chronionego punktu pobierania listy zgłoszeń (`GET /api/zgloszenia`) z middleware weryfikującym nagłówek `Authorization: Bearer <token>`.
 - Gotowego, estetycznego interfejsu webowego (`index.html`) z formularzem dla klientów oraz panelem zarządzania dla pracowników serwisu.
 
@@ -42,7 +42,14 @@ Składa się z:
   - Kontrolowane pole numeru telefonu w React z domyślnym prefiksem `+48 `, blokadą usuwania prefiksu, wymuszeniem wprowadzania wyłącznie cyfr oraz czytelnym formatowaniem (`+48 XXX XXX XXX`).
   - Dedykowany przycisk usunięcia zgłoszenia w panelu pracownika z potwierdzeniem (`window.confirm`), blokadą w trakcie usuwania (`Usuwanie...`), natychmiastową reaktywną aktualizacją tabeli oraz powiadomieniem alert.
 - [x] Dodano automatyczny fallback dla hasła bazy danych w `index.js` i `seed.js` (jeśli hasło z `.env` zostanie odrzucone przez lokalny serwer MySQL, serwer automatycznie podejmuje próbę połączenia z domyślnym pustym hasłem, zapobiegając awarii aplikacji).
-- [x] Przeprowadzono automatyczne testy integracyjne każdego endpointu (kod 201 dla POST, 401 dla nieautoryzowanego GET, 200 z tokenem dla POST /login, 200 dla autoryzowanego GET, 200 dla PATCH /api/zgloszenia/:id/status, 200 dla DELETE /api/zgloszenia/:id, 400 dla nieprawidłowego ID, 404 dla powtórnego usunięcia).
+- [x] Zmiana logowania do panelu pracownika z adresu email na **nazwę użytkownika** (`username`):
+  - Zaktualizowano schemat bazy w `schemat.sql` oraz zaaplikowano migrację tabeli `uzytkownicy` (dodano kolumnę `username VARCHAR(50) NOT NULL UNIQUE`, kolumnę `email` oznaczono jako opcjonalną).
+  - Wdrożono auto-migrację przy uruchomieniu serwera w `index.js` oraz w skrypcie `seed.js` (automatyczne dodanie kolumny `username` i uzupełnienie dla istniejących kont).
+  - Zaktualizowano endpoint `POST /api/login` (wymóg podania pola `username`, zwrot `username` w obiekcie użytkownika i tokenie JWT).
+  - Zaktualizowano endpoint `POST /api/admin/users` oraz narzędzie CLI `create-user.js` do obsługi tworzenia kont z nazwą użytkownika.
+  - Zaktualizowano formularz logowania `LoginForm` w `index.html` (etykieta i pole tekstowe „Nazwa użytkownika” z `placeholder="np. admin"`).
+  - Zaktualizowano badge użytkownika w nagłówku panelu pracownika (`Dashboard`), wyświetlający `username`.
+- [x] Przeprowadzono automatyczne testy integracyjne każdego endpointu (kod 201 dla POST, 401 dla nieautoryzowanego GET, 200 z tokenem dla POST /login, 200 dla autoryzowanego GET, 200 dla PATCH /api/zgloszenia/:id/status, 200 dla DELETE /api/zgloszenia/:id, 400 dla nieprawidłowego ID, 404 dla powtórnego usunięcia, test logowania nową nazwą użytkownika i tworzenia pracownika).
 
 ---
 
@@ -105,14 +112,16 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 | Kolumna | Typ | Opis |
 | :--- | :--- | :--- |
 | `id` | `INT AUTO_INCREMENT PRIMARY KEY` | Unikalny identyfikator użytkownika |
-| `email` | `VARCHAR(100) NOT NULL UNIQUE` | Unikalny adres email (login) |
+| `username` | `VARCHAR(50) NOT NULL UNIQUE` | Nazwa użytkownika (login do panelu) |
+| `email` | `VARCHAR(100) NULL UNIQUE` | Opcjonalny adres email użytkownika |
 | `password_hash` | `VARCHAR(255) NOT NULL` | Hash hasła (bcrypt) |
-| `role` | `VARCHAR(20) DEFAULT 'admin'` | Rola uprawnień |
+| `role` | `VARCHAR(20) DEFAULT 'admin'` | Rola uprawnień (`admin`, `pracownik`) |
 | `created_at` | `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` | Data utworzenia konta |
 
 ### Domyślne konto administratora (po wykonaniu `npm run seed`):
-- **Email:** `admin@serwis.pl`
+- **Nazwa użytkownika:** `admin`
 - **Hasło:** `admin123`
+- **Email (opcjonalny):** `admin@serwis.pl`
 
 ---
 
@@ -152,7 +161,7 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 - **Body (JSON):**
 ```json
 {
-  "email": "admin@serwis.pl",
+  "username": "admin",
   "password": "admin123"
 }
 ```
@@ -163,12 +172,13 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "user": {
     "id": 1,
+    "username": "admin",
     "email": "admin@serwis.pl",
     "role": "admin"
   }
 }
 ```
-- **Błędy:** `400 Bad Request` (brak emaila/hasła), `401 Unauthorized` (błędne dane).
+- **Błędy:** `400 Bad Request` (brak nazwy użytkownika lub hasła), `401 Unauthorized` (błędna nazwa użytkownika lub hasło).
 
 ---
 
@@ -296,20 +306,22 @@ http://localhost:3000
 ---
 
 ## 8. Stan prac: Co jest aktualnie w toku (In Progress)
-- Weryfikacja działania w środowisku lokalnym użytkownika oraz testy panelu pracownika (usuwanie zgłoszeń, aktualizacja statusu).
+- Weryfikacja działania w środowisku lokalnym użytkownika oraz testy panelu pracownika (logowanie nazwą użytkownika, usuwanie zgłoszeń, aktualizacja statusu).
 
 ---
 
 ## 9. Stan prac: Co jest do zrobienia (Backlog / Sugestie rozwoju)
-1. **[ZREALIZOWANE] Zmiana statusu zgłoszenia:**
+1. **[ZREALIZOWANE] Logowanie nazwą użytkownika zamiast emaila:**
+   - Zmiana schematu bazy danych, endpointu `POST /api/login` i formularza React na wymaganie nazwy użytkownika (`username`).
+2. **[ZREALIZOWANE] Zmiana statusu zgłoszenia:**
    - Dodano endpoint `PATCH /api/zgloszenia/:id/status` oraz przycisk i listę wyboru w panelu pracownika.
-2. **[ZREALIZOWANE] Usuwanie zgłoszeń z poziomu panelu pracownika:**
+3. **[ZREALIZOWANE] Usuwanie zgłoszeń z poziomu panelu pracownika:**
    - Dodano chroniony endpoint `DELETE /api/zgloszenia/:id` oraz przycisk `Usuń` z potwierdzeniem dialogowym w tabeli panelu pracownika.
-3. **Filtrowanie i wyszukiwanie zgłoszeń:**
+4. **Filtrowanie i wyszukiwanie zgłoszeń:**
    - Filtry w `GET /api/zgloszenia?status=nowe&search=Kowalski`.
-4. **Powiadomienia E-mail:**
+5. **Powiadomienia E-mail:**
    - Wysyłka potwierdzenia przyjęcia zgłoszenia na adres e-mail klienta (np. za pomocą `nodemailer`).
-5. **Wyszukiwarka statusu zgłoszenia dla klienta:**
+6. **Wyszukiwarka statusu zgłoszenia dla klienta:**
    - Publiczny endpoint `GET /api/zgloszenia/status/:id` lub po numerze telefonu i ID, aby klient mógł śledzić postęp bez konieczności logowania się do panelu pracownika.
-6. **Obsługa załączników (np. zdjęcia usterki):**
+7. **Obsługa załączników (np. zdjęcia usterki):**
    - Dodanie pakietu `multer` i zapis zdjęć uszkodzeń sprzętu.
