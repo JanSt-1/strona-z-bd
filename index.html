@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="pl">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Obsługi Zgłoszeń Serwisowych (React)</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- React, ReactDOM oraz Babel Standalone -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: rgba(22, 30, 49, 0.75);
+            --card-border: rgba(255, 255, 255, 0.08);
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --accent: #06b6d4;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --input-bg: rgba(15, 23, 42, 0.6);
+            --input-border: rgba(255, 255, 255, 0.12);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', system-ui, sans-serif;
+        }
+
+        body {
+            background: radial-gradient(circle at 10% 20%, #172554 0%, #0b0f19 90%);
+            color: var(--text-main);
+            min-height: 100vh;
+            padding: 2rem 1rem;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2.5rem;
+            padding-bottom: 1.25rem;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .brand-icon {
+            width: 42px;
+            height: 42px;
+            background: linear-gradient(135deg, var(--primary), var(--accent));
+            border-radius: 10px;
+            display: grid;
+            place-items: center;
+            font-size: 1.25rem;
+            box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+        }
+
+        .brand h1 {
+            font-size: 1.4rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .brand p {
+            font-size: 0.82rem;
+            color: var(--text-muted);
+        }
+
+        .react-badge {
+            display: inline-block;
+            font-size: 0.65rem;
+            font-weight: 700;
+            background: rgba(6, 182, 212, 0.2);
+            color: #22d3ee;
+            border: 1px solid rgba(6, 182, 212, 0.4);
+            padding: 0.15rem 0.45rem;
+            border-radius: 6px;
+            margin-left: 0.5rem;
+            vertical-align: middle;
+            text-transform: uppercase;
+        }
+
+        .nav-tabs {
+            display: flex;
+            gap: 0.5rem;
+            background: rgba(15, 23, 42, 0.6);
+            padding: 4px;
+            border-radius: 8px;
+            border: 1px solid var(--card-border);
+        }
+
+        .nav-btn {
+            background: transparent;
+            color: var(--text-muted);
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.88rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .nav-btn.active {
+            background: var(--primary);
+            color: #fff;
+            box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 16px;
+            padding: 2rem;
+            backdrop-filter: blur(12px);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            margin-bottom: 2rem;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(6px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .card-header {
+            margin-bottom: 1.5rem;
+        }
+
+        .card-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .card-subtitle {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.25rem;
+        }
+
+        .form-group.full {
+            grid-column: span 2;
+        }
+
+        label {
+            display: block;
+            font-size: 0.82rem;
+            font-weight: 500;
+            margin-bottom: 0.4rem;
+            color: #cbd5e1;
+        }
+
+        input,
+        textarea {
+            width: 100%;
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            border-radius: 8px;
+            padding: 0.75rem 0.9rem;
+            color: #fff;
+            font-size: 0.9rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input:focus,
+        textarea:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+
+        .btn-submit {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+            color: #fff;
+            border: none;
+            padding: 0.85rem 1.75rem;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 1rem;
+            box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);
+        }
+
+        .btn-submit:hover:not(:disabled) {
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+        }
+
+        .btn-submit:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        /* Alert notifications */
+        .alert {
+            padding: 0.85rem 1.25rem;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            margin-bottom: 1.25rem;
+            animation: fadeIn 0.2s ease-out;
+        }
+
+        .alert-success {
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            color: #34d399;
+        }
+
+        .alert-error {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #f87171;
+        }
+
+        /* Admin view */
+        .admin-header-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .badge-user {
+            background: rgba(6, 182, 212, 0.15);
+            color: var(--accent);
+            padding: 0.35rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            border: 1px solid rgba(6, 182, 212, 0.3);
+        }
+
+        .btn-logout {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #f87171;
+            padding: 0.45rem 0.9rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.82rem;
+            transition: all 0.2s;
+        }
+
+        .btn-logout:hover {
+            background: var(--danger);
+            color: #fff;
+        }
+
+        .tickets-table-wrapper {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.88rem;
+            text-align: left;
+        }
+
+        th {
+            background: rgba(15, 23, 42, 0.8);
+            color: var(--text-muted);
+            padding: 0.8rem 1rem;
+            font-weight: 600;
+            border-bottom: 1px solid var(--card-border);
+        }
+
+        td {
+            padding: 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            vertical-align: top;
+        }
+
+        tr:hover td {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.6rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+        }
+
+        .status-nowe {
+            background: rgba(59, 130, 246, 0.15);
+            color: #60a5fa;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+
+        .status-w_realizacji {
+            background: rgba(245, 158, 11, 0.15);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+
+        .status-zakonczone {
+            background: rgba(16, 185, 129, 0.15);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .status-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            align-items: flex-start;
+        }
+
+        .status-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            flex-wrap: wrap;
+        }
+
+        .btn-status-change {
+            background: rgba(59, 130, 246, 0.2);
+            border: 1px solid rgba(59, 130, 246, 0.4);
+            color: #93c5fd;
+            padding: 0.35rem 0.65rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            white-space: nowrap;
+        }
+
+        .btn-status-change:hover:not(:disabled) {
+            background: var(--primary);
+            color: #fff;
+            transform: translateY(-1px);
+        }
+
+        .btn-status-change:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .status-select {
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            color: #cbd5e1;
+            border-radius: 6px;
+            padding: 0.3rem 0.5rem;
+            font-size: 0.75rem;
+            cursor: pointer;
+        }
+
+        .status-select:focus {
+            border-color: var(--primary);
+            outline: none;
+        }
+
+        .login-box {
+            max-width: 420px;
+            margin: 2rem auto;
+        }
+
+        @media (max-width: 768px) {
+            .form-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .form-group.full {
+                grid-column: span 1;
+            }
+
+            header {
+                flex-direction: column;
+                gap: 1rem;
+                align-items: flex-start;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Główny punkt montowania aplikacji React -->
+    <div id="root"></div>
+
+    <!-- Kod aplikacji React napisany w JSX -->
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const API_BASE = '/api';
+
+        // Komponent powiadomień Alert
+        function Alert({ alert }) {
+            if (!alert) return null;
+            return (
+                <div className={`alert alert-${alert.type}`}>
+                    {alert.message}
+                </div>
+            );
+        }
+
+        // Komponent nagłówka z nawigacją
+        function Header({ activeTab, setActiveTab }) {
+            return (
+                <header>
+                    <div className="brand">
+                        <div className="brand-icon">⚡</div>
+                        <div>
+                            <h1>
+                                Serwis-Tech
+                                <span className="react-badge">React 18</span>
+                            </h1>
+                            <p>System zgłoszeń serwisowych &amp; Panel zarządzania</p>
+                        </div>
+                    </div>
+                    <div className="nav-tabs">
+                        <button
+                            className={`nav-btn ${activeTab === 'public' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('public')}
+                        >
+                            Nowe zgłoszenie
+                        </button>
+                        <button
+                            className={`nav-btn ${activeTab === 'admin' ? 'active' : ''}`}
+                            onClick={() => setActiveTab('admin')}
+                        >
+                            Panel pracownika
+                        </button>
+                    </div>
+                </header>
+            );
+        }
+
+        // Formularz publiczny dodawania zgłoszenia
+        function PublicTicketForm() {
+            const [formData, setFormData] = useState({
+                imie: '',
+                nazwisko: '',
+                numer_telefonu: '+48 ',
+                email: '',
+                adres: '',
+                numer_fv: '',
+                opis_usterki: ''
+            });
+            const [loading, setLoading] = useState(false);
+            const [alert, setAlert] = useState(null);
+
+            function showAlert(message, type = 'success') {
+                setAlert({ message, type });
+                setTimeout(() => setAlert(null), 6000);
+            }
+
+            // Obsługa wpisywania numeru telefonu (domyślny prefiks +48 i wyłącznie cyfry)
+            function handlePhoneChange(e) {
+                let val = e.target.value;
+                let digits = val.replace(/\D/g, '');
+
+                if (digits.startsWith('48')) {
+                    digits = digits.slice(2);
+                }
+                digits = digits.slice(0, 9);
+
+                let formatted = '+48 ';
+                if (digits.length === 0) {
+                    formatted = '+48 ';
+                } else if (digits.length <= 3) {
+                    formatted = `+48 ${digits}`;
+                } else if (digits.length <= 6) {
+                    formatted = `+48 ${digits.slice(0, 3)} ${digits.slice(3)}`;
+                } else {
+                    formatted = `+48 ${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
+                }
+
+                setFormData(prev => ({ ...prev, numer_telefonu: formatted }));
+            }
+
+            function handlePhoneKeyDown(e) {
+                if ((e.key === 'Backspace' || e.key === 'Delete') && e.target.selectionStart <= 4 && e.target.selectionEnd <= 4) {
+                    e.preventDefault();
+                }
+            }
+
+            async function handleSubmit(e) {
+                e.preventDefault();
+
+                // Walidacja numeru telefonu (musi zawierać co najmniej 9 cyfr po +48)
+                const cleanDigits = formData.numer_telefonu.replace(/\D/g, '').replace(/^48/, '');
+                if (cleanDigits.length < 9) {
+                    showAlert('Proszę podać pełny, 9-cyfrowy numer telefonu po prefiksie +48.', 'error');
+                    return;
+                }
+
+                setLoading(true);
+                try {
+                    const response = await fetch(`${API_BASE}/zgloszenia`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            imie: formData.imie,
+                            nazwisko: formData.nazwisko,
+                            numer_telefonu: formData.numer_telefonu,
+                            email: formData.email,
+                            adres: formData.adres,
+                            numer_fv: formData.numer_fv || null,
+                            opis_usterki: formData.opis_usterki
+                        })
+                    });
+
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Błąd podczas wysyłania zgłoszenia.');
+                    }
+
+                    showAlert(`Dziękujemy! ${data.message} Numer zgłoszenia: #${data.id}`, 'success');
+                    setFormData({
+                        imie: '',
+                        nazwisko: '',
+                        numer_telefonu: '+48 ',
+                        email: '',
+                        adres: '',
+                        numer_fv: '',
+                        opis_usterki: ''
+                    });
+                } catch (err) {
+                    showAlert(err.message, 'error');
+                } finally {
+                    setLoading(false);
+                }
+            }
+
+            return (
+                <main className="card">
+                    <div className="card-header">
+                        <h2 className="card-title">Zgłoś usterkę urządzenia</h2>
+                        <p className="card-subtitle">Wypełnij poniższy formularz. Skontaktujemy się z Tobą po przyjęciu zgłoszenia.</p>
+                    </div>
+
+                    <Alert alert={alert} />
+
+                    <form onSubmit={handleSubmit}>
+                        <div className="form-grid">
+                            <div className="form-group">
+                                <label htmlFor="imie">Imię *</label>
+                                <input
+                                    type="text"
+                                    id="imie"
+                                    required
+                                    placeholder="np. Jan"
+                                    value={formData.imie}
+                                    onChange={e => setFormData({ ...formData, imie: e.target.value })}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label htmlFor="nazwisko">Nazwisko *</label>
+                                <input
+                                    type="text"
+                                    id="nazwisko"
+                                    required
+                                    placeholder="np. Kowalski"
+                                    value={formData.nazwisko}
+                                    onChange={e => setFormData({ ...formData, nazwisko: e.target.value })}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label htmlFor="numer_telefonu">Numer telefonu * (tylko cyfry)</label>
+                                <input
+                                    type="tel"
+                                    id="numer_telefonu"
+                                    required
+                                    maxLength="15"
+                                    placeholder="+48 500 600 700"
+                                    value={formData.numer_telefonu}
+                                    onChange={handlePhoneChange}
+                                    onKeyDown={handlePhoneKeyDown}
+                                    onFocus={e => {
+                                        if (!e.target.value || e.target.value.trim() === '+48') {
+                                            setFormData(prev => ({ ...prev, numer_telefonu: '+48 ' }));
+                                        }
+                                    }}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label htmlFor="email">Adres E-mail *</label>
+                                <input
+                                    type="email"
+                                    id="email"
+                                    required
+                                    placeholder="np. jan.kowalski@example.com"
+                                    value={formData.email}
+                                    onChange={e => setFormData({ ...formData, email: e.target.value })}
+                                />
+                            </div>
+                            <div className="form-group full">
+                                <label htmlFor="adres">Adres zamieszkania / odbioru sprzętu *</label>
+                                <input
+                                    type="text"
+                                    id="adres"
+                                    required
+                                    placeholder="np. ul. Lipowa 12/4, 00-001 Warszawa"
+                                    value={formData.adres}
+                                    onChange={e => setFormData({ ...formData, adres: e.target.value })}
+                                />
+                            </div>
+                            <div className="form-group full">
+                                <label htmlFor="numer_fv">Numer faktury / paragonu (opcjonalnie)</label>
+                                <input
+                                    type="text"
+                                    id="numer_fv"
+                                    placeholder="np. FV/2026/04/1234"
+                                    value={formData.numer_fv}
+                                    onChange={e => setFormData({ ...formData, numer_fv: e.target.value })}
+                                />
+                            </div>
+                            <div className="form-group full">
+                                <label htmlFor="opis_usterki">Dokładny opis usterki *</label>
+                                <textarea
+                                    id="opis_usterki"
+                                    required
+                                    placeholder="Opisz objawy, okoliczności powstania awarii oraz model urządzenia..."
+                                    value={formData.opis_usterki}
+                                    onChange={e => setFormData({ ...formData, opis_usterki: e.target.value })}
+                                />
+                            </div>
+                        </div>
+
+                        <button type="submit" className="btn-submit" disabled={loading}>
+                            {loading ? 'Wysyłanie...' : 'Wyślij zgłoszenie'}
+                        </button>
+                    </form>
+                </main>
+            );
+        }
+
+        // Formularz logowania pracownika
+        function LoginForm({ onLoginSuccess }) {
+            const [email, setEmail] = useState('admin@serwis.pl');
+            const [password, setPassword] = useState('admin123');
+            const [loading, setLoading] = useState(false);
+            const [alert, setAlert] = useState(null);
+
+            async function handleSubmit(e) {
+                e.preventDefault();
+                setLoading(true);
+                setAlert(null);
+
+                try {
+                    const response = await fetch(`${API_BASE}/login`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email, password })
+                    });
+
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Nieprawidłowe dane logowania.');
+                    }
+
+                    onLoginSuccess(data.token, data.user);
+                } catch (err) {
+                    setAlert({ message: err.message, type: 'error' });
+                } finally {
+                    setLoading(false);
+                }
+            }
+
+            return (
+                <div className="card login-box">
+                    <div className="card-header">
+                        <h2 className="card-title">Logowanie do panelu</h2>
+                        <p className="card-subtitle">Dostęp tylko dla uprawnionych pracowników serwisu</p>
+                    </div>
+
+                    <Alert alert={alert} />
+
+                    <form onSubmit={handleSubmit}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            <div>
+                                <label htmlFor="loginEmail">Email</label>
+                                <input
+                                    type="email"
+                                    id="loginEmail"
+                                    required
+                                    value={email}
+                                    onChange={e => setEmail(e.target.value)}
+                                />
+                            </div>
+                            <div>
+                                <label htmlFor="loginPassword">Hasło</label>
+                                <input
+                                    type="password"
+                                    id="loginPassword"
+                                    required
+                                    value={password}
+                                    onChange={e => setPassword(e.target.value)}
+                                />
+                            </div>
+                            <button type="submit" className="btn-submit" style={{ width: '100%' }} disabled={loading}>
+                                {loading ? 'Logowanie...' : 'Zaloguj się'}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            );
+        }
+
+        // Kontroler statusu w wierszu tabeli (badge + przycisk akcji + rozwijana lista)
+        function StatusControl({ ticket, onUpdateStatus }) {
+            const nextStatusMap = {
+                'nowe': { next: 'w_realizacji', label: '➔ W realizacji' },
+                'w_realizacji': { next: 'zakończone', label: '✔ Zakończ' },
+                'zakończone': { next: 'nowe', label: '↺ Do nowych' }
+            };
+
+            const curStatus = ticket.status || 'nowe';
+            const nextConfig = nextStatusMap[curStatus] || { next: 'w_realizacji', label: 'Zmień status' };
+
+            return (
+                <div className="status-cell">
+                    <span className={`status-badge status-${curStatus.replace(' ', '_')}`}>
+                        {curStatus}
+                    </span>
+                    <div className="status-actions">
+                        <button
+                            className="btn-status-change"
+                            onClick={() => onUpdateStatus(ticket.id, nextConfig.next)}
+                            title={`Kliknij, aby zmienić na: ${nextConfig.next}`}
+                        >
+                            {nextConfig.label}
+                        </button>
+                        <select
+                            className="status-select"
+                            value={curStatus}
+                            onChange={e => onUpdateStatus(ticket.id, e.target.value)}
+                            title="Wybierz dowolny status"
+                        >
+                            <option value="nowe">nowe</option>
+                            <option value="w_realizacji">w realizacji</option>
+                            <option value="zakończone">zakończone</option>
+                        </select>
+                    </div>
+                </div>
+            );
+        }
+
+        // Panel zarządzania zgłoszeniami dla zalogowanego pracownika
+        function Dashboard({ user, token, onLogout }) {
+            const [tickets, setTickets] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [alert, setAlert] = useState(null);
+
+            function showAlert(message, type = 'success') {
+                setAlert({ message, type });
+                setTimeout(() => setAlert(null), 5000);
+            }
+
+            async function fetchTickets() {
+                setLoading(true);
+                try {
+                    const response = await fetch(`${API_BASE}/zgloszenia`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+
+                    if (response.status === 401 || response.status === 403) {
+                        onLogout();
+                        return;
+                    }
+
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Błąd podczas pobierania zgłoszeń.');
+                    }
+
+                    setTickets(Array.isArray(data) ? data : []);
+                } catch (err) {
+                    showAlert(err.message, 'error');
+                } finally {
+                    setLoading(false);
+                }
+            }
+
+            useEffect(() => {
+                fetchTickets();
+            }, [token]);
+
+            async function handleUpdateStatus(id, newStatus) {
+                try {
+                    const response = await fetch(`${API_BASE}/zgloszenia/${id}/status`, {
+                        method: 'PATCH',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ status: newStatus })
+                    });
+
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Nie udało się zaktualizować statusu.');
+                    }
+
+                    showAlert(`Zgłoszenie #${id}: zmieniono status na "${newStatus}".`, 'success');
+                    fetchTickets();
+                } catch (err) {
+                    showAlert(err.message, 'error');
+                }
+            }
+
+            return (
+                <div className="card">
+                    <div className="admin-header-bar">
+                        <div>
+                            <h2 className="card-title">Zgłoszenia serwisowe</h2>
+                            <span className="badge-user">
+                                Zalogowano: {user?.email || 'Pracownik'} ({user?.role || 'admin'})
+                            </span>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.75rem' }}>
+                            <button className="nav-btn" onClick={fetchTickets}>
+                                Odśwież
+                            </button>
+                            <button className="btn-logout" onClick={onLogout}>
+                                Wyloguj
+                            </button>
+                        </div>
+                    </div>
+
+                    <Alert alert={alert} />
+
+                    <div className="tickets-table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Klient &amp; Kontakt</th>
+                                    <th>Adres</th>
+                                    <th>Opis usterki</th>
+                                    <th>Nr FV</th>
+                                    <th>Status &amp; Akcja</th>
+                                    <th>Data</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {loading ? (
+                                    <tr>
+                                        <td colSpan="7" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                                            Ładowanie danych z bazy MySQL...
+                                        </td>
+                                    </tr>
+                                ) : tickets.length === 0 ? (
+                                    <tr>
+                                        <td colSpan="7" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                                            Brak zgłoszeń w bazie danych.
+                                        </td>
+                                    </tr>
+                                ) : (
+                                    tickets.map(t => (
+                                        <tr key={t.id}>
+                                            <td><strong>#{t.id}</strong></td>
+                                            <td>
+                                                <div><strong>{t.imie} {t.nazwisko}</strong></div>
+                                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t.email}</div>
+                                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t.numer_telefonu}</div>
+                                            </td>
+                                            <td><small>{t.adres}</small></td>
+                                            <td><p style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem' }}>{t.opis_usterki}</p></td>
+                                            <td><small>{t.numer_fv || '-'}</small></td>
+                                            <td>
+                                                <StatusControl ticket={t} onUpdateStatus={handleUpdateStatus} />
+                                            </td>
+                                            <td>
+                                                <small>
+                                                    {t.created_at ? new Date(t.created_at).toLocaleString('pl-PL') : '-'}
+                                                </small>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        }
+
+        // Główny komponent aplikacji
+        function App() {
+            const [activeTab, setActiveTab] = useState('public');
+            const [token, setToken] = useState(() => localStorage.getItem('serwis_token') || null);
+            const [user, setUser] = useState(() => {
+                try {
+                    return JSON.parse(localStorage.getItem('serwis_user') || 'null');
+                } catch {
+                    return null;
+                }
+            });
+
+            function handleLoginSuccess(newToken, newUser) {
+                localStorage.setItem('serwis_token', newToken);
+                localStorage.setItem('serwis_user', JSON.stringify(newUser));
+                setToken(newToken);
+                setUser(newUser);
+            }
+
+            function handleLogout() {
+                localStorage.removeItem('serwis_token');
+                localStorage.removeItem('serwis_user');
+                setToken(null);
+                setUser(null);
+            }
+
+            return (
+                <div className="container">
+                    <Header activeTab={activeTab} setActiveTab={setActiveTab} />
+                    {activeTab === 'public' ? (
+                        <PublicTicketForm />
+                    ) : token ? (
+                        <Dashboard user={user} token={token} onLogout={handleLogout} />
+                    ) : (
+                        <LoginForm onLoginSuccess={handleLoginSuccess} />
+                    )}
+                </div>
+            );
+        }
+
+        // Renderowanie drzewa komponentów React w elemencie #root
+        const rootElement = document.getElementById('root');
+        const root = ReactDOM.createRoot(rootElement);
+        root.render(<App />);
+    </script>
+</body>
+
+</html>
