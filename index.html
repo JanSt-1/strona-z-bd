@@ -52,7 +52,7 @@
         }
 
         header {
-            background-color: #005212;
+            background-color: #0d5537;
             display: flex;
             width: 100%;
             height: 8vh;
@@ -227,7 +227,6 @@
             cursor: pointer;
             transition: all 0.2s;
             margin-top: 1rem;
-            box-shadow: 0 4px 14px rgb(0, 150, 12);
         }
 
         .btn-submit:hover:not(:disabled) {
@@ -250,9 +249,9 @@
         }
 
         .alert-success {
-            background: rgba(16, 185, 129, 0.15);
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            color: #34d399;
+            background: rgba(3, 43, 29, 0.15);
+            border: 1px solid #0cfc2ccb;
+            color: #00ff22;
         }
 
         .alert-error {
@@ -307,7 +306,7 @@
         }
 
         th {
-            background: rgba(17, 206, 33, 0.685);
+            background: rgba(20, 158, 31, 0.685);
             color: var(--text-muted);
             padding: 0.8rem 1rem;
             font-weight: 600;
@@ -335,20 +334,20 @@
         }
 
         .status-nowe {
-            background: rgba(59, 130, 246, 0.15);
-            color: #60a5fa;
-            border: 1px solid rgba(59, 130, 246, 0.3);
+            background: rgba(51, 49, 49, 0.719);
+            color: #00ff15;
+            border: 1px solid rgb(0, 255, 21);
         }
 
         .status-w_realizacji {
-            background: rgba(245, 158, 11, 0.15);
+            background: rgba(51, 49, 49, 0.719);
             color: #fbbf24;
             border: 1px solid rgba(245, 158, 11, 0.3);
         }
 
         .status-zakonczone {
-            background: rgba(16, 185, 129, 0.15);
-            color: #34d399;
+            background: rgba(51, 49, 49, 0.719);
+            color: #2667f5;
             border: 1px solid rgba(16, 185, 129, 0.3);
         }
 
@@ -368,8 +367,8 @@
 
         .btn-status-change {
             background: rgba(59, 130, 246, 0.2);
-            border: 1px solid rgba(59, 130, 246, 0.4);
-            color: #93c5fd;
+            border: 1px solid rgba(43, 255, 79, 0.4);
+            color: #020202;
             padding: 0.35rem 0.65rem;
             border-radius: 6px;
             font-size: 0.75rem;
@@ -394,7 +393,7 @@
         .status-select {
             background: var(--input-bg);
             border: 1px solid var(--input-border);
-            color: #cbd5e1;
+            color: #000307;
             border-radius: 6px;
             padding: 0.3rem 0.5rem;
             font-size: 0.75rem;
@@ -479,7 +478,7 @@
             const [formData, setFormData] = useState({
                 imie: '',
                 nazwisko: '',
-                numer_telefonu: '+48 ',
+                numer_telefonu: '',
                 email: '',
                 adres: '',
                 numer_fv: '',
@@ -493,7 +492,7 @@
                 setTimeout(() => setAlert(null), 6000);
             }
 
-            // Obsługa wpisywania numeru telefonu (domyślny prefiks +48 i wyłącznie cyfry)
+            // Obsługa wpisywania numeru telefonu (i wyłącznie cyfry)
             function handlePhoneChange(e) {
                 let val = e.target.value;
                 let digits = val.replace(/\D/g, '');
@@ -574,7 +573,7 @@
             return (
                 <main className="card">
                     <div className="card-header">
-                        <h2 className="card-title">Zgłoś usterkę urządzenia</h2>
+                        <h2 className="card-title">Zgłoś problem</h2>
                         <p className="card-subtitle">Wypełnij poniższy formularz. Skontaktujemy się z Tobą po przyjęciu zgłoszenia.</p>
                     </div>
 
@@ -676,8 +675,8 @@
 
         // Formularz logowania pracownika
         function LoginForm({ onLoginSuccess }) {
-            const [email, setEmail] = useState('admin@serwis.pl');
-            const [password, setPassword] = useState('admin123');
+            const [email, setEmail] = useState('');
+            const [password, setPassword] = useState('');
             const [loading, setLoading] = useState(false);
             const [alert, setAlert] = useState(null);
 
