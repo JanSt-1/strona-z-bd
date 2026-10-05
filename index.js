@@ -293,7 +293,40 @@ async function handleUpdateStatus(req, res) {
 app.patch('/api/zgloszenia/:id/status', authenticateToken, handleUpdateStatus);
 app.put('/api/zgloszenia/:id/status', authenticateToken, handleUpdateStatus);
 
-// 6. POST /api/admin/users - Tworzenie nowego użytkownika (chroniony, tylko admin)
+// 6. DELETE /api/zgloszenia/:id - Usunięcie zgłoszenia (chroniony, wymaga JWT)
+app.delete('/api/zgloszenia/:id', authenticateToken, async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) {
+        return res.status(400).json({
+            error: 'Nieprawidłowe ID zgłoszenia. Wymagana jest liczba całkowita.'
+        });
+    }
+
+    try {
+        const [result] = await pool.query(
+            'DELETE FROM zgloszenia WHERE id = ?',
+            [id]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({
+                error: `Nie znaleziono zgłoszenia o ID ${id}.`
+            });
+        }
+
+        return res.json({
+            message: 'Zgłoszenie zostało pomyślnie usunięte.',
+            id
+        });
+    } catch (err) {
+        console.error('Błąd podczas usuwania zgłoszenia:', err);
+        return res.status(500).json({
+            error: 'Błąd serwera podczas usuwania zgłoszenia z bazy danych.'
+        });
+    }
+});
+
+// 7. POST /api/admin/users - Tworzenie nowego użytkownika (chroniony, tylko admin)
 app.post('/api/admin/users', authenticateToken, async (req, res) => {
     // Tylko admin może tworzyć konta
     if (req.user.role !== 'admin') {
@@ -347,6 +380,7 @@ app.listen(PORT, () => {
     console.log(`📡 Dostępne endpointy:`);
     console.log(`   - POST  http://localhost:${PORT}/api/zgloszenia (publiczny)`);
     console.log(`   - POST  http://localhost:${PORT}/api/login (publiczny, generuje JWT)`);
-    console.log(`   - GET   http://localhost:${PORT}/api/zgloszenia (chroniony, wymaga JWT)`);
-    console.log(`   - PATCH http://localhost:${PORT}/api/zgloszenia/:id/status (chroniony, wymaga JWT)`);
+    console.log(`   - GET    http://localhost:${PORT}/api/zgloszenia (chroniony, wymaga JWT)`);
+    console.log(`   - PATCH  http://localhost:${PORT}/api/zgloszenia/:id/status (chroniony, wymaga JWT)`);
+    console.log(`   - DELETE http://localhost:${PORT}/api/zgloszenia/:id (chroniony, wymaga JWT)`);
 });

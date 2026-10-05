@@ -29,6 +29,7 @@ Składa się z:
   - `POST /api/login`: weryfikacja użytkownika w bazie MySQL, porównanie hashy bcrypt, wygenerowanie tokenu JWT ważnego 24h.
   - `GET /api/zgloszenia`: chroniony endpoint zwracający zgłoszenia posortowane chronologicznie.
   - `PATCH /api/zgloszenia/:id/status`: chroniony endpoint do aktualizacji statusu zgłoszenia (`nowe`, `w_realizacji`, `zakończone`).
+  - `DELETE /api/zgloszenia/:id`: chroniony endpoint do trwałego usuwania zgłoszenia z bazy (walidacja ID, autoryzacja JWT, weryfikacja istnienia rekordu 404).
   - `GET /api/health`: endpoint sprawdzający stan serwera i bazy danych.
 - [x] Utworzono mostek w `serwis-panel/backend/index.js`, umożliwiający uruchomienie serwera również bezpośrednio z tego podkatalogu.
 - [x] Przepisano frontend w `index.html` na pełnoprawną aplikację **React 18**:
@@ -39,8 +40,9 @@ Składa się z:
   - Podgląd i odświeżanie tabeli zgłoszeń serwisowych ze statusami i datami.
   - Interaktywną zmianę statusu zgłoszenia: dedykowany przycisk akcji (np. `➔ W realizacji`, `✔ Zakończ`) oraz rozwijana lista wyboru ze wszystkimi dozwolonymi statusami.
   - Kontrolowane pole numeru telefonu w React z domyślnym prefiksem `+48 `, blokadą usuwania prefiksu, wymuszeniem wprowadzania wyłącznie cyfr oraz czytelnym formatowaniem (`+48 XXX XXX XXX`).
+  - Dedykowany przycisk usunięcia zgłoszenia w panelu pracownika z potwierdzeniem (`window.confirm`), blokadą w trakcie usuwania (`Usuwanie...`), natychmiastową reaktywną aktualizacją tabeli oraz powiadomieniem alert.
 - [x] Dodano automatyczny fallback dla hasła bazy danych w `index.js` i `seed.js` (jeśli hasło z `.env` zostanie odrzucone przez lokalny serwer MySQL, serwer automatycznie podejmuje próbę połączenia z domyślnym pustym hasłem, zapobiegając awarii aplikacji).
-- [x] Przeprowadzono automatyczne testy integracyjne każdego endpointu (kod 201 dla POST, 401 dla nieautoryzowanego GET, 200 z tokenem dla POST /login, 200 dla autoryzowanego GET, 200 dla PATCH /api/zgloszenia/:id/status).
+- [x] Przeprowadzono automatyczne testy integracyjne każdego endpointu (kod 201 dla POST, 401 dla nieautoryzowanego GET, 200 z tokenem dla POST /login, 200 dla autoryzowanego GET, 200 dla PATCH /api/zgloszenia/:id/status, 200 dla DELETE /api/zgloszenia/:id, 400 dla nieprawidłowego ID, 404 dla powtórnego usunięcia).
 
 ---
 
@@ -128,7 +130,7 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
   "adres": "ul. Kwiatowa 5, Warszawa",
   "numer_telefonu": "+48 600 700 800",
   "email": "jan.kowalski@example.com",
-  "opis_usterki": "Ekspres do kawy cieknie z dołu podczas parzenia.",
+  "opis_usterki": "Ekran nie działa.",
   "numer_fv": "FV/2026/0123"
 }
 ```
@@ -184,7 +186,7 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
     "adres": "ul. Kwiatowa 5, Warszawa",
     "numer_telefonu": "+48 600 700 800",
     "email": "jan.kowalski@example.com",
-    "opis_usterki": "Ekspres do kawy cieknie...",
+    "opis_usterki": "Ekran nie działa.",
     "numer_fv": "FV/2026/0123",
     "status": "nowe",
     "created_at": "2026-10-05T08:04:13.000Z"
@@ -225,7 +227,28 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 
 ---
 
-### 5. Health-Check
+### 5. Usunięcie zgłoszenia serwisowego (Chronione)
+- **Metoda:** `DELETE`
+- **Ścieżka:** `/api/zgloszenia/:id`
+- **Headers:**
+  - `Authorization: Bearer <TOKEN_JWT>`
+- **Parametry URL:** `id` (liczba całkowita - identyfikator usuwanego zgłoszenia)
+- **Odpowiedź sukcesu (200 OK):**
+```json
+{
+  "message": "Zgłoszenie zostało pomyślnie usunięte.",
+  "id": 1
+}
+```
+- **Błędy:**
+  - `400 Bad Request`: nieprawidłowe ID (nie będące liczbą całkowitą).
+  - `401 Unauthorized` / `403 Forbidden`: brak lub nieprawidłowy token JWT.
+  - `404 Not Found`: brak zgłoszenia o podanym ID w bazie.
+  - `500 Internal Server Error`: błąd serwera/bazy danych podczas usuwania.
+
+---
+
+### 6. Health-Check
 - **Metoda:** `GET`
 - **Ścieżka:** `/api/health`
 - **Odpowiedź (200 OK):**
@@ -273,18 +296,20 @@ http://localhost:3000
 ---
 
 ## 8. Stan prac: Co jest aktualnie w toku (In Progress)
-- Weryfikacja działania w środowisku lokalnym użytkownika.
+- Weryfikacja działania w środowisku lokalnym użytkownika oraz testy panelu pracownika (usuwanie zgłoszeń, aktualizacja statusu).
 
 ---
 
 ## 9. Stan prac: Co jest do zrobienia (Backlog / Sugestie rozwoju)
 1. **[ZREALIZOWANE] Zmiana statusu zgłoszenia:**
    - Dodano endpoint `PATCH /api/zgloszenia/:id/status` oraz przycisk i listę wyboru w panelu pracownika.
-2. **Filtrowanie i wyszukiwanie zgłoszeń:**
+2. **[ZREALIZOWANE] Usuwanie zgłoszeń z poziomu panelu pracownika:**
+   - Dodano chroniony endpoint `DELETE /api/zgloszenia/:id` oraz przycisk `Usuń` z potwierdzeniem dialogowym w tabeli panelu pracownika.
+3. **Filtrowanie i wyszukiwanie zgłoszeń:**
    - Filtry w `GET /api/zgloszenia?status=nowe&search=Kowalski`.
-3. **Powiadomienia E-mail:**
+4. **Powiadomienia E-mail:**
    - Wysyłka potwierdzenia przyjęcia zgłoszenia na adres e-mail klienta (np. za pomocą `nodemailer`).
-4. **Wyszukiwarka statusu zgłoszenia dla klienta:**
+5. **Wyszukiwarka statusu zgłoszenia dla klienta:**
    - Publiczny endpoint `GET /api/zgloszenia/status/:id` lub po numerze telefonu i ID, aby klient mógł śledzić postęp bez konieczności logowania się do panelu pracownika.
-5. **Obsługa załączników (np. zdjęcia usterki):**
+6. **Obsługa załączników (np. zdjęcia usterki):**
    - Dodanie pakietu `multer` i zapis zdjęć uszkodzeń sprzętu.
