@@ -257,7 +257,7 @@
         .alert-error {
             background: rgba(239, 68, 68, 0.15);
             border: 1px solid rgba(239, 68, 68, 0.3);
-            color: #f87171;
+            color: #e70000;
         }
 
         /* Admin view */
@@ -882,6 +882,10 @@
             }
 
             async function handleDeleteTicket(id) {
+                if (user?.role !== 'admin') {
+                    showAlert('Brak uprawnień do usuwania zgłoszeń (wymagana rola: admin).', 'error');
+                    return;
+                }
                 const confirmed = window.confirm(`Czy na pewno chcesz bezpowrotnie usunąć zgłoszenie #${id}?`);
                 if (!confirmed) return;
 
@@ -982,26 +986,30 @@
                                                 </small>
                                             </td>
                                             <td>
-                                                <button
-                                                    className="btn-delete"
-                                                    disabled={deletingId === t.id}
-                                                    onClick={() => handleDeleteTicket(t.id)}
-                                                    title={`Usuń zgłoszenie #${t.id}`}
-                                                >
-                                                    {deletingId === t.id ? (
-                                                        'Usuwanie...'
-                                                    ) : (
-                                                        <>
-                                                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle', marginRight: '3px' }}>
-                                                                <polyline points="3 6 5 6 21 6"></polyline>
-                                                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                                                <line x1="10" y1="11" x2="10" y2="17"></line>
-                                                                <line x1="14" y1="11" x2="14" y2="17"></line>
-                                                            </svg>
-                                                            Usuń
-                                                        </>
-                                                    )}
-                                                </button>
+                                                {user?.role === 'admin' ? (
+                                                    <button
+                                                        className="btn-delete"
+                                                        disabled={deletingId === t.id}
+                                                        onClick={() => handleDeleteTicket(t.id)}
+                                                        title={`Usuń zgłoszenie #${t.id}`}
+                                                    >
+                                                        {deletingId === t.id ? (
+                                                            'Usuwanie...'
+                                                        ) : (
+                                                            <>
+                                                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle', marginRight: '3px' }}>
+                                                                    <polyline points="3 6 5 6 21 6"></polyline>
+                                                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                                                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                                                                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                                                                </svg>
+                                                                Usuń
+                                                            </>
+                                                        )}
+                                                    </button>
+                                                ) : (
+                                                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>—</span>
+                                                )}
                                             </td>
                                         </tr>
                                     ))

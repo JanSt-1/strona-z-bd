@@ -5,6 +5,7 @@ const mysql = require('mysql2/promise');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const path = require('path');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -73,6 +74,16 @@ function authenticateToken(req, res, next) {
     });
 }
 
+// --- Middleware autoryzacji roli administratora ---
+function requireAdmin(req, res, next) {
+    if (req.user?.role !== 'admin') {
+        return res.status(403).json({
+            error: 'Brak uprawnień. Wymagana rola: admin.'
+        });
+    }
+    next();
+}
+
 // --- Endpointy API ---
 
 // 1. Health check (opcjonalny, pomocny weryfikacji serwera)
@@ -97,10 +108,61 @@ app.post('/api/zgloszenia', async (req, res) => {
         numer_fv
     } = req.body;
 
-    // Walidacja wymaganych pól
-    if (!imie || !nazwisko || !adres || !numer_telefonu || !email || !opis_usterki) {
+    const requiredFields = [
+        { name: 'imie', value: imie, max: 50 },
+        { name: 'nazwisko', value: nazwisko, max: 50 },
+        { name: 'adres', value: adres, max: 65535 },
+        { name: 'numer_telefonu', value: numer_telefonu, max: 20 },
+        { name: 'email', value: email, max: 100 },
+        { name: 'opis_usterki', value: opis_usterki, max: 65535 }
+    ];
+
+    // 1. Sprawdzenie typu tekstowego, obecności oraz limitu długości dla wymaganych pól
+    for (const field of requiredFields) {
+        if (typeof field.value !== 'string') {
+            return res.status(400).json({
+                error: `Pole "${field.name}" musi być tekstem.`
+            });
+        }
+        if (field.value.trim().length === 0) {
+            return res.status(400).json({
+                error: `Pole "${field.name}" nie może być puste.`
+            });
+        }
+        if (field.value.trim().length > field.max) {
+            return res.status(400).json({
+                error: `Pole "${field.name}" przekracza maksymalną dozwoloną długość (${field.max} znaków).`
+            });
+        }
+    }
+
+    // 2. Walidacja opcjonalnego pola numer_fv (jeśli zostało podane)
+    if (numer_fv !== undefined && numer_fv !== null && numer_fv !== '') {
+        if (typeof numer_fv !== 'string') {
+            return res.status(400).json({
+                error: 'Pole "numer_fv" musi być tekstem.'
+            });
+        }
+        if (numer_fv.trim().length > 50) {
+            return res.status(400).json({
+                error: 'Pole "numer_fv" przekracza maksymalną dozwoloną długość (50 znaków).'
+            });
+        }
+    }
+
+    // 3. Walidacja formatu adresu e-mail
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
         return res.status(400).json({
-            error: 'Wszystkie wymagane pola muszą być uzupełnione: imie, nazwisko, adres, numer_telefonu, email, opis_usterki.'
+            error: 'Pole "email" ma nieprawidłowy format adresu e-mail.'
+        });
+    }
+
+    // 4. Walidacja formatu numeru telefonu (+48 i dokładnie 9 cyfr)
+    const phoneRegex = /^\+48[\s-]*\d([\s-]*\d){8}$/;
+    if (!phoneRegex.test(numer_telefonu.trim())) {
+        return res.status(400).json({
+            error: 'Pole "numer_telefonu" musi zawierać prefiks +48 oraz dokładnie 9 cyfr.'
         });
     }
 
@@ -133,8 +195,19 @@ app.post('/api/zgloszenia', async (req, res) => {
     }
 });
 
-// 3. POST /api/login - Logowanie użytkownika i generowanie tokenu JWT (wyłącznie username)
-app.post('/api/login', async (req, res) => {
+// Rate limiting dla logowania (10 prób / 15 minut z 1 IP)
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minut
+    limit: 10, // 10 prób z jednego adresu IP
+    message: {
+        error: 'Zbyt wiele prób logowania z tego adresu IP. Spróbuj ponownie za 15 minut.'
+    },
+    standardHeaders: true, // Zwraca nagłówki RateLimit-*
+    legacyHeaders: false // Wyłącza nagłówki X-RateLimit-*
+});
+
+// 3. POST /api/login - Logowanie użytkownika i generowanie tokenu JWT (wyłącznie username, rate limited)
+app.post('/api/login', loginLimiter, async (req, res) => {
     const { username, password } = req.body;
     const loginUsername = (username || '').trim();
 
@@ -223,7 +296,12 @@ app.get('/api/zgloszenia', authenticateToken, async (req, res) => {
 const ALLOWED_STATUSES = ['nowe', 'w_realizacji', 'zakończone'];
 
 async function handleUpdateStatus(req, res) {
-    const { id } = req.params;
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) {
+        return res.status(400).json({
+            error: 'Nieprawidłowe ID zgłoszenia. Wymagana jest liczba całkowita.'
+        });
+    }
     const { status } = req.body;
 
     if (!status || !ALLOWED_STATUSES.includes(status)) {
@@ -260,8 +338,8 @@ async function handleUpdateStatus(req, res) {
 app.patch('/api/zgloszenia/:id/status', authenticateToken, handleUpdateStatus);
 app.put('/api/zgloszenia/:id/status', authenticateToken, handleUpdateStatus);
 
-// 6. DELETE /api/zgloszenia/:id - Usunięcie zgłoszenia (chroniony, wymaga JWT)
-app.delete('/api/zgloszenia/:id', authenticateToken, async (req, res) => {
+// 6. DELETE /api/zgloszenia/:id - Usunięcie zgłoszenia (chroniony, tylko admin)
+app.delete('/api/zgloszenia/:id', authenticateToken, requireAdmin, async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
         return res.status(400).json({
@@ -294,12 +372,7 @@ app.delete('/api/zgloszenia/:id', authenticateToken, async (req, res) => {
 });
 
 // 7. POST /api/admin/users - Tworzenie nowego użytkownika (chroniony, tylko admin)
-app.post('/api/admin/users', authenticateToken, async (req, res) => {
-    // Tylko admin może tworzyć konta
-    if (req.user.role !== 'admin') {
-        return res.status(403).json({ error: 'Brak uprawnień. Wymagana rola: admin.' });
-    }
-
+app.post('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
     const { username, password, role = 'pracownik' } = req.body;
     const cleanUsername = (username || '').trim();
 
