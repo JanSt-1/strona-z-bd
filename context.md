@@ -16,8 +16,7 @@ Składa się z:
 - [x] Zainstalowano i skonfigurowano zależności produkcyjne: `express`, `mysql2`, `jsonwebtoken`, `bcrypt`, `dotenv`, `cors`.
 - [x] Przygotowano pliki konfiguracyjne `.env` oraz szablon `.env.example`.
 - [x] Utworzono i przetestowano skrypt inicjalizacyjny i seedujący `seed.js`:
-  - Automatycznie aplikuje schemat `schemat.sql` do bazy MySQL.
-  - Tworzy domyślne konto administratora (`admin@serwis.pl` / `admin123`) z solonym hashem bcrypt.
+  - Automatycznie aplikuje schemat `schemat.sql` do bazy MySQL (bez tworzenia domyślnych kont użytkowników).
 - [x] Usunięto dane demonstracyjne z tabeli `zgloszenia` oraz usunięto automatyczne wstawianie przykładowych zgłoszeń z pliku `seed.js`.
 - [x] Zaimplementowano kompletny serwer w `index.js`:
   - Połączenie z bazą MySQL z wykorzystaniem puli połączeń `mysql2/promise`.
@@ -66,7 +65,7 @@ strona_z_bd/
 ├── package.json             # Zależności npm i skrypty startowe
 ├── package-lock.json        # Zablokowane wersje pakietów npm
 ├── schemat.sql              # Struktura tabel MySQL (zgloszenia, uzytkownicy)
-├── seed.js                  # Skrypt inicjalizujący bazę i tworzący konto admina
+├── seed.js                  # Skrypt inicjalizujący schemat bazy danych
 └── serwis-panel/
     └── backend/
         ├── index.js         # Mostek uruchamiający główny serwer

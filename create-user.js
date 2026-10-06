@@ -16,7 +16,7 @@ require('dotenv').config();
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcrypt');
 
-const [,, username, password, role = 'pracownik', email = null] = process.argv;
+const [, , username, password, role = 'pracownik', email = null] = process.argv;
 
 if (!username || !password) {
     console.error('❌ Użycie: node create-user.js <nazwa_uzytkownika> <haslo> [rola] [email]');
@@ -38,7 +38,7 @@ async function createUser() {
             conn = await mysql.createConnection({
                 host: process.env.DB_HOST || 'localhost',
                 user: process.env.DB_USER || 'root',
-                password: process.env.DB_PASSWORD || '5476',
+                password: process.env.DB_PASSWORD || '',
                 database: process.env.DB_NAME || 'serwis_db',
             });
         } catch (err) {

@@ -14,7 +14,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'domyslny_tajny_klucz_jwt_zmien_w_e
 let currentPool = mysql.createPool({
     host: process.env.DB_HOST || 'localhost',
     user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '5476',
+    password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'serwis_db',
     port: Number(process.env.DB_PORT) || 3306,
     waitForConnections: true,

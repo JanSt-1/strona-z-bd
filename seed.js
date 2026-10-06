@@ -1,6 +1,5 @@
 require('dotenv').config();
 const mysql = require('mysql2/promise');
-const bcrypt = require('bcrypt');
 const fs = require('fs');
 const path = require('path');
 
@@ -60,28 +59,8 @@ async function seed() {
             console.warn('Uwaga przy sprawdzaniu kolumny username:', migErr.message);
         }
 
-        // Sprawdzenie czy istnieje użytkownik admin
-        const [users] = await connection.query('SELECT id, username, email FROM uzytkownicy WHERE username = ? OR email = ?', ['admin', 'admin@serwis.pl']);
-        
-        if (users.length === 0) {
-            const defaultPassword = 'admin123';
-            const saltRounds = 10;
-            const passwordHash = await bcrypt.hash(defaultPassword, saltRounds);
-
-            await connection.query(
-                'INSERT INTO uzytkownicy (username, email, password_hash, role) VALUES (?, ?, ?, ?)',
-                ['admin', 'admin@serwis.pl', passwordHash, 'admin']
-            );
-            console.log('✅ Utworzono domyślne konto administratora:');
-            console.log('   Nazwa użytkownika: admin');
-            console.log('   Email: admin@serwis.pl');
-            console.log(`   Hasło: ${defaultPassword}`);
-        } else {
-            if (!users[0].username) {
-                await connection.query("UPDATE uzytkownicy SET username = 'admin' WHERE id = ?", [users[0].id]);
-            }
-            console.log('ℹ️ Konto administratora (login: admin) już istnieje w bazie.');
-        }
+        // Inicjalizacja tabeli użytkowników i zgłoszeń (użytkownicy tworzeni są przez create-user.js)
+        console.log('ℹ️ Tabele bazy danych są gotowe. Użytkowników twórz za pomocą: node create-user.js');
 
         // Inicjalizacja tabeli zgłoszeń (bez domyślnych danych testowych)
         console.log('ℹ️ Tabela zgłoszeń gotowa na nowe zgłoszenia.');
