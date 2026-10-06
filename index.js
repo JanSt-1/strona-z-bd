@@ -90,7 +90,7 @@ const pool = new Proxy({}, {
 app.use(cors());
 app.use(express.json());
 // Serwowanie plików statycznych (np. index.html)
-app.use(express.static(__dirname));
+app.use(express.static(path.join(__dirname, 'public')));
 
 // --- Middleware autoryzacji JWT ---
 function authenticateToken(req, res, next) {
