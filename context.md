@@ -1,54 +1,53 @@
 # Kontekst Projektu: System Obsługi Zgłoszeń Serwisowych (Express.js + MySQL + JWT)
 
 ## 1. Przegląd i Cel Projektu
-Projekt to pełny system backendowy i frontendowy do rejestracji i obsługi zgłoszeń serwisowych urządzeń.
-Składa się z:
-- Serwera **Express.js** łączącego się asynchronicznie z bazą **MySQL** za pomocą puli połączeń (`mysql2/promise`).
-- Publicznego punktu przyjmowania zgłoszeń serwisowych (`POST /api/zgloszenia`).
-- Modułu uwierzytelniania pracowników/administratorów opartego o nazwę użytkownika (`username`), haszowanie haseł **bcrypt** oraz **JWT** (`POST /api/login`).
-- Chronionego punktu pobierania listy zgłoszeń (`GET /api/zgloszenia`) z middleware weryfikującym nagłówek `Authorization: Bearer <token>`.
-- Gotowego, estetycznego interfejsu webowego (`index.html`) z formularzem dla klientów oraz panelem zarządzania dla pracowników serwisu.
+Projekt to pełny system backendowy i frontendowy (SPA) do rejestracji i obsługi zgłoszeń serwisowych urządzeń.
+Aplikacja składa się z:
+- **Backendu w Express.js (v5)**:
+  - Asynchroniczne połączenie z bazą **MySQL** z pulą połączeń (`mysql2/promise`).
+  - Publiczny endpoint przyjmowania zgłoszeń serwisowych (`POST /api/zgloszenia`) z rygorystyczną walidacją pól.
+  - Moduł uwierzytelniania pracowników/administratorów oparty o nazwę użytkownika (`username`), haszowanie haseł **bcrypt** oraz tokeny **JWT** (`POST /api/login`) zabezpieczony **rate limiterem** (10 prób / 15 min).
+  - Kontrola uprawnień i ról (RBAC): role `admin` oraz `pracownik`.
+  - Chronione endpointy zarządzania zgłoszeniami: pobieranie listy (`GET /api/zgloszenia`), aktualizacja statusu (`PATCH` / `PUT /api/zgloszenia/:id/status`) oraz usuwanie zgłoszeń (tylko rola `admin`: `DELETE /api/zgloszenia/:id`).
+  - Chroniony endpoint administracyjny do tworzenia użytkowników (`POST /api/admin/users`, tylko `admin`).
+  - Serwowanie plików statycznych (`public/`) bezpośrednio przez Express.
+- **Narzędzia CLI**:
+  - `create-user.js` do bezpiecznego tworzenia kont pracowników i administratorów w bazie z haszowaniem bcrypt.
+  - `seed.js` do automatycznego wgrywania schematu bazy danych `schemat.sql`.
+- **Frontend SPA (React 18)**:
+  - Zlokalizowany w katalogu `public/index.html` (React + ReactDOM + Babel Standalone).
+  - Publiczny formularz zgłoszeniowy z maskowaniem/walidacją numeru telefonu (`+48 ` i 9 cyfr).
+  - Panel pracownika z logowaniem, tabelą zgłoszeń, zmianą statusu (interaktywny przycisk i select), usuwaniem (dla admina) oraz reaktywnym stanem.
+  - Automatyczna obsługa wygaśnięcia lub sfałszowania sesji: funkcja `handleAuthError` i `apiFetch` dynamicznie pobierają token z `localStorage.getItem('serwis_token')`, natychmiast wylogowując użytkownika w przypadku otrzymania kodu `401` lub `403` (np. przy manualnej zmianie tokenu w DevTools Local Storage).
 
 ---
 
-## 2. Co zostało zrobione
-- [x] Zainicjalizowano `package.json` ze skryptami (`start`, `dev`, `seed`).
-- [x] Zainstalowano i skonfigurowano zależności produkcyjne: `express`, `mysql2`, `jsonwebtoken`, `bcrypt`, `dotenv`, `cors`.
-- [x] Przygotowano pliki konfiguracyjne `.env` oraz szablon `.env.example`.
-- [x] Utworzono i przetestowano skrypt inicjalizacyjny i seedujący `seed.js`:
-  - Automatycznie aplikuje schemat `schemat.sql` do bazy MySQL (bez tworzenia domyślnych kont użytkowników).
-- [x] Usunięto dane demonstracyjne z tabeli `zgloszenia` oraz usunięto automatyczne wstawianie przykładowych zgłoszeń z pliku `seed.js`.
-- [x] Zaimplementowano kompletny serwer w `index.js`:
-  - Połączenie z bazą MySQL z wykorzystaniem puli połączeń `mysql2/promise`.
-  - Middleware parsujący JSON (`express.json()`).
-  - Middleware `cors()` do obsługi zapytań z przeglądarki.
-  - Serwowanie plików statycznych (`express.static`).
-  - Middleware `authenticateToken` weryfikujący token JWT z nagłówka `Authorization`.
-  - `POST /api/zgloszenia`: publiczny endpoint z walidacją pól.
-  - `POST /api/login`: weryfikacja użytkownika w bazie MySQL, porównanie hashy bcrypt, wygenerowanie tokenu JWT ważnego 24h.
-  - `GET /api/zgloszenia`: chroniony endpoint zwracający zgłoszenia posortowane chronologicznie.
-  - `PATCH /api/zgloszenia/:id/status`: chroniony endpoint do aktualizacji statusu zgłoszenia (`nowe`, `w_realizacji`, `zakończone`).
-  - `DELETE /api/zgloszenia/:id`: chroniony endpoint do trwałego usuwania zgłoszenia z bazy (walidacja ID, autoryzacja JWT, weryfikacja istnienia rekordu 404).
-  - `GET /api/health`: endpoint sprawdzający stan serwera i bazy danych.
-- [x] Utworzono mostek w `serwis-panel/backend/index.js`, umożliwiający uruchomienie serwera również bezpośrednio z tego podkatalogu.
-- [x] Przepisano frontend w `index.html` na pełnoprawną aplikację **React 18**:
-  - Reaktywne zarządzanie stanem za pomocą hooków (`useState`, `useEffect`).
-  - Podział na komponenty: `App`, `Header`, `PublicTicketForm`, `LoginForm`, `Dashboard`, `StatusControl`, `Alert`.
-  - Składanie zgłoszeń przez klientów z natychmiastowym feedbackiem w stanie Reacta.
-  - Logowanie pracowników serwisu za pomocą JWT z zapisem do `localStorage` i reaktywną synchronizacją sesji.
-  - Podgląd i odświeżanie tabeli zgłoszeń serwisowych ze statusami i datami.
-  - Interaktywną zmianę statusu zgłoszenia: dedykowany przycisk akcji (np. `➔ W realizacji`, `✔ Zakończ`) oraz rozwijana lista wyboru ze wszystkimi dozwolonymi statusami.
-  - Kontrolowane pole numeru telefonu w React z domyślnym prefiksem `+48 `, blokadą usuwania prefiksu, wymuszeniem wprowadzania wyłącznie cyfr oraz czytelnym formatowaniem (`+48 XXX XXX XXX`).
-  - Dedykowany przycisk usunięcia zgłoszenia w panelu pracownika z potwierdzeniem (`window.confirm`), blokadą w trakcie usuwania (`Usuwanie...`), natychmiastową reaktywną aktualizacją tabeli oraz powiadomieniem alert.
-- [x] Dodano automatyczny fallback dla hasła bazy danych w `index.js` i `seed.js` (jeśli hasło z `.env` zostanie odrzucone przez lokalny serwer MySQL, serwer automatycznie podejmuje próbę połączenia z domyślnym pustym hasłem, zapobiegając awarii aplikacji).
-- [x] Zmiana logowania do panelu pracownika z adresu email na **nazwę użytkownika** (`username`):
-  - Zaktualizowano schemat bazy w `schemat.sql` oraz zaaplikowano migrację tabeli `uzytkownicy` (dodano kolumnę `username VARCHAR(50) NOT NULL UNIQUE`, kolumnę `email` oznaczono jako opcjonalną).
-  - Wdrożono auto-migrację przy uruchomieniu serwera w `index.js` oraz w skrypcie `seed.js` (automatyczne dodanie kolumny `username` i uzupełnienie dla istniejących kont).
-  - Zaktualizowano endpoint `POST /api/login` (wymóg podania pola `username`, zwrot `username` w obiekcie użytkownika i tokenie JWT).
-  - Zaktualizowano endpoint `POST /api/admin/users` oraz narzędzie CLI `create-user.js` do obsługi tworzenia kont z nazwą użytkownika.
-  - Zaktualizowano formularz logowania `LoginForm` w `index.html` (etykieta i pole tekstowe „Nazwa użytkownika” z `placeholder="np. admin"`).
-  - Zaktualizowano badge użytkownika w nagłówku panelu pracownika (`Dashboard`), wyświetlający `username`.
-- [x] Przeprowadzono automatyczne testy integracyjne każdego endpointu (kod 201 dla POST, 401 dla nieautoryzowanego GET, 200 z tokenem dla POST /login, 200 dla autoryzowanego GET, 200 dla PATCH /api/zgloszenia/:id/status, 200 dla DELETE /api/zgloszenia/:id, 400 dla nieprawidłowego ID, 404 dla powtórnego usunięcia, test logowania nową nazwą użytkownika i tworzenia pracownika).
+## 2. Co zostało zrobione i aktualny stan techniczny
+
+- [x] **Backend & Baza Danych:**
+  - Zainicjalizowano `package.json` ze skryptami (`start`, `dev`, `seed`).
+  - Skonfigurowano zależności: `express` (v5), `mysql2`, `jsonwebtoken`, `bcrypt`, `dotenv`, `cors`, `express-rate-limit`.
+  - Zapewniono bezpieczną obsługę `JWT_SECRET` (aplikacja zatrzymuje start, gdy klucz nie jest zdefiniowany w `.env`).
+  - Przygotowano pliki `.env` oraz `.env.example`.
+  - Utworzono `schemat.sql` oraz skrypt `seed.js` (aplikuje schemat bazy bez generowania zbędnych danych demo).
+  - Utworzono skrypt CLI `create-user.js` do dodawania użytkowników z rolami `admin` i `pracownik`.
+  - Zaimplementowano model ról (RBAC): middleware `authenticateToken` oraz `requireAdmin`.
+  - Zaimplementowano `loginLimiter` (`express-rate-limit`) ograniczający brute-force na `POST /api/login` (10 prób / 15 min z 1 IP).
+  - Zaimplementowano bezpieczne usuwanie zgłoszeń (`DELETE /api/zgloszenia/:id`) dostępne wyłącznie dla roli `admin`.
+  - Zaimplementowano endpoint tworzenia użytkowników (`POST /api/admin/users`) dla roli `admin`.
+  - Serwowanie katalogu `public/` przez Express (`app.use(express.static(path.join(__dirname, 'public')))`).
+
+- [x] **Frontend (React 18 w `public/index.html`):**
+  - Reaktywne komponenty: `App`, `Header`, `PublicTicketForm`, `LoginForm`, `Dashboard`, `StatusControl`, `Alert`.
+  - Formularz publiczny z formatowaniem numeru telefonu (`+48 XXX XXX XXX`, blokada kasowania prefiksu, filtr nie-cyfr).
+  - Logowanie z zapisem do `localStorage` (`serwis_token`, `serwis_user`) i natychmiastową reakcją interfejsu.
+  - Wyświetlanie etykiety roli zalogowanego użytkownika (badge `admin` / `pracownik`).
+  - Przycisk usuwania zgłoszeń widoczny i aktywny wyłącznie dla użytkowników z rolą `admin`.
+  - Interaktywna zmiana statusu: przycisk przejścia w kolejny krok cyklu (`nowe` -> `w_realizacji` -> `zakończone`) oraz lista rozwijana `<select>`.
+  - **Dynamiczne sprawdzanie tokenu i obsługa 401/403:**
+    - Wydzielona funkcja `handleAuthError(response)` wywołująca `onLogout()`.
+    - Pomocnik `apiFetch(endpoint, options)` pobierający `localStorage.getItem('serwis_token')` w locie przed każdym zapytaniem.
+    - Testowane zachowanie: manualna modyfikacja lub usunięcie klucza `serwis_token` w DevTools Local Storage skutkuje natychmiastowym wylogowaniem i powrotem do formularza logowania przy próbie wykonania operacji (np. zmiany statusu w `handleUpdateStatus`, pobrania w `fetchTickets` czy usunięcia w `handleDeleteTicket`).
 
 ---
 
@@ -56,17 +55,20 @@ Składa się z:
 
 ```
 strona_z_bd/
-├── .env                     # Zmienne środowiskowe (hasła, porty, klucze JWT) - ignorowane w git
-├── .env.example             # Szablon zmiennych środowiskowych do repozytorium
-├── .gitignore               # Ignorowanie node_modules, .env, plików logów
-├── context.md               # [TEN PLIK] Pełny kontekst projektu, stan prac i dokumentacja, głównie dla agentów AI
-├── index.html               # Frontend: formularz zgłoszeniowy + panel pracownika (SPA)
-├── index.js                 # Główny serwer Express.js + routing API + middleware JWT
-├── package.json             # Zależności npm i skrypty startowe
+├── .env                     # Zmienne środowiskowe (ignorowane w git)
+├── .env.example             # Szablon konfiguracji zmiennych środowiskowych
+├── .gitignore               # Wykluczenia gita: node_modules, .env
+├── context.md               # [TEN PLIK] Pełny, aktualny kontekst dla deweloperów i agentów AI
+├── create-user.js           # CLI: tworzenie kont użytkowników (admin / pracownik) z hashowaniem bcrypt
+├── index.js                 # Główny serwer Express.js (routing API, middleware JWT, RBAC, rate-limiting)
+├── package.json             # Zależności i skrypty npm
 ├── package-lock.json        # Zablokowane wersje pakietów npm
-├── schemat.sql              # Struktura tabel MySQL (zgloszenia, uzytkownicy)
-├── seed.js                  # Skrypt inicjalizujący schemat bazy danych
-└── node_modules/            # Zależności backendu
+├── schemat.sql              # Schemat bazy MySQL (tabele: zgloszenia, uzytkownicy)
+├── seed.js                  # Skrypt inicjalizujący schemat bazy MySQL
+├── public/                  # Katalog serwowany statycznie przez Express
+│   ├── index.html           # Główny interfejs SPA (React 18 + Babel, formularz klienta + panel pracownika)
+│   └── logo_mentor4.svg     # Logo systemu wyświetlane w nagłówku
+└── node_modules/            # Zainstalowane moduły Node.js
 ```
 
 ---
@@ -80,7 +82,7 @@ DB_USER=root
 DB_PASSWORD=
 DB_NAME=serwis_db
 DB_PORT=3306
-JWT_SECRET=klucz_jwt
+JWT_SECRET=super_tajny_klucz_jwt_zmien_w_produkcji
 ```
 
 ---
@@ -96,9 +98,9 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 | `imie` | `VARCHAR(50) NOT NULL` | Imię zgłaszającego |
 | `nazwisko` | `VARCHAR(50) NOT NULL` | Nazwisko zgłaszającego |
 | `adres` | `TEXT NOT NULL` | Adres klienta / odbioru sprzętu |
-| `numer_telefonu` | `VARCHAR(20) NOT NULL` | Telefon kontaktowy |
+| `numer_telefonu` | `VARCHAR(20) NOT NULL` | Telefon kontaktowy (+48 i 9 cyfr) |
 | `email` | `VARCHAR(100) NOT NULL` | Email klienta |
-| `opis_usterki` | `TEXT NOT NULL` | Treść zgłoszenia, opis awarii |
+| `opis_usterki` | `TEXT NOT NULL` | Treść zgłoszenia, opis usterki |
 | `numer_fv` | `VARCHAR(50) NULL` | Opcjonalny numer faktury lub paragonu |
 | `status` | `ENUM('nowe', 'w_realizacji', 'zakończone')` | Domyślnie `'nowe'` |
 | `created_at` | `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` | Data i czas rejestracji |
@@ -108,20 +110,19 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 | :--- | :--- | :--- |
 | `id` | `INT AUTO_INCREMENT PRIMARY KEY` | Unikalny identyfikator użytkownika |
 | `username` | `VARCHAR(50) NOT NULL UNIQUE` | Nazwa użytkownika (login do panelu) |
-| `email` | `VARCHAR(100) NULL UNIQUE` | Opcjonalny adres email użytkownika |
 | `password_hash` | `VARCHAR(255) NOT NULL` | Hash hasła (bcrypt) |
-| `role` | `VARCHAR(20) DEFAULT 'admin'` | Rola uprawnień (`admin`, `pracownik`) |
+| `role` | `VARCHAR(20) DEFAULT 'pracownik'` | Rola: `'admin'` lub `'pracownik'` |
 | `created_at` | `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` | Data utworzenia konta |
 
 ---
 
 ## 6. Dokumentacja Endpointów API
 
-### 1. Rejestracja nowego zgłoszenia (Publiczne)
+### 1. Rejestracja nowego zgłoszenia (Publiczny)
 - **Metoda:** `POST`
 - **Ścieżka:** `/api/zgloszenia`
 - **Headers:** `Content-Type: application/json`
-- **Body (JSON):**
+- **Body:**
 ```json
 {
   "imie": "Jan",
@@ -129,33 +130,33 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
   "adres": "ul. Kwiatowa 5, Warszawa",
   "numer_telefonu": "+48 600 700 800",
   "email": "jan.kowalski@example.com",
-  "opis_usterki": "Ekran nie działa.",
+  "opis_usterki": "Urządzenie nie włącza się po burzy.",
   "numer_fv": "FV/2026/0123"
 }
 ```
-- **Odpowiedź sukcesu (201 Created):**
+- **Odpowiedź (201 Created):**
 ```json
 {
   "message": "Zgłoszenie serwisowe zostało pomyślnie przyjęte.",
   "id": 1
 }
 ```
-- **Błędy:** `400 Bad Request` (brak wymaganych pól), `500 Internal Server Error`.
+- **Błędy:** `400 Bad Request` (brak wymaganych pól, zły format telefonu/emaila, przekroczenie limitu znaków), `500 Internal Server Error`.
 
 ---
 
-### 2. Logowanie pracownika / admina (Publiczne, generuje JWT)
+### 2. Logowanie do panelu (Publiczny, Rate-Limited)
 - **Metoda:** `POST`
 - **Ścieżka:** `/api/login`
-- **Headers:** `Content-Type: application/json`
-- **Body (JSON):**
+- **Ograniczenie:** `10 prób / 15 minut` na dany adres IP (`loginLimiter`).
+- **Body:**
 ```json
 {
   "username": "admin",
-  "password": "admin123"
+  "password": "tajne_haslo"
 }
 ```
-- **Odpowiedź sukcesu (200 OK):**
+- **Odpowiedź (200 OK):**
 ```json
 {
   "message": "Zalogowano pomyślnie.",
@@ -163,56 +164,37 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
   "user": {
     "id": 1,
     "username": "admin",
-    "email": "admin@serwis.pl",
     "role": "admin"
   }
 }
 ```
-- **Błędy:** `400 Bad Request` (brak nazwy użytkownika lub hasła), `401 Unauthorized` (błędna nazwa użytkownika lub hasło).
+- **Błędy:** `400 Bad Request` (brak username/hasła), `401 Unauthorized` (błędne dane), `429 Too Many Requests` (przekroczony limit prób).
 
 ---
 
-### 3. Pobieranie listy zgłoszeń (Chronione)
+### 3. Pobieranie listy zgłoszeń (Chroniony)
 - **Metoda:** `GET`
 - **Ścieżka:** `/api/zgloszenia`
 - **Headers:** `Authorization: Bearer <TOKEN_JWT>`
-- **Odpowiedź sukcesu (200 OK):**
-```json
-[
-  {
-    "id": 1,
-    "imie": "Jan",
-    "nazwisko": "Kowalski",
-    "adres": "ul. Kwiatowa 5, Warszawa",
-    "numer_telefonu": "+48 600 700 800",
-    "email": "jan.kowalski@example.com",
-    "opis_usterki": "Ekran nie działa.",
-    "numer_fv": "FV/2026/0123",
-    "status": "nowe",
-    "created_at": "2026-10-05T08:04:13.000Z"
-  }
-]
-```
-- **Błędy autoryzacji:**
-  - `401 Unauthorized`: brak nagłówka `Authorization` lub brak tokenu.
-  - `403 Forbidden`: nieprawidłowy, zmodyfikowany lub wygasły token JWT.
+- **Uprawnienia:** `admin`, `pracownik`
+- **Odpowiedź (200 OK):** Tablica obiektów zgłoszeń posortowana od najnowszego (`ORDER BY created_at DESC`).
+- **Błędy:** `401 Unauthorized` (brak tokenu), `403 Forbidden` (nieprawidłowy lub wygasły token).
 
 ---
 
-### 4. Aktualizacja statusu zgłoszenia (Chronione)
-- **Metoda:** `PATCH` (lub `PUT`)
+### 4. Aktualizacja statusu zgłoszenia (Chroniony)
+- **Metoda:** `PATCH` lub `PUT`
 - **Ścieżka:** `/api/zgloszenia/:id/status`
-- **Headers:**
-  - `Content-Type: application/json`
-  - `Authorization: Bearer <TOKEN_JWT>`
-- **Body (JSON):**
+- **Headers:** `Content-Type: application/json`, `Authorization: Bearer <TOKEN_JWT>`
+- **Uprawnienia:** `admin`, `pracownik`
+- **Body:**
 ```json
 {
   "status": "w_realizacji"
 }
 ```
-*Dozwolone wartości statusu:* `"nowe"`, `"w_realizacji"`, `"zakończone"`.
-- **Odpowiedź sukcesu (200 OK):**
+*Dozwolone statusy:* `"nowe"`, `"w_realizacji"`, `"zakończone"`.
+- **Odpowiedź (200 OK):**
 ```json
 {
   "message": "Status zgłoszenia został zaktualizowany.",
@@ -220,35 +202,54 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
   "status": "w_realizacji"
 }
 ```
-- **Błędy:**
-  - `400 Bad Request`: niedozwolony status (inny niż dozwolone).
-  - `401 Unauthorized` / `403 Forbidden`: brak lub nieprawidłowy token JWT.
-  - `404 Not Found`: brak zgłoszenia o podanym ID.
+- **Błędy:** `400 Bad Request` (niedozwolony status lub złe ID), `401 / 403` (brak/zły token), `404 Not Found` (brak zgłoszenia).
 
 ---
 
-### 5. Usunięcie zgłoszenia serwisowego (Chronione)
+### 5. Usunięcie zgłoszenia (Chroniony, Tylko Admin)
 - **Metoda:** `DELETE`
 - **Ścieżka:** `/api/zgloszenia/:id`
-- **Headers:**
-  - `Authorization: Bearer <TOKEN_JWT>`
-- **Parametry URL:** `id` (liczba całkowita - identyfikator usuwanego zgłoszenia)
-- **Odpowiedź sukcesu (200 OK):**
+- **Headers:** `Authorization: Bearer <TOKEN_JWT>`
+- **Uprawnienia:** Tylko `admin` (middleware `requireAdmin`)
+- **Odpowiedź (200 OK):**
 ```json
 {
   "message": "Zgłoszenie zostało pomyślnie usunięte.",
   "id": 1
 }
 ```
-- **Błędy:**
-  - `400 Bad Request`: nieprawidłowe ID (nie będące liczbą całkowitą).
-  - `401 Unauthorized` / `403 Forbidden`: brak lub nieprawidłowy token JWT.
-  - `404 Not Found`: brak zgłoszenia o podanym ID w bazie.
-  - `500 Internal Server Error`: błąd serwera/bazy danych podczas usuwania.
+- **Błędy:** `400 Bad Request` (złe ID), `401 / 403` (brak tokenu, nieprawidłowy token lub rola inna niż admin), `404 Not Found` (zgłoszenie nie istnieje).
 
 ---
 
-### 6. Health-Check
+### 6. Tworzenie nowego konta użytkownika przez API (Chroniony, Tylko Admin)
+- **Metoda:** `POST`
+- **Ścieżka:** `/api/admin/users`
+- **Headers:** `Content-Type: application/json`, `Authorization: Bearer <TOKEN_JWT>`
+- **Uprawnienia:** Tylko `admin` (middleware `requireAdmin`)
+- **Body:**
+```json
+{
+  "username": "nowy_serwisant",
+  "password": "HasloDoKonta123",
+  "role": "pracownik"
+}
+```
+*Dozwolone role:* `"admin"`, `"pracownik"` (domyślnie `"pracownik"`).
+- **Odpowiedź (201 Created):**
+```json
+{
+  "message": "Użytkownik został pomyślnie utworzony.",
+  "id": 2,
+  "username": "nowy_serwisant",
+  "role": "pracownik"
+}
+```
+- **Błędy:** `400 Bad Request`, `401 / 403` (brak uprawnień admina), `409 Conflict` (użytkownik już istnieje).
+
+---
+
+### 7. Health Check
 - **Metoda:** `GET`
 - **Ścieżka:** `/api/health`
 - **Odpowiedź (200 OK):**
@@ -256,62 +257,68 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 {
   "status": "ok",
   "database": "connected",
-  "timestamp": "2026-10-05T08:05:00.000Z"
+  "timestamp": "2026-10-06T12:00:00.000Z"
 }
 ```
 
 ---
 
-## 7. Instrukcja uruchomienia i testowania
+## 7. Instrukcja uruchomienia i obsługi
 
 ### Wymagania wstępne:
-1. Zainstalowany Node.js (wersja >= 18).
-2. Działający serwer MySQL (np. XAMPP, Laragon, MariaDB, Docker lub lokalna usługa MySQL na porcie 3306).
+1. Node.js (>= 18)
+2. Uruchomiony serwer MySQL (np. XAMPP, MariaDB, Docker)
 
-### Krok 1: Inicjalizacja bazy i seed danych
+### Krok 1: Wgranie schematu bazy
 ```bash
 npm run seed
 ```
 
-### Krok 2: Uruchomienie serwera
-Standardowy start:
+### Krok 2: Utworzenie pierwszego konta administratora
+```bash
+node create-user.js admin TwojeBezpieczneHaslo admin
+```
+Opcjonalnie utworzenie zwykłego pracownika:
+```bash
+node create-user.js serwisant HasloPracownika pracownik
+```
+
+### Krok 3: Uruchomienie aplikacji
+Tryb produkcyjny:
 ```bash
 npm start
 ```
-Tryb deweloperski z auto-restartem (`node --watch`):
+Tryb deweloperski z przeładowaniem (`--watch`):
 ```bash
 npm run dev
 ```
-
-Serwer domyślnie nasłuchuje na `http://localhost:3000`.
-
-### Krok 3: Otwarcie aplikacji w przeglądarce
-Otwórz w przeglądarce:
-```
-http://localhost:3000
-```
-- Zakładka **"Nowe zgłoszenie"**: pozwala przetestować `POST /api/zgloszenia`.
-- Zakładka **"Panel pracownika"**: pozwala przetestować `POST /api/login` oraz chroniony `GET /api/zgloszenia`.
+Domyślny adres: `http://localhost:3000`
 
 ---
 
-## 8. Stan prac: Co jest aktualnie w toku (In Progress)
-- Weryfikacja działania w środowisku lokalnym użytkownika oraz testy panelu pracownika (logowanie nazwą użytkownika, usuwanie zgłoszeń, aktualizacja statusu).
+## 8. Wskazówki i konwencje dla Agentów AI
+
+1. **Struktura frontendu:**
+   - Cały frontend mieści się w `public/index.html`.
+   - Zasoby statyczne znajdują się w folderze `public/`.
+   - Zapytania autoryzowane w panelu pracownika (`Dashboard`) muszą korzystać z `apiFetch`, aby token był pobierany dynamicznie z `localStorage.getItem('serwis_token')`, a błędy 401/403 automatycznie delegowane do `handleAuthError(response)`.
+2. **Autoryzacja i role:**
+   - W JWT zapisywane są: `id`, `username`, `role`.
+   - Każdy chroniony endpoint wymaga `authenticateToken`.
+   - Operacje destrukcyjne (usuwanie `DELETE /api/zgloszenia/:id`) oraz administracyjne (`POST /api/admin/users`) wymagają dodatkowo `requireAdmin`.
+3. **Baza danych:**
+   - Wszystkie zapytania SQL używają zapytań parametryzowanych (`?`) za pośrednictwem puli połączeń `mysql2/promise`.
+   - Nie dodawać twardo zakodowanych haseł ani sekretów JWT do kodu.
 
 ---
 
-## 9. Stan prac: Co jest do zrobienia (Backlog / Sugestie rozwoju)
-1. **[ZREALIZOWANE] Logowanie nazwą użytkownika zamiast emaila:**
-   - Zmiana schematu bazy danych, endpointu `POST /api/login` i formularza React na wymaganie nazwy użytkownika (`username`).
-2. **[ZREALIZOWANE] Zmiana statusu zgłoszenia:**
-   - Dodano endpoint `PATCH /api/zgloszenia/:id/status` oraz przycisk i listę wyboru w panelu pracownika.
-3. **[ZREALIZOWANE] Usuwanie zgłoszeń z poziomu panelu pracownika:**
-   - Dodano chroniony endpoint `DELETE /api/zgloszenia/:id` oraz przycisk `Usuń` z potwierdzeniem dialogowym w tabeli panelu pracownika.
-4. **Filtrowanie i wyszukiwanie zgłoszeń:**
-   - Filtry w `GET /api/zgloszenia?status=nowe&search=Kowalski`.
-5. **Powiadomienia E-mail:**
-   - Wysyłka potwierdzenia przyjęcia zgłoszenia na adres e-mail klienta (np. za pomocą `nodemailer`).
-6. **Wyszukiwarka statusu zgłoszenia dla klienta:**
-   - Publiczny endpoint `GET /api/zgloszenia/status/:id` lub po numerze telefonu i ID, aby klient mógł śledzić postęp bez konieczności logowania się do panelu pracownika.
-7. **Obsługa załączników (np. zdjęcia usterki):**
-   - Dodanie pakietu `multer` i zapis zdjęć uszkodzeń sprzętu.
+## 9. Backlog / Sugestie dalszego rozwoju
+
+1. **Filtrowanie, wyszukiwanie i sortowanie:**
+   - Rozbudowa `GET /api/zgloszenia` o query params (np. `?status=nowe&search=Kowalski`).
+2. **Powiadomienia E-mail:**
+   - Automatyczny e-mail do klienta po zarejestrowaniu zgłoszenia lub zmianie statusu (`nodemailer`).
+3. **Publiczny podgląd statusu dla klienta:**
+   - Publiczna wyszukiwarka zgłoszenia po ID i numerze telefonu lub unikalnym tokenie zgłoszenia (bez konieczności logowania).
+4. **Załączniki / zdjęcia uszkodzeń:**
+   - Obsługa wgrywania zdjęć usterek (`multer`) z limitem rozmiaru i bezpieczną walidacją typu pliku.

@@ -69,17 +69,6 @@
             gap: 0.75rem;
         }
 
-        .brand-icon {
-            width: 42px;
-            height: 42px;
-            background: linear-gradient(135deg, var(--primary), var(--accent));
-            border-radius: 10px;
-            display: grid;
-            place-items: center;
-            font-size: 1.25rem;
-            box-shadow: 0 4px 15px rgba(0, 39, 20, 0.3);
-        }
-
         .brand h1 {
             font-size: 1.4rem;
             font-weight: 700;
@@ -129,7 +118,6 @@
         .nav-btn.active {
             background: var(--primary);
             color: #fff;
-            box-shadow: 0 2px 8px rgba(59, 246, 90, 0.35);
         }
 
         .card {
@@ -204,7 +192,6 @@
         input:focus,
         textarea:focus {
             border-color: var(--primary);
-            box-shadow: 0 0 0 2px rgba(1, 68, 18, 0.829);
         }
 
         textarea {
@@ -345,9 +332,9 @@
             border: 1px solid rgba(245, 158, 11, 0.3);
         }
 
-        .status-zakonczone {
+        .status-zakończone {
             background: rgba(51, 49, 49, 0.719);
-            color: #2667f5;
+            color: #5a80ff;
             border: 1px solid rgba(16, 185, 129, 0.3);
         }
 
@@ -785,7 +772,6 @@
                 'w_realizacji': { next: 'zakończone', label: '✔ Zakończ' },
                 'zakończone': { next: 'nowe', label: '↺ Do nowych' }
             };
-
             const curStatus = ticket.status || 'nowe';
             const nextConfig = nextStatusMap[curStatus] || { next: 'w_realizacji', label: 'Zmień status' };
 
@@ -829,17 +815,38 @@
                 setTimeout(() => setAlert(null), 5000);
             }
 
+            // Osobna funkcja sprawdzająca status 401 lub 403 i wylogowująca użytkownika w razie braku autoryzacji
+            function handleAuthError(response) {
+                if (response && (response.status === 401 || response.status === 403)) {
+                    onLogout();
+                    return true;
+                }
+                return false;
+            }
+
+            // Pomocnik do zapytań z tokenem — pobiera aktualny token z localStorage (obsługuje m.in. manualną zmianę w DevTools),
+            // dokłada nagłówek Authorization oraz wylogowuje przy kodach 401/403
+            async function apiFetch(endpoint, options = {}) {
+                const currentToken = localStorage.getItem('serwis_token');
+                const headers = {
+                    ...(options.headers || {}),
+                    'Authorization': `Bearer ${currentToken || ''}`
+                };
+                const url = endpoint.startsWith('http') ? endpoint : `${API_BASE}${endpoint}`;
+                const response = await fetch(url, { ...options, headers });
+
+                if (handleAuthError(response)) {
+                    return null;
+                }
+
+                return response;
+            }
+
             async function fetchTickets() {
                 setLoading(true);
                 try {
-                    const response = await fetch(`${API_BASE}/zgloszenia`, {
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    });
-
-                    if (response.status === 401 || response.status === 403) {
-                        onLogout();
-                        return;
-                    }
+                    const response = await apiFetch('/zgloszenia');
+                    if (!response || handleAuthError(response)) return;
 
                     const data = await response.json();
                     if (!response.ok) {
@@ -860,14 +867,12 @@
 
             async function handleUpdateStatus(id, newStatus) {
                 try {
-                    const response = await fetch(`${API_BASE}/zgloszenia/${id}/status`, {
+                    const response = await apiFetch(`/zgloszenia/${id}/status`, {
                         method: 'PATCH',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${token}`
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ status: newStatus })
                     });
+                    if (!response || handleAuthError(response)) return;
 
                     const data = await response.json();
                     if (!response.ok) {
@@ -891,17 +896,10 @@
 
                 setDeletingId(id);
                 try {
-                    const response = await fetch(`${API_BASE}/zgloszenia/${id}`, {
-                        method: 'DELETE',
-                        headers: {
-                            'Authorization': `Bearer ${token}`
-                        }
+                    const response = await apiFetch(`/zgloszenia/${id}`, {
+                        method: 'DELETE'
                     });
-
-                    if (response.status === 401 || response.status === 403) {
-                        onLogout();
-                        return;
-                    }
+                    if (!response || handleAuthError(response)) return;
 
                     const data = await response.json();
                     if (!response.ok) {
