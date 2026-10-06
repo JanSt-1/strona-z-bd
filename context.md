@@ -59,18 +59,14 @@ strona_z_bd/
 ├── .env                     # Zmienne środowiskowe (hasła, porty, klucze JWT) - ignorowane w git
 ├── .env.example             # Szablon zmiennych środowiskowych do repozytorium
 ├── .gitignore               # Ignorowanie node_modules, .env, plików logów
-├── context.md               # [TEN PLIK] Pełny kontekst projektu, stan prac i dokumentacja
+├── context.md               # [TEN PLIK] Pełny kontekst projektu, stan prac i dokumentacja, głównie dla agentów AI
 ├── index.html               # Frontend: formularz zgłoszeniowy + panel pracownika (SPA)
 ├── index.js                 # Główny serwer Express.js + routing API + middleware JWT
 ├── package.json             # Zależności npm i skrypty startowe
 ├── package-lock.json        # Zablokowane wersje pakietów npm
 ├── schemat.sql              # Struktura tabel MySQL (zgloszenia, uzytkownicy)
 ├── seed.js                  # Skrypt inicjalizujący schemat bazy danych
-└── serwis-panel/
-    └── backend/
-        ├── index.js         # Mostek uruchamiający główny serwer
-        ├── package.json     # Konfiguracja backendu
-        └── node_modules/    # Zależności backendu
+└── node_modules/            # Zależności backendu
 ```
 
 ---
@@ -84,7 +80,7 @@ DB_USER=root
 DB_PASSWORD=
 DB_NAME=serwis_db
 DB_PORT=3306
-JWT_SECRET=super_tajny_klucz_jwt_serwis_2026_bezpieczny
+JWT_SECRET=klucz_jwt
 ```
 
 ---
@@ -116,11 +112,6 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 | `password_hash` | `VARCHAR(255) NOT NULL` | Hash hasła (bcrypt) |
 | `role` | `VARCHAR(20) DEFAULT 'admin'` | Rola uprawnień (`admin`, `pracownik`) |
 | `created_at` | `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` | Data utworzenia konta |
-
-### Domyślne konto administratora (po wykonaniu `npm run seed`):
-- **Nazwa użytkownika:** `admin`
-- **Hasło:** `admin123`
-- **Email (opcjonalny):** `admin@serwis.pl`
 
 ---
 
