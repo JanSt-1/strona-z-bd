@@ -8,7 +8,11 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'domyslny_tajny_klucz_jwt_zmien_w_env';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    console.error('Brak JWT_SECRET w .env – nie startuję.');
+    process.exit(1);
+}
 
 // --- Konfiguracja puli połączeń do bazy MySQL ---
 let currentPool = mysql.createPool({
