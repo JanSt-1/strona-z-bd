@@ -106,7 +106,7 @@ app.post('/api/zgloszenia', async (req, res) => {
         email,
         opis_usterki,
         numer_fv
-    } = req.body;
+    } = req.body || {};
 
     const requiredFields = [
         { name: 'imie', value: imie, max: 50 },
@@ -117,7 +117,7 @@ app.post('/api/zgloszenia', async (req, res) => {
         { name: 'opis_usterki', value: opis_usterki, max: 65535 }
     ];
 
-    // 1. Sprawdzenie typu tekstowego, obecności oraz limitu długości dla wymaganych pól
+    // 1. Sprawdzenie typu tekstowego, obecności oraz limitu długości dla wymaganych pól (PRZED .trim())
     for (const field of requiredFields) {
         if (typeof field.value !== 'string') {
             return res.status(400).json({
@@ -136,7 +136,31 @@ app.post('/api/zgloszenia', async (req, res) => {
         }
     }
 
-    // 2. Walidacja opcjonalnego pola numer_fv (jeśli zostało podane)
+    // 2. Walidacja czy imię i nazwisko nie zawierają cyfr i składają się z liter
+    if (/\d/.test(imie)) {
+        return res.status(400).json({
+            error: 'Pole "imie" nie może zawierać cyfr.'
+        });
+    }
+    if (/\d/.test(nazwisko)) {
+        return res.status(400).json({
+            error: 'Pole "nazwisko" nie może zawierać cyfr.'
+        });
+    }
+
+    const nameRegex = /^[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ\s\-']+$/;
+    if (!nameRegex.test(imie.trim())) {
+        return res.status(400).json({
+            error: 'Pole "imie" może zawierać wyłącznie litery (brak cyfr i znaków specjalnych).'
+        });
+    }
+    if (!nameRegex.test(nazwisko.trim())) {
+        return res.status(400).json({
+            error: 'Pole "nazwisko" może zawierać wyłącznie litery (brak cyfr i znaków specjalnych).'
+        });
+    }
+
+    // 3. Walidacja opcjonalnego pola numer_fv (jeśli zostało podane)
     if (numer_fv !== undefined && numer_fv !== null && numer_fv !== '') {
         if (typeof numer_fv !== 'string') {
             return res.status(400).json({
@@ -159,7 +183,7 @@ app.post('/api/zgloszenia', async (req, res) => {
     }
 
     // 4. Walidacja formatu numeru telefonu (+48 i dokładnie 9 cyfr)
-    const phoneRegex = /^\+48[\s-]*\d([\s-]*\d){8}$/;
+    const phoneRegex = /^\+48\d{9}$/;
     if (!phoneRegex.test(numer_telefonu.trim())) {
         return res.status(400).json({
             error: 'Pole "numer_telefonu" musi zawierać prefiks +48 oraz dokładnie 9 cyfr.'

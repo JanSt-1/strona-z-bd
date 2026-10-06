@@ -541,6 +541,16 @@
             async function handleSubmit(e) {
                 e.preventDefault();
 
+                // Walidacja czy imię i nazwisko nie zawierają cyfr
+                if (/\d/.test(formData.imie)) {
+                    showAlert('Pole "Imię" nie może zawierać cyfr.', 'error');
+                    return;
+                }
+                if (/\d/.test(formData.nazwisko)) {
+                    showAlert('Pole "Nazwisko" nie może zawierać cyfr.', 'error');
+                    return;
+                }
+
                 // Walidacja numeru telefonu (musi zawierać co najmniej 9 cyfr po +48)
                 const cleanDigits = formData.numer_telefonu.replace(/\D/g, '').replace(/^48/, '');
                 if (cleanDigits.length < 9) {
@@ -556,7 +566,7 @@
                         body: JSON.stringify({
                             imie: formData.imie,
                             nazwisko: formData.nazwisko,
-                            numer_telefonu: formData.numer_telefonu,
+                            numer_telefonu: formData.numer_telefonu.replace(/\s+/g, ''),
                             email: formData.email,
                             adres: formData.adres,
                             numer_fv: formData.numer_fv || null,

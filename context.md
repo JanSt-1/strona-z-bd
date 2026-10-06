@@ -128,7 +128,7 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
   "imie": "Jan",
   "nazwisko": "Kowalski",
   "adres": "ul. Kwiatowa 5, Warszawa",
-  "numer_telefonu": "+48 600 700 800",
+  "numer_telefonu": "+48600700800",
   "email": "jan.kowalski@example.com",
   "opis_usterki": "Urządzenie nie włącza się po burzy.",
   "numer_fv": "FV/2026/0123"
