@@ -1,7 +1,7 @@
 # Kontekst Projektu: System Obsługi Zgłoszeń Serwisowych (Express.js + MySQL + JWT)
 
 ## 1. Przegląd i Cel Projektu
-Projekt to pełny system backendowy i frontendowy (SPA) do rejestracji i obsługi zgłoszeń serwisowych urządzeń.
+Projekt to pełny system backendowy i frontendowy (SPA) do rejestracji i obsługi zgłoszeń serwisowych.
 Aplikacja składa się z:
 - **Backendu w Express.js (v5)**:
   - Asynchroniczne połączenie z bazą **MySQL** z pulą połączeń (`mysql2/promise`).
