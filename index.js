@@ -26,67 +26,15 @@ let currentPool = mysql.createPool({
     queueLimit: 0
 });
 
-// Proxy dla puli połączeń zapewniające stabilne działanie nawet przy zmianie instancji puli w locie
-const pool = new Proxy({}, {
-    get(target, prop) {
-        return typeof currentPool[prop] === 'function' ? currentPool[prop].bind(currentPool) : currentPool[prop];
-    }
-});
-
-// Test połączenia z bazą danych przy starcie z automatycznym fallbackiem hasła
+// Test połączenia z bazą danych przy starcie
 (async () => {
     try {
         const connection = await currentPool.getConnection();
         console.log('✅ Połączono z bazą danych MySQL (serwis_db).');
         connection.release();
-
-        // Upewnij się, że kolumna username istnieje w tabeli uzytkownicy
-        try {
-            const [cols] = await pool.query("SHOW COLUMNS FROM uzytkownicy LIKE 'username'");
-            if (cols.length === 0) {
-                await pool.query("ALTER TABLE uzytkownicy ADD COLUMN username VARCHAR(50) NULL UNIQUE AFTER id");
-                await pool.query("UPDATE uzytkownicy SET username = SUBSTRING_INDEX(email, '@', 1) WHERE username IS NULL");
-                console.log('✅ Zaktualizowano schemat tabeli uzytkownicy (dodano kolumnę username).');
-            }
-        } catch (migErr) {
-            // Tabela może jeszcze nie istnieć przed pierwszym seedem
-        }
     } catch (err) {
-        if (err.code === 'ER_ACCESS_DENIED_ERROR' && process.env.DB_PASSWORD) {
-            console.warn('⚠️ Hasło z .env zostało odrzucone przez MySQL. Automatyczna próba połączenia z pustym hasłem...');
-            try {
-                const fallbackPool = mysql.createPool({
-                    host: process.env.DB_HOST || 'localhost',
-                    user: process.env.DB_USER || 'root',
-                    password: '',
-                    database: process.env.DB_NAME || 'serwis_db',
-                    port: Number(process.env.DB_PORT) || 3306,
-                    waitForConnections: true,
-                    connectionLimit: 10,
-                    queueLimit: 0
-                });
-                const connection = await fallbackPool.getConnection();
-                console.log('✅ Połączono z bazą danych MySQL (serwis_db) za pomocą domyślnego pustego hasła.');
-                connection.release();
-                currentPool = fallbackPool;
-
-                // Upewnij się, że kolumna username istnieje w tabeli uzytkownicy
-                try {
-                    const [cols] = await currentPool.query("SHOW COLUMNS FROM uzytkownicy LIKE 'username'");
-                    if (cols.length === 0) {
-                        await currentPool.query("ALTER TABLE uzytkownicy ADD COLUMN username VARCHAR(50) NULL UNIQUE AFTER id");
-                        await currentPool.query("UPDATE uzytkownicy SET username = SUBSTRING_INDEX(email, '@', 1) WHERE username IS NULL");
-                        console.log('✅ Zaktualizowano schemat tabeli uzytkownicy (dodano kolumnę username).');
-                    }
-                } catch (migErr) {
-                    // Tabela może jeszcze nie istnieć przed pierwszym seedem
-                }
-                return;
-            } catch (fallbackErr) {
-                console.error('❌ Błąd połączenia fallback z bazą MySQL:', fallbackErr.message);
-            }
-        }
         console.error('❌ Błąd połączenia z bazą MySQL:', err.message);
+        process.exit(1);
     }
 })();
 
@@ -130,7 +78,7 @@ function authenticateToken(req, res, next) {
 // 1. Health check (opcjonalny, pomocny weryfikacji serwera)
 app.get('/api/health', async (req, res) => {
     try {
-        await pool.query('SELECT 1');
+        await currentPool.query('SELECT 1');
         res.json({ status: 'ok', database: 'connected', timestamp: new Date().toISOString() });
     } catch (err) {
         res.status(500).json({ status: 'error', database: 'disconnected', message: err.message });
@@ -171,7 +119,7 @@ app.post('/api/zgloszenia', async (req, res) => {
             numer_fv ? numer_fv.trim() : null
         ];
 
-        const [result] = await pool.query(query, values);
+        const [result] = await currentPool.query(query, values);
 
         return res.status(201).json({
             message: 'Zgłoszenie serwisowe zostało pomyślnie przyjęte.',
@@ -185,21 +133,21 @@ app.post('/api/zgloszenia', async (req, res) => {
     }
 });
 
-// 3. POST /api/login - Logowanie użytkownika i generowanie tokenu JWT (wymagana nazwa użytkownika)
+// 3. POST /api/login - Logowanie użytkownika i generowanie tokenu JWT (wyłącznie username)
 app.post('/api/login', async (req, res) => {
-    const { username, email, password } = req.body;
-    const loginIdentifier = (username || email || '').trim();
+    const { username, password } = req.body;
+    const loginUsername = (username || '').trim();
 
-    if (!loginIdentifier || !password) {
+    if (!loginUsername || !password) {
         return res.status(400).json({
             error: 'Podaj nazwę użytkownika oraz hasło.'
         });
     }
 
     try {
-        const [rows] = await pool.query(
-            'SELECT id, username, email, password_hash, role FROM uzytkownicy WHERE username = ? OR email = ?',
-            [loginIdentifier, loginIdentifier]
+        const [rows] = await currentPool.query(
+            'SELECT id, username, password_hash, role FROM uzytkownicy WHERE username = ?',
+            [loginUsername]
         );
 
         if (rows.length === 0) {
@@ -219,16 +167,6 @@ app.post('/api/login', async (req, res) => {
         if (isBcryptHash) {
             // Standardowe porównanie przez bcrypt
             isPasswordValid = await bcrypt.compare(password, user.password_hash);
-        } else {
-            // Fallback: hasło przechowywane jako plaintext (np. dodane ręcznie do bazy)
-            isPasswordValid = (password === user.password_hash);
-
-            if (isPasswordValid) {
-                // Automatyczna migracja: zahashuj hasło przy pierwszym logowaniu
-                console.log(`🔐 Migracja hasła dla użytkownika: ${user.username || user.email}`);
-                const hashedPassword = await bcrypt.hash(password, 10);
-                await pool.query('UPDATE uzytkownicy SET password_hash = ? WHERE id = ?', [hashedPassword, user.id]);
-            }
         }
 
         if (!isPasswordValid) {
@@ -241,8 +179,7 @@ app.post('/api/login', async (req, res) => {
         const token = jwt.sign(
             {
                 id: user.id,
-                username: user.username || user.email,
-                email: user.email,
+                username: user.username,
                 role: user.role
             },
             JWT_SECRET,
@@ -254,8 +191,7 @@ app.post('/api/login', async (req, res) => {
             token,
             user: {
                 id: user.id,
-                username: user.username || user.email,
-                email: user.email,
+                username: user.username,
                 role: user.role
             }
         });
@@ -270,7 +206,7 @@ app.post('/api/login', async (req, res) => {
 // 4. GET /api/zgloszenia - Chroniony endpoint do pobierania listy wszystkich zgłoszeń (wymaga JWT)
 app.get('/api/zgloszenia', authenticateToken, async (req, res) => {
     try {
-        const [rows] = await pool.query(
+        const [rows] = await currentPool.query(
             'SELECT id, imie, nazwisko, adres, numer_telefonu, email, opis_usterki, numer_fv, status, created_at FROM zgloszenia ORDER BY created_at DESC'
         );
 
@@ -297,7 +233,7 @@ async function handleUpdateStatus(req, res) {
     }
 
     try {
-        const [result] = await pool.query(
+        const [result] = await currentPool.query(
             'UPDATE zgloszenia SET status = ? WHERE id = ?',
             [status, id]
         );
@@ -334,7 +270,7 @@ app.delete('/api/zgloszenia/:id', authenticateToken, async (req, res) => {
     }
 
     try {
-        const [result] = await pool.query(
+        const [result] = await currentPool.query(
             'DELETE FROM zgloszenia WHERE id = ?',
             [id]
         );
@@ -364,8 +300,8 @@ app.post('/api/admin/users', authenticateToken, async (req, res) => {
         return res.status(403).json({ error: 'Brak uprawnień. Wymagana rola: admin.' });
     }
 
-    const { username, email, password, role = 'pracownik' } = req.body;
-    const cleanUsername = (username || email || '').trim();
+    const { username, password, role = 'pracownik' } = req.body;
+    const cleanUsername = (username || '').trim();
 
     if (!cleanUsername || !password) {
         return res.status(400).json({ error: 'Podaj nazwę użytkownika i hasło.' });
@@ -377,25 +313,24 @@ app.post('/api/admin/users', authenticateToken, async (req, res) => {
     }
 
     try {
-        const [existing] = await pool.query(
-            'SELECT id FROM uzytkownicy WHERE username = ? OR (email IS NOT NULL AND email != "" AND email = ?)',
-            [cleanUsername, email ? email.trim() : '']
+        const [existing] = await currentPool.query(
+            'SELECT id FROM uzytkownicy WHERE username = ?',
+            [cleanUsername]
         );
         if (existing.length > 0) {
-            return res.status(409).json({ error: 'Użytkownik o tej nazwie (lub emailu) już istnieje.' });
+            return res.status(409).json({ error: 'Użytkownik o tej nazwie już istnieje.' });
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);
-        const [result] = await pool.query(
-            'INSERT INTO uzytkownicy (username, email, password_hash, role) VALUES (?, ?, ?, ?)',
-            [cleanUsername, email ? email.trim() : null, hashedPassword, role]
+        const [result] = await currentPool.query(
+            'INSERT INTO uzytkownicy (username, password_hash, role) VALUES (?, ?, ?)',
+            [cleanUsername, hashedPassword, role]
         );
 
         return res.status(201).json({
             message: 'Użytkownik został pomyślnie utworzony.',
             id: result.insertId,
             username: cleanUsername,
-            email: email ? email.trim() : null,
             role
         });
     } catch (err) {

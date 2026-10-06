@@ -15,28 +15,13 @@ async function seed() {
     let connection;
     try {
         // Połączenie bez wybierania bazy, aby upewnić się że baza istnieje
-        try {
-            connection = await mysql.createConnection({
-                host,
-                user,
-                password,
-                port,
-                multipleStatements: true
-            });
-        } catch (connErr) {
-            if (connErr.code === 'ER_ACCESS_DENIED_ERROR' && password) {
-                console.warn('⚠️ Hasło z .env zostało odrzucone przez MySQL. Łączenie z pustym hasłem...');
-                connection = await mysql.createConnection({
-                    host,
-                    user,
-                    password: '',
-                    port,
-                    multipleStatements: true
-                });
-            } else {
-                throw connErr;
-            }
-        }
+        connection = await mysql.createConnection({
+            host,
+            user,
+            password,
+            port,
+            multipleStatements: true
+        });
 
         // Wczytanie i wykonanie schematu
         const schemaPath = path.join(__dirname, 'schemat.sql');
@@ -48,17 +33,6 @@ async function seed() {
 
         await connection.changeUser({ database });
 
-        // Upewnij się, że kolumna username istnieje w tabeli uzytkownicy
-        try {
-            const [usernameCol] = await connection.query("SHOW COLUMNS FROM uzytkownicy LIKE 'username'");
-            if (usernameCol.length === 0) {
-                await connection.query("ALTER TABLE uzytkownicy ADD COLUMN username VARCHAR(50) NULL UNIQUE AFTER id");
-                await connection.query("UPDATE uzytkownicy SET username = SUBSTRING_INDEX(email, '@', 1) WHERE username IS NULL");
-            }
-        } catch (migErr) {
-            console.warn('Uwaga przy sprawdzaniu kolumny username:', migErr.message);
-        }
-
         // Inicjalizacja tabeli użytkowników i zgłoszeń (użytkownicy tworzeni są przez create-user.js)
         console.log('ℹ️ Tabele bazy danych są gotowe. Użytkowników twórz za pomocą: node create-user.js');
 
@@ -67,7 +41,7 @@ async function seed() {
 
         console.log('--- Zakończono seedowanie pomyślnie ---');
     } catch (err) {
-        console.error('❌ Błąd podczas seedowania bazy danych:', err);
+        console.error('❌ Błąd podczas seedowania bazy danych:', err.message);
         process.exit(1);
     } finally {
         if (connection) {
@@ -77,3 +51,4 @@ async function seed() {
 }
 
 seed();
+
