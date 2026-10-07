@@ -92,7 +92,11 @@ app.post('/api/zgloszenia', async (req, res) => {
     const {
         imie,
         nazwisko,
+        nazwa_firmy,
         adres,
+        kod_pocztowy,
+        miasto,
+        wojewodztwo,
         numer_telefonu,
         email,
         opis_usterki,
@@ -103,6 +107,9 @@ app.post('/api/zgloszenia', async (req, res) => {
         { name: 'imie', value: imie, max: 50 },
         { name: 'nazwisko', value: nazwisko, max: 50 },
         { name: 'adres', value: adres, max: 65535 },
+        { name: 'kod_pocztowy', value: kod_pocztowy, max: 6 },
+        { name: 'miasto', value: miasto, max: 100 },
+        { name: 'wojewodztwo', value: wojewodztwo, max: 50 },
         { name: 'numer_telefonu', value: numer_telefonu, max: 20 },
         { name: 'email', value: email, max: 100 },
         { name: 'opis_usterki', value: opis_usterki, max: 65535 }
@@ -151,7 +158,21 @@ app.post('/api/zgloszenia', async (req, res) => {
         });
     }
 
-    // 3. Walidacja opcjonalnego pola numer_fv (jeśli zostało podane)
+    // 3. Walidacja opcjonalnego pola nazwa_firmy (jeśli zostało podane)
+    if (nazwa_firmy !== undefined && nazwa_firmy !== null && nazwa_firmy !== '') {
+        if (typeof nazwa_firmy !== 'string') {
+            return res.status(400).json({
+                error: 'Pole "nazwa_firmy" musi być tekstem.'
+            });
+        }
+        if (nazwa_firmy.trim().length > 100) {
+            return res.status(400).json({
+                error: 'Pole "nazwa_firmy" przekracza maksymalną dozwoloną długość (100 znaków).'
+            });
+        }
+    }
+
+    // 4. Walidacja opcjonalnego pola numer_fv (jeśli zostało podane)
     if (numer_fv !== undefined && numer_fv !== null && numer_fv !== '') {
         if (typeof numer_fv !== 'string') {
             return res.status(400).json({
@@ -165,7 +186,28 @@ app.post('/api/zgloszenia', async (req, res) => {
         }
     }
 
-    // 4. Walidacja formatu adresu e-mail
+    // 5. Walidacja formatu kodu pocztowego (dokładnie XX-XXX)
+    const postalCodeRegex = /^\d{2}-\d{3}$/;
+    if (!postalCodeRegex.test(kod_pocztowy.trim())) {
+        return res.status(400).json({
+            error: 'Pole "kod_pocztowy" musi mieć format XX-XXX (np. 00-001).'
+        });
+    }
+
+    // 6. Walidacja województwa (zgodność z listą 16 polskich województw)
+    const ALLOWED_VOIVODESHIPS = [
+        'dolnośląskie', 'kujawsko-pomorskie', 'lubelskie', 'lubuskie',
+        'łódzkie', 'małopolskie', 'mazowieckie', 'opolskie',
+        'podkarpackie', 'podlaskie', 'pomorskie', 'śląskie',
+        'świętokrzyskie', 'warmińsko-mazurskie', 'wielkopolskie', 'zachodniopomorskie'
+    ];
+    if (!ALLOWED_VOIVODESHIPS.includes(wojewodztwo.trim().toLowerCase())) {
+        return res.status(400).json({
+            error: 'Pole "wojewodztwo" zawiera nieprawidłową wartość. Wybierz województwo z listy.'
+        });
+    }
+
+    // 7. Walidacja formatu adresu e-mail
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email.trim())) {
         return res.status(400).json({
@@ -173,7 +215,7 @@ app.post('/api/zgloszenia', async (req, res) => {
         });
     }
 
-    // 5. Walidacja formatu numeru telefonu (+48 i dokładnie 9 cyfr)
+    // 8. Walidacja formatu numeru telefonu (+48 i dokładnie 9 cyfr)
     const phoneRegex = /^\+48\d{9}$/;
     if (!phoneRegex.test(numer_telefonu.trim())) {
         return res.status(400).json({
@@ -183,17 +225,21 @@ app.post('/api/zgloszenia', async (req, res) => {
 
     try {
         const query = `
-            INSERT INTO zgloszenia (imie, nazwisko, adres, numer_telefonu, email, opis_usterki, numer_fv, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'nowe')
+            INSERT INTO zgloszenia (imie, nazwisko, nazwa_firmy, adres, kod_pocztowy, miasto, wojewodztwo, numer_telefonu, email, opis_usterki, numer_fv, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'nowe')
         `;
         const values = [
             imie.trim(),
             nazwisko.trim(),
+            nazwa_firmy && typeof nazwa_firmy === 'string' && nazwa_firmy.trim() ? nazwa_firmy.trim() : null,
             adres.trim(),
+            kod_pocztowy.trim(),
+            miasto.trim(),
+            wojewodztwo.trim().toLowerCase(),
             numer_telefonu.trim(),
             email.trim(),
             opis_usterki.trim(),
-            numer_fv ? numer_fv.trim() : null
+            numer_fv && typeof numer_fv === 'string' && numer_fv.trim() ? numer_fv.trim() : null
         ];
 
         const [result] = await currentPool.query(query, values);
@@ -296,7 +342,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
 app.get('/api/zgloszenia', authenticateToken, async (req, res) => {
     try {
         const [rows] = await currentPool.query(
-            'SELECT id, imie, nazwisko, adres, numer_telefonu, email, opis_usterki, numer_fv, status, created_at FROM zgloszenia ORDER BY created_at DESC'
+            'SELECT id, imie, nazwisko, nazwa_firmy, adres, kod_pocztowy, miasto, wojewodztwo, numer_telefonu, email, opis_usterki, numer_fv, status, created_at FROM zgloszenia ORDER BY created_at DESC'
         );
 
         return res.json(rows);
@@ -396,7 +442,7 @@ app.post('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =
         return res.status(400).json({ error: 'Podaj nazwę użytkownika i hasło.' });
     }
 
-    const allowedRoles = ['admin', 'pracownik'];
+    const allowedRoles = ['admin', 'pracownik', 'serwisant', 'magazynier'];
     if (!allowedRoles.includes(role)) {
         return res.status(400).json({ error: `Nieprawidłowa rola. Dozwolone: ${allowedRoles.join(', ')}` });
     }

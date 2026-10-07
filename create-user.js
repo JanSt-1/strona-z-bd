@@ -9,7 +9,7 @@
  *   node create-user.js uzytkownik Haslo123 pracownik
  *   node create-user.js serwisant Tajne456 admin
  *
- * Dostępne role: admin, pracownik (domyślnie: pracownik)
+ * Dostępne role: admin, pracownik, serwisant, magazynier (domyślnie: pracownik)
  */
 
 require('dotenv').config();
@@ -24,9 +24,9 @@ if (!username || !password) {
     process.exit(1);
 }
 
-const allowedRoles = ['admin', 'pracownik'];
+const allowedRoles = ['admin', 'pracownik', 'serwisant', 'magazynier'];
 if (!allowedRoles.includes(role)) {
-    console.error(`❌ Nieprawidłowa rola: "${role}". Dostępne: admin, pracownik`);
+    console.error(`❌ Nieprawidłowa rola: "${role}". Dostępne: admin, pracownik, serwisant, magazynier`);
     process.exit(1);
 }
 

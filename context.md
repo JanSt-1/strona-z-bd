@@ -118,7 +118,11 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 | `id` | `INT AUTO_INCREMENT PRIMARY KEY` | Unikalny identyfikator zgłoszenia |
 | `imie` | `VARCHAR(50) NOT NULL` | Imię zgłaszającego |
 | `nazwisko` | `VARCHAR(50) NOT NULL` | Nazwisko zgłaszającego |
-| `adres` | `TEXT NOT NULL` | Adres klienta / odbioru sprzętu |
+| `nazwa_firmy` | `VARCHAR(100) NULL` | Opcjonalna nazwa firmy |
+| `adres` | `TEXT NOT NULL` | Ulica i numer lokalu / odbioru sprzętu |
+| `kod_pocztowy` | `VARCHAR(6) NOT NULL` | Kod pocztowy w formacie `XX-XXX` |
+| `miasto` | `VARCHAR(100) NOT NULL` | Miasto klienta |
+| `wojewodztwo` | `VARCHAR(50) NOT NULL` | Województwo (z listy 16 polskich województw) |
 | `numer_telefonu` | `VARCHAR(20) NOT NULL` | Telefon kontaktowy (+48 i 9 cyfr) |
 | `email` | `VARCHAR(100) NOT NULL` | Email klienta |
 | `opis_usterki` | `TEXT NOT NULL` | Treść zgłoszenia, opis usterki |
@@ -132,7 +136,7 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 | `id` | `INT AUTO_INCREMENT PRIMARY KEY` | Unikalny identyfikator użytkownika |
 | `username` | `VARCHAR(50) NOT NULL UNIQUE` | Nazwa użytkownika (login do panelu) |
 | `password_hash` | `VARCHAR(255) NOT NULL` | Hash hasła (bcrypt) |
-| `role` | `VARCHAR(20) DEFAULT 'pracownik'` | Rola: `'admin'` lub `'pracownik'` |
+| `role` | `VARCHAR(20) DEFAULT 'pracownik'` | Rola: `'admin'`, `'pracownik'`, `'serwisant'`, `'magazynier'` |
 | `created_at` | `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` | Data utworzenia konta |
 
 ---
@@ -148,7 +152,11 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 {
   "imie": "Jan",
   "nazwisko": "Kowalski",
-  "adres": "ul. Kwiatowa 5, Warszawa",
+  "nazwa_firmy": "Acme Sp. z o.o.",
+  "adres": "ul. Kwiatowa 5",
+  "kod_pocztowy": "00-001",
+  "miasto": "Warszawa",
+  "wojewodztwo": "mazowieckie",
   "numer_telefonu": "+48600700800",
   "email": "jan.kowalski@example.com",
   "opis_usterki": "Urządzenie nie włącza się po burzy.",
@@ -162,7 +170,7 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
   "id": 1
 }
 ```
-- **Błędy:** `400 Bad Request` (brak wymaganych pól, zły format telefonu/emaila, przekroczenie limitu znaków), `500 Internal Server Error`.
+- **Błędy:** `400 Bad Request` (brak wymaganych pól, zły format kodu pocztowego/telefonu/emaila, niepoprawne województwo, przekroczenie limitu znaków), `500 Internal Server Error`.
 
 ---
 
