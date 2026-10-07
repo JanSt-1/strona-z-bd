@@ -1,6 +1,6 @@
 # System Obsługi Zgłoszeń Serwisowych
 
-To pełna aplikacja webowa (SPA) umożliwiająca klientom szybkie rejestrowanie usterek urządzeń poprzez formularz publiczny. Pracownicy serwisu oraz administratorzy mają do dyspozycji chroniony panelem JWT panel zarządzania, w którym mogą monitorować zgłoszenia, modyfikować ich statusy oraz zarządzać bazą danych. Rozwiązanie łączy backend w technologii Express.js i MySQL z nowoczesnym, responsywnym frontendem napisanym w React 18.
+To pełna aplikacja webowa (SPA) umożliwiająca klientom szybkie rejestrowanie usterek urządzeń poprzez formularz publiczny. Pracownicy serwisu, serwisanci, magazynierzy oraz administratorzy mają do dyspozycji chroniony tokenem JWT panel zarządzania, w którym monitorują zgłoszenia, modyfikują ich statusy, przypisują zadania, sporządzają raporty napraw oraz rejestrują wysyłki paczek z numerem listu przewozowego. Rozwiązanie łączy backend w technologii Express.js i MySQL z nowoczesnym, responsywnym frontendem napisanym w React 18.
 
 ---
 
@@ -8,7 +8,7 @@ To pełna aplikacja webowa (SPA) umożliwiająca klientom szybkie rejestrowanie 
 
 Aplikacja backendowa jest rozdzielona zgodnie z zasadą separacji odpowiedzialności:
 - **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (CORS, JSON, pliki statyczne), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
-- **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację połączenia z bazą MySQL oraz uruchomienie nasłuchiwania (`app.listen()`).
+- **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację połączenia z bazą MySQL, automatyczną weryfikację/migrację brakujących kolumn tabeli `zgloszenia` oraz uruchomienie nasłuchiwania (`app.listen()`).
 - **`app.test.js`**: Zestaw testów integracyjnych API bazujący na natywnym runnerze `node:test` oraz bibliotece `supertest`.
 
 ---
@@ -42,7 +42,7 @@ DB_USER=root
 DB_PASSWORD=
 DB_NAME=serwis_db
 DB_PORT=3306
-JWT_SECRET=klucz_jwt
+JWT_SECRET=twoj_klucz_jtw
 ```
 
 ### Krok 3: Inicjalizacja bazy danych (Seed)
@@ -50,11 +50,22 @@ Uruchom skrypt tworzący bazę `serwis_db` oraz tabele na podstawie schematu `sc
 ```bash
 npm run seed
 ```
+*(Uwaga: Podczas startu serwera plik `index.js` automatycznie sprawdza strukturę tabeli i uzupełnia brakujące kolumny, w tym `numer_listu`, `data_wyslania`, `opis_naprawy` itp.).*
 
-### Krok 4: Utworzenie pierwszego konta administratora
+### Krok 4: Utworzenie pierwszych kont użytkowników
 Skorzystaj z wbudowanego narzędzia CLI `create-user.js`:
 ```bash
-node create-user.js nazwa_uzytkownika haslo admin
+# Konto administratora
+node create-user.js nazwa_admina HasloAdmina admin
+
+# Konto serwisanta
+node create-user.js nazwa_serwisanta HasloSerwisanta serwisant
+
+# Konto pracownika
+node create-user.js nazwa_pracownika HasloPracownika pracownik
+
+# Konto magazyniera
+node create-user.js nazwa_magazyniera HasloMagazyniera magazynier
 ```
 
 ### Krok 5: Uruchomienie serwera
@@ -74,7 +85,7 @@ Po uruchomieniu aplikacja dostępna jest pod adresem:
 
 ## Testy integracyjne
 
-Projekt posiada zestaw testów integracyjnych weryfikujących poprawność działania kluczowych endpointów API (walidacja, autoryzacja, mechanizm logowania).
+Projekt posiada zestaw testów integracyjnych weryfikujących poprawność działania kluczowych endpointów API (walidacja, autoryzacja, mechanizm logowania, uprawnienia tras).
 
 Uruchomienie testów:
 ```bash
@@ -96,10 +107,10 @@ Pokryte przypadki testowe:
 ## Role użytkowników i obsługa zleceń
 
 W systemie zaimplementowano role:
-- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie pracownikom, modyfikacja i usuwanie zgłoszeń, tworzenie użytkowników.
-- **`serwisant`**: Przegląd zleceń, przypisywanie zleceń pracownikom, raportowanie naprawy.
-- **`pracownik`**: Domyślnie nie widzi żadnych zleceń – widzi wyłącznie zlecenia przypisane do niego. Przed oznaczeniem jako naprawione musi sporządzić opis prac (automatycznie datowany z godziną i minutą). Po zatwierdzeniu zlecenie trafia do magazynu ze statusem **"Do wysyłki"**.
-- **`magazynier`**: Domyślnie nie widzi zleceń – widzi je dopiero po zakończeniu i opisaniu naprawy przez pracownika (ze statusem **"Do wysyłki"**). Ma możliwość oznaczenia przesyłki jako wysłana (**"zakończone"**).
+- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie pracownikom i serwisantom, modyfikacja i usuwanie zgłoszeń, tworzenie użytkowników przez API.
+- **`serwisant`**: Przegląd wszystkich zleceń, przypisywanie zleceń pracownikom, raportowanie i opisywanie napraw.
+- **`pracownik`**: Domyślnie nie widzi obcych zleceń – widzi wyłącznie zlecenia przypisane do niego. Przed oznaczeniem jako naprawione musi sporządzić opis prac (automatycznie datowany z godziną i minutą). Po zatwierdzeniu zlecenie trafia do magazynu ze statusem **"Do wysyłki"**.
+- **`magazynier`**: Domyślnie nie widzi zleceń nowych ani w trakcie naprawy – widzi je dopiero po zakończeniu i opisaniu naprawy przez pracownika (ze statusem **"Do wysyłki"**). Ma możliwość wpisania numeru listu przewozowego (`numer_listu`) oraz oznaczenia przesyłki jako wysłana (**"zakończone"**), co automatycznie odnotowuje datę i godzinę wysyłki (`data_wyslania`).
 
 ---
 
@@ -119,5 +130,5 @@ node create-user.js <nazwa_uzytkownika> <haslo> [rola]
   node create-user.js marek HasloPracownika123 pracownik
   node create-user.js janusz HasloMagazyniera123 magazynier
   ```
-
+  
 Po utworzeniu konta przejdź w przeglądarce do zakładki **„Panel pracownika”** i zaloguj się podaną nazwą użytkownika oraz hasłem.

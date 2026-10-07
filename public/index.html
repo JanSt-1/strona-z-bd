@@ -479,7 +479,7 @@
             border: 1px solid var(--card-border);
             border-radius: 12px;
             width: 100%;
-            max-width: 520px;
+            max-width: 650px;
             padding: 1.5rem;
             box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
         }
@@ -1242,19 +1242,19 @@
                 <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
                     <div className="modal-card">
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                            <h3 style={{ margin: 0, fontSize: '1.15rem', color: 'var(--text-main)' }}>
-                                🛠️ Raport z naprawy — Zgłoszenie #{ticket.id}
+                            <h3 style={{ margin: 0, fontSize: '1.15rem', color: '#ffffff' }}>
+                                Raport z naprawy — Zgłoszenie #{ticket.id}
                             </h3>
                             <button
                                 type="button"
                                 onClick={onClose}
-                                style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '1.25rem', cursor: 'pointer' }}
+                                style={{ background: 'transparent', border: 'none', color: '#ff0000', fontSize: '1.25rem', cursor: 'pointer' }}
                             >
                                 ✕
                             </button>
                         </div>
 
-                        <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.75rem', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem' }}>
+                        <div style={{ background: 'rgba(255,255,255,0.9)', padding: '0.75rem', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem' }}>
                             <div><strong>Klient:</strong> {ticket.imie} {ticket.nazwisko} {ticket.nazwa_firmy ? `(${ticket.nazwa_firmy})` : ''}</div>
                             <div><strong>Produkt:</strong> {ticket.przedmiot_zgloszenia} {ticket.numer_seryjny ? `| SN: ${ticket.numer_seryjny}` : ''}</div>
                             <div style={{ marginTop: '0.35rem', color: 'var(--text-muted)' }}>
@@ -1264,20 +1264,20 @@
 
                         <form onSubmit={handleSubmit}>
                             <div className="form-group full" style={{ marginBottom: '1rem' }}>
-                                <label htmlFor="repairDescription" style={{ fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>
+                                <label htmlFor="repairDescription" style={{ fontWeight: 600, display: 'block', marginBottom: '0.4rem', color: '#ffffff' }}>
                                     Opis wykonanych prac (co zostało zrobione / wymienione) *
                                 </label>
                                 <textarea
                                     id="repairDescription"
                                     required
-                                    rows="4"
+                                    rows="8"
                                     placeholder="np. Wymieniono moduł zasilacza, przetestowano ekran dotykowy, wgrano aktualizację firmware..."
                                     value={opis}
                                     onChange={e => setOpis(e.target.value)}
                                     style={{ width: '100%', resize: 'vertical' }}
                                 />
-                                <small style={{ color: 'var(--text-muted)', marginTop: '0.4rem', display: 'block', fontSize: '0.78rem' }}>
-                                    🕒 Wpis zostanie <strong>automatycznie opatrzony bieżącą datą i czasem</strong> serwera. Po zatwierdzeniu zlecenie natychmiast pojawi się u magazynierów ze statusem <strong>"Do wysyłki"</strong>.
+                                <small style={{ color: '#ffffff', marginTop: '0.4rem', display: 'block', fontSize: '0.78rem' }}>
+                                    Wpis zostanie <strong>automatycznie opatrzony bieżącą datą i czasem</strong> serwera. Po zatwierdzeniu zlecenie natychmiast pojawi się u magazynierów ze statusem <strong>"Do wysyłki"</strong>.
                                 </small>
                             </div>
 
@@ -1287,6 +1287,7 @@
                                     className="btn-clear"
                                     onClick={onClose}
                                     disabled={submitting}
+                                    style={{ padding: '0.6rem 1.2rem', fontSize: '0.85rem' }}
                                 >
                                     Anuluj
                                 </button>
