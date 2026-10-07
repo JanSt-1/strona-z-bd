@@ -75,6 +75,16 @@ function requireAdmin(req, res, next) {
     next();
 }
 
+// --- Middleware autoryzacji roli administratora lub serwisanta ---
+function requireAdminOrSerwisant(req, res, next) {
+    if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'serwisant')) {
+        return res.status(403).json({
+            error: 'Brak uprawnień. Wymagana rola: admin lub serwisant.'
+        });
+    }
+    next();
+}
+
 // --- Endpointy API ---
 
 // 1. Health check (opcjonalny, pomocny weryfikacji serwera)
@@ -86,6 +96,44 @@ app.get('/api/health', async (req, res) => {
         res.status(500).json({ status: 'error', database: 'disconnected', message: err.message });
     }
 });
+
+//  LISTA DOZWOLONYCH PRZEDMIOTÓW ZGŁOSZENIA
+
+const ALLOWED_PRZEDMIOTY = [
+    'Monitor interaktywny myBoard Titan (Android 15)',
+    'Monitor interaktywny myBoard Grey Arrow (Android 13)',
+    'Monitor interaktywny myBoard Panda (Android 13)',
+    'Monitor interaktywny myBoard Black Arrow (Android 13)',
+    'Monitor interaktywny myBoard Grey Rock (Android 11)',
+    'Monitor interaktywny myBoard Grey Rock 2.0 (Android 11)',
+    'Monitor interaktywny myBoard White Arrow (Android 14)',
+    'Monitor interaktywny myBoard Panda 2.0 (Android 14)',
+    'Monitor interaktywny myBoard Black (Android 8)',
+    'Monitor interaktywny myBoard Silver (Android 9)',
+    'Monitor interaktywny myBoard Grey UP (Android 8)',
+    'Monitor interaktywny (Model spoza listy)',
+    'Tablica interaktywna myBoard Silver',
+    'Tablica interaktywna myBoard Black',
+    'Akcesoria do tablic interaktywnych myBoard',
+    'Akcesoria ddla monitorów interaktywnych myBoard',
+    'Pracownie językowe',
+    'Podłoga interaktywna SmartFloor',
+    'Meble',
+    'Systemy konferencyjne',
+    'Projektory',
+    'Laptop',
+    'Inne',
+];
+
+// Pomocnik: sprawdza czy dla wybranego przedmiotu dopuszczony jest numer seryjny
+// (wyłącznie monitory interaktywne lub tablice interaktywne, z wyłączeniem akcesoriów)
+function isSerialNumberAllowed(product) {
+    if (!product || typeof product !== 'string') return false;
+    const lower = product.toLowerCase();
+    const isMonitor = lower.includes('monitor interaktywny') && !lower.includes('akcesoria');
+    const isTablica = lower.includes('tablica interaktywna') && !lower.includes('akcesoria');
+    return isMonitor || isTablica;
+}
 
 // 2. POST /api/zgloszenia - Publiczne dodawanie nowego zgłoszenia serwisowego
 app.post('/api/zgloszenia', async (req, res) => {
@@ -99,8 +147,12 @@ app.post('/api/zgloszenia', async (req, res) => {
         wojewodztwo,
         numer_telefonu,
         email,
+        przedmiot_zgloszenia,
+        numer_seryjny,
+        data_zakupu,
         opis_usterki,
-        numer_fv
+        numer_fv,
+        nip
     } = req.body || {};
 
     const requiredFields = [
@@ -112,7 +164,11 @@ app.post('/api/zgloszenia', async (req, res) => {
         { name: 'wojewodztwo', value: wojewodztwo, max: 50 },
         { name: 'numer_telefonu', value: numer_telefonu, max: 20 },
         { name: 'email', value: email, max: 100 },
-        { name: 'opis_usterki', value: opis_usterki, max: 65535 }
+        { name: 'przedmiot_zgloszenia', value: przedmiot_zgloszenia, max: 100 },
+        { name: 'data_zakupu', value: data_zakupu, max: 10 },
+        { name: 'opis_usterki', value: opis_usterki, max: 65535 },
+        { name: 'numer_fv', value: numer_fv, max: 50 },
+        { name: 'nip', value: nip, max: 10 }
     ];
 
     // 1. Sprawdzenie typu tekstowego, obecności oraz limitu długości dla wymaganych pól (PRZED .trim())
@@ -172,18 +228,12 @@ app.post('/api/zgloszenia', async (req, res) => {
         }
     }
 
-    // 4. Walidacja opcjonalnego pola numer_fv (jeśli zostało podane)
-    if (numer_fv !== undefined && numer_fv !== null && numer_fv !== '') {
-        if (typeof numer_fv !== 'string') {
-            return res.status(400).json({
-                error: 'Pole "numer_fv" musi być tekstem.'
-            });
-        }
-        if (numer_fv.trim().length > 50) {
-            return res.status(400).json({
-                error: 'Pole "numer_fv" przekracza maksymalną dozwoloną długość (50 znaków).'
-            });
-        }
+    // 4. Walidacja formatu NIP (dokładnie 10 cyfr, bez myślników)
+    const nipRegex = /^\d{10}$/;
+    if (!nipRegex.test(nip.trim())) {
+        return res.status(400).json({
+            error: 'Pole "nip" musi składać się z dokładnie 10 cyfr (bez myślników).'
+        });
     }
 
     // 5. Walidacja formatu kodu pocztowego (dokładnie XX-XXX)
@@ -223,10 +273,44 @@ app.post('/api/zgloszenia', async (req, res) => {
         });
     }
 
+    // 9. Walidacja wyboru przedmiotu zgłoszenia z listy
+    const isSubjectAllowed = ALLOWED_PRZEDMIOTY.some(
+        item => item.toLowerCase() === przedmiot_zgloszenia.trim().toLowerCase()
+    );
+    if (!isSubjectAllowed) {
+        return res.status(400).json({
+            error: `Pole "przedmiot_zgloszenia" zawiera nieprawidłową wartość. Dozwolone: ${ALLOWED_PRZEDMIOTY.join(', ')}`
+        });
+    }
+
+    // 10. Walidacja formatu daty zakupu (RRRR-MM-DD)
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(data_zakupu.trim()) || isNaN(Date.parse(data_zakupu.trim()))) {
+        return res.status(400).json({
+            error: 'Pole "data_zakupu" musi mieć poprawny format daty (RRRR-MM-DD).'
+        });
+    }
+
+    // 11. Walidacja numeru seryjnego (dozwolony i zapisywany TYLKO dla monitorów i tablic interaktywnych)
+    let cleanNumerSeryjny = null;
+    if (isSerialNumberAllowed(przedmiot_zgloszenia)) {
+        if (numer_seryjny && typeof numer_seryjny === 'string' && numer_seryjny.trim() !== '') {
+            if (numer_seryjny.trim().length > 100) {
+                return res.status(400).json({
+                    error: 'Pole "numer_seryjny" przekracza maksymalną dozwoloną długość (100 znaków).'
+                });
+            }
+            cleanNumerSeryjny = numer_seryjny.trim();
+        }
+    } else {
+        // Dla innych produktów numer seryjny nie może być podany / jest ignorowany
+        cleanNumerSeryjny = null;
+    }
+
     try {
         const query = `
-            INSERT INTO zgloszenia (imie, nazwisko, nazwa_firmy, adres, kod_pocztowy, miasto, wojewodztwo, numer_telefonu, email, opis_usterki, numer_fv, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'nowe')
+            INSERT INTO zgloszenia (imie, nazwisko, nazwa_firmy, adres, kod_pocztowy, miasto, wojewodztwo, numer_telefonu, email, przedmiot_zgloszenia, numer_seryjny, data_zakupu, opis_usterki, numer_fv, nip, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'nowe')
         `;
         const values = [
             imie.trim(),
@@ -238,8 +322,12 @@ app.post('/api/zgloszenia', async (req, res) => {
             wojewodztwo.trim().toLowerCase(),
             numer_telefonu.trim(),
             email.trim(),
+            przedmiot_zgloszenia.trim(),
+            cleanNumerSeryjny,
+            data_zakupu.trim(),
             opis_usterki.trim(),
-            numer_fv && typeof numer_fv === 'string' && numer_fv.trim() ? numer_fv.trim() : null
+            numer_fv.trim(),
+            nip.trim()
         ];
 
         const [result] = await currentPool.query(query, values);
@@ -338,13 +426,56 @@ app.post('/api/login', loginLimiter, async (req, res) => {
     }
 });
 
-// 4. GET /api/zgloszenia - Chroniony endpoint do pobierania listy wszystkich zgłoszeń (wymaga JWT)
-app.get('/api/zgloszenia', authenticateToken, async (req, res) => {
+// 4. GET /api/pracownicy - Pobieranie listy pracowników do przypisywania zleceń (admin i serwisant)
+app.get('/api/pracownicy', authenticateToken, requireAdminOrSerwisant, async (req, res) => {
     try {
         const [rows] = await currentPool.query(
-            'SELECT id, imie, nazwisko, nazwa_firmy, adres, kod_pocztowy, miasto, wojewodztwo, numer_telefonu, email, opis_usterki, numer_fv, status, created_at FROM zgloszenia ORDER BY created_at DESC'
+            'SELECT id, username, role FROM uzytkownicy WHERE role IN (\'pracownik\', \'serwisant\') ORDER BY username ASC'
         );
+        return res.json(rows);
+    } catch (err) {
+        console.error('Błąd podczas pobierania listy pracowników:', err);
+        return res.status(500).json({
+            error: 'Błąd serwera podczas pobierania listy pracowników.'
+        });
+    }
+});
 
+// 5. GET /api/zgloszenia - Pobieranie zgłoszeń w zależności od roli użytkownika
+// - admin, serwisant: widzą wszystkie zlecenia
+// - pracownik: widzi wyłącznie zlecenia przypisane do niego (domyślnie pusto)
+// - magazynier: widzi wyłącznie zlecenia gotowe do wysyłki ('do_wysylki') oraz zakończone (domyślnie pusto)
+app.get('/api/zgloszenia', authenticateToken, async (req, res) => {
+    try {
+        const role = req.user?.role;
+        let whereClause = '';
+        const params = [];
+
+        if (role === 'pracownik') {
+            whereClause = 'WHERE z.przypisany_pracownik_id = ?';
+            params.push(req.user.id);
+        } else if (role === 'magazynier') {
+            whereClause = "WHERE z.status IN ('do_wysylki', 'zakończone')";
+        }
+
+        const query = `
+            SELECT 
+                z.id, z.imie, z.nazwisko, z.nazwa_firmy, z.adres, z.kod_pocztowy, z.miasto, z.wojewodztwo, 
+                z.numer_telefonu, z.email, z.przedmiot_zgloszenia, z.numer_seryjny, 
+                DATE_FORMAT(z.data_zakupu, '%Y-%m-%d') AS data_zakupu, 
+                z.opis_usterki, z.numer_fv, z.nip, z.status, z.created_at,
+                z.przypisany_pracownik_id,
+                u.username AS przypisany_pracownik_username,
+                z.opis_naprawy,
+                DATE_FORMAT(z.opis_naprawy_data, '%Y-%m-%d %H:%i:%s') AS opis_naprawy_data,
+                DATE_FORMAT(z.data_wyslania, '%Y-%m-%d %H:%i:%s') AS data_wyslania
+            FROM zgloszenia z
+            LEFT JOIN uzytkownicy u ON z.przypisany_pracownik_id = u.id
+            ${whereClause}
+            ORDER BY z.created_at DESC
+        `;
+
+        const [rows] = await currentPool.query(query, params);
         return res.json(rows);
     } catch (err) {
         console.error('Błąd podczas pobierania zgłoszeń:', err);
@@ -354,8 +485,116 @@ app.get('/api/zgloszenia', authenticateToken, async (req, res) => {
     }
 });
 
-// 5. PATCH/PUT /api/zgloszenia/:id/status - Aktualizacja statusu zgłoszenia (chroniony, wymaga JWT)
-const ALLOWED_STATUSES = ['nowe', 'w_realizacji', 'zakończone'];
+// 6. PATCH /api/zgloszenia/:id/przypisz - Przypisanie zlecenia pracownikowi (admin i serwisant)
+app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwisant, async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) {
+        return res.status(400).json({ error: 'Nieprawidłowe ID zgłoszenia.' });
+    }
+
+    const { pracownik_id } = req.body || {};
+
+    try {
+        let assignedId = null;
+        let assignedUsername = null;
+
+        if (pracownik_id !== undefined && pracownik_id !== null && pracownik_id !== '') {
+            const parsedPracownikId = parseInt(pracownik_id, 10);
+            if (isNaN(parsedPracownikId)) {
+                return res.status(400).json({ error: 'Nieprawidłowe ID pracownika.' });
+            }
+            const [users] = await currentPool.query(
+                'SELECT id, username, role FROM uzytkownicy WHERE id = ?',
+                [parsedPracownikId]
+            );
+            if (!users || users.length === 0) {
+                return res.status(404).json({ error: 'Nie znaleziono wybranego pracownika.' });
+            }
+            assignedId = parsedPracownikId;
+            assignedUsername = users[0].username;
+        }
+
+        const [result] = await currentPool.query(
+            `UPDATE zgloszenia 
+             SET przypisany_pracownik_id = ?, 
+                 status = CASE WHEN status = 'nowe' AND ? IS NOT NULL THEN 'w_realizacji' ELSE status END 
+             WHERE id = ?`,
+            [assignedId, assignedId, id]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: `Nie znaleziono zgłoszenia o ID ${id}.` });
+        }
+
+        return res.json({
+            message: assignedId
+                ? `Zlecenie #${id} zostało przypisane pracownikowi ${assignedUsername}.`
+                : `Cofnięto przypisanie zlecenia #${id}.`,
+            id,
+            przypisany_pracownik_id: assignedId,
+            przypisany_pracownik_username: assignedUsername
+        });
+    } catch (err) {
+        console.error('Błąd podczas przypisywania pracownika:', err);
+        return res.status(500).json({ error: 'Błąd serwera podczas przypisywania pracownika.' });
+    }
+});
+
+// 7. PATCH /api/zgloszenia/:id/naprawione - Opisanie naprawy przez pracownika i przekazanie do magazynu (Do wysyłki)
+app.patch('/api/zgloszenia/:id/naprawione', authenticateToken, async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) {
+        return res.status(400).json({ error: 'Nieprawidłowe ID zgłoszenia.' });
+    }
+
+    const { opis_naprawy } = req.body || {};
+    if (!opis_naprawy || typeof opis_naprawy !== 'string' || opis_naprawy.trim().length === 0) {
+        return res.status(400).json({
+            error: 'Przed oznaczeniem zlecenia jako naprawione wymagany jest opis wykonanych prac naprawczych (np. co zostało zrobione).'
+        });
+    }
+
+    try {
+        const [rows] = await currentPool.query('SELECT id, status, przypisany_pracownik_id FROM zgloszenia WHERE id = ?', [id]);
+        if (!rows || rows.length === 0) {
+            return res.status(404).json({ error: `Nie znaleziono zgłoszenia o ID ${id}.` });
+        }
+
+        const ticket = rows[0];
+
+        // Pracownik może oznaczyć jako naprawione tylko zlecenie przypisane do siebie
+        if (req.user.role === 'pracownik' && ticket.przypisany_pracownik_id !== req.user.id) {
+            return res.status(403).json({
+                error: 'Możesz oznaczyć jako naprawione tylko zlecenie przypisane do Ciebie.'
+            });
+        }
+
+        // Magazynier nie wykonuje napraw
+        if (req.user.role === 'magazynier') {
+            return res.status(403).json({
+                error: 'Magazynier nie posiada uprawnień do oznaczania zleceń jako naprawione.'
+            });
+        }
+
+        await currentPool.query(
+            'UPDATE zgloszenia SET opis_naprawy = ?, opis_naprawy_data = NOW(), status = \'do_wysylki\' WHERE id = ?',
+            [opis_naprawy.trim(), id]
+        );
+
+        return res.json({
+            message: 'Zlecenie zostało opisane i przekazane do magazynu ze statusem "Do wysyłki".',
+            id,
+            status: 'do_wysylki',
+            opis_naprawy: opis_naprawy.trim()
+        });
+    } catch (err) {
+        console.error('Błąd podczas zatwierdzania naprawy:', err);
+        return res.status(500).json({ error: 'Błąd serwera podczas zatwierdzania naprawy zgłoszenia.' });
+    }
+});
+
+// 8. PATCH/PUT /api/zgloszenia/:id/status - Aktualizacja statusu zgłoszenia
+const ALLOWED_STATUSES = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
 
 async function handleUpdateStatus(req, res) {
     const id = parseInt(req.params.id, 10);
@@ -364,7 +603,7 @@ async function handleUpdateStatus(req, res) {
             error: 'Nieprawidłowe ID zgłoszenia. Wymagana jest liczba całkowita.'
         });
     }
-    const { status } = req.body || {};
+    const { status, opis_naprawy } = req.body || {};
 
     if (!status || !ALLOWED_STATUSES.includes(status)) {
         return res.status(400).json({
@@ -373,16 +612,66 @@ async function handleUpdateStatus(req, res) {
     }
 
     try {
-        const [result] = await currentPool.query(
-            'UPDATE zgloszenia SET status = ? WHERE id = ?',
-            [status, id]
-        );
-
-        if (result.affectedRows === 0) {
+        const [rows] = await currentPool.query('SELECT id, status, przypisany_pracownik_id, opis_naprawy FROM zgloszenia WHERE id = ?', [id]);
+        if (!rows || rows.length === 0) {
             return res.status(404).json({
                 error: `Nie znaleziono zgłoszenia o ID ${id}.`
             });
         }
+        const ticket = rows[0];
+
+        // Reguły ról:
+        // 1. Magazynier może wyłącznie oznaczyć zlecenie jako wysłane ('zakończone')
+        if (req.user.role === 'magazynier') {
+            if (status !== 'zakończone') {
+                return res.status(403).json({
+                    error: 'Magazynier może wyłącznie oznaczyć zlecenie jako wysłane/zakończone.'
+                });
+            }
+        }
+
+        // 2. Pracownik: jeśli ustawia 'do_wysylki', musi podać lub posiadać opis naprawy
+        if (status === 'do_wysylki') {
+            const opis = (opis_naprawy && typeof opis_naprawy === 'string' && opis_naprawy.trim()) || ticket.opis_naprawy;
+            if (!opis) {
+                return res.status(400).json({
+                    error: 'Przed oznaczeniem zlecenia jako naprawione / do wysyłki wymagany jest opis wykonanych prac (np. co zostało zrobione).'
+                });
+            }
+            if (req.user.role === 'pracownik' && ticket.przypisany_pracownik_id !== req.user.id) {
+                return res.status(403).json({
+                    error: 'Możesz zmieniać status tylko zlecenia przypisanego do Ciebie.'
+                });
+            }
+
+            await currentPool.query(
+                'UPDATE zgloszenia SET status = ?, opis_naprawy = ?, opis_naprawy_data = NOW() WHERE id = ?',
+                [status, opis.trim(), id]
+            );
+
+            return res.json({
+                message: 'Status zaktualizowany na "do_wysylki" wraz z opisem naprawy.',
+                id: Number(id),
+                status
+            });
+        }
+
+        // Pracownik może zmieniać status tylko własnego przypisanego zlecenia
+        if (req.user.role === 'pracownik' && ticket.przypisany_pracownik_id !== req.user.id) {
+            return res.status(403).json({
+                error: 'Możesz zmieniać status tylko zlecenia przypisanego do Ciebie.'
+            });
+        }
+
+        let updateQuery = 'UPDATE zgloszenia SET status = ? WHERE id = ?';
+        let updateParams = [status, id];
+
+        // Jeśli status zmienia się na 'zakończone', zapisz czas wysyłki
+        if (status === 'zakończone') {
+            updateQuery = 'UPDATE zgloszenia SET status = ?, data_wyslania = NOW() WHERE id = ?';
+        }
+
+        const [result] = await currentPool.query(updateQuery, updateParams);
 
         return res.json({
             message: 'Status zgłoszenia został zaktualizowany.',

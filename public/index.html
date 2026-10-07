@@ -370,10 +370,118 @@
             border: 1px solid rgba(245, 158, 11, 0.3);
         }
 
+        .status-do_wysylki {
+            background: rgba(51, 49, 49, 0.719);
+            color: #c084fc;
+            border: 1px solid rgba(192, 132, 252, 0.4);
+        }
+
         .status-zakończone {
             background: rgba(51, 49, 49, 0.719);
             color: #5a80ff;
             border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+
+        .btn-repair {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            color: white;
+            border: none;
+            padding: 0.38rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.76rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            white-space: nowrap;
+        }
+
+        .btn-repair:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+        }
+
+        .btn-ship {
+            background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+            color: white;
+            border: none;
+            padding: 0.38rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.76rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            white-space: nowrap;
+        }
+
+        .btn-ship:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(139, 92, 246, 0.35);
+        }
+
+        .assign-select {
+            background: var(--input-bg);
+            border: 1px solid var(--input-border);
+            color: var(--text-main);
+            border-radius: 6px;
+            padding: 0.35rem 0.5rem;
+            font-size: 0.78rem;
+            width: 100%;
+            max-width: 180px;
+            cursor: pointer;
+        }
+
+        .assign-select:focus {
+            border-color: var(--primary);
+            outline: none;
+        }
+
+        .repair-box {
+            background: rgba(16, 185, 129, 0.08);
+            border: 1px solid rgba(16, 185, 129, 0.25);
+            border-radius: 6px;
+            padding: 0.5rem 0.65rem;
+            font-size: 0.8rem;
+            margin-top: 0.35rem;
+        }
+
+        .repair-date {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            margin-top: 0.25rem;
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(4px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 1rem;
+        }
+
+        .modal-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            width: 100%;
+            max-width: 520px;
+            padding: 1.5rem;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
         }
 
         .status-cell {
@@ -526,6 +634,45 @@
             );
         }
 
+        // =========================================================================
+        // LISTA PRZEDMIOTÓW ZGŁOSZENIA
+        // =========================================================================
+        const PRZEDMIOTY_LISTA = [
+            'Monitor interaktywny myBoard Titan (Android 15)',
+            'Monitor interaktywny myBoard Grey Arrow (Android 13)',
+            'Monitor interaktywny myBoard Panda (Android 13)',
+            'Monitor interaktywny myBoard Black Arrow (Android 13)',
+            'Monitor interaktywny myBoard Grey Rock (Android 11)',
+            'Monitor interaktywny myBoard Grey Rock 2.0 (Android 11)',
+            'Monitor interaktywny myBoard White Arrow (Android 14)',
+            'Monitor interaktywny myBoard Panda 2.0 (Android 14)',
+            'Monitor interaktywny myBoard Black (Android 8)',
+            'Monitor interaktywny myBoard Silver (Android 9)',
+            'Monitor interaktywny myBoard Grey UP (Android 8)',
+            'Monitor interaktywny (Model spoza listy)',
+            'Tablica interaktywna myBoard Silver',
+            'Tablica interaktywna myBoard Black',
+            'Akcesoria do tablic interaktywnych myBoard',
+            'Akcesoria ddla monitorów interaktywnych myBoard',
+            'Pracownie językowe',
+            'Podłoga interaktywna SmartFloor',
+            'Meble',
+            'Systemy konferencyjne',
+            'Projektory',
+            'Laptop',
+            'Inne'
+        ];
+
+        // Pomocnik: sprawdza czy dla wybranego przedmiotu dozwolony jest numer seryjny
+        // (wyłącznie monitory interaktywne i tablice interaktywne, z wyłączeniem akcesoriów)
+        function isSerialNumberAllowed(product) {
+            if (!product) return false;
+            const lower = product.toLowerCase();
+            const isMonitor = lower.includes('monitor interaktywny') && !lower.includes('akcesoria');
+            const isTablica = lower.includes('tablica interaktywna') && !lower.includes('akcesoria');
+            return isMonitor || isTablica;
+        }
+
         // Formularz publiczny dodawania zgłoszenia
         function PublicTicketForm() {
             const [formData, setFormData] = useState({
@@ -538,7 +685,11 @@
                 kod_pocztowy: '',
                 miasto: '',
                 wojewodztwo: '',
+                przedmiot_zgloszenia: '',
+                numer_seryjny: '',
+                data_zakupu: '',
                 numer_fv: '',
+                nip: '',
                 opis_usterki: ''
             });
             const [loading, setLoading] = useState(false);
@@ -602,6 +753,23 @@
                 }
             }
 
+            // Obsługa wpisywania numeru NIP (tylko cyfry, dokładnie do 10 cyfr, bez myślników)
+            function handleNipChange(e) {
+                const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                setFormData(prev => ({ ...prev, nip: digits }));
+            }
+
+            // Obsługa zmiany przedmiotu zgłoszenia (czyści numer seryjny jeśli nie jest dozwolony)
+            function handleSubjectChange(e) {
+                const val = e.target.value;
+                const allowed = isSerialNumberAllowed(val);
+                setFormData(prev => ({
+                    ...prev,
+                    przedmiot_zgloszenia: val,
+                    numer_seryjny: allowed ? prev.numer_seryjny : ''
+                }));
+            }
+
             // Czyszczenie wszystkich danych wprowadzonych do formularza
             function handleReset() {
                 setFormData({
@@ -614,7 +782,11 @@
                     kod_pocztowy: '',
                     miasto: '',
                     wojewodztwo: '',
+                    przedmiot_zgloszenia: '',
+                    numer_seryjny: '',
+                    data_zakupu: '',
                     numer_fv: '',
+                    nip: '',
                     opis_usterki: ''
                 });
                 setAlert(null);
@@ -653,6 +825,31 @@
                     return;
                 }
 
+                // Walidacja wyboru przedmiotu zgłoszenia
+                if (!formData.przedmiot_zgloszenia) {
+                    showAlert('Proszę wybrać przedmiot zgłoszenia z listy.', 'error');
+                    return;
+                }
+
+                // Walidacja daty zakupu
+                if (!formData.data_zakupu) {
+                    showAlert('Proszę wybrać datę zakupu sprzętu z kalendarza.', 'error');
+                    return;
+                }
+
+                // Walidacja numeru faktury / paragonu (wymagany)
+                if (!formData.numer_fv.trim()) {
+                    showAlert('Pole "Numer faktury / paragonu" jest wymagane.', 'error');
+                    return;
+                }
+
+                // Walidacja numeru NIP (wymagany, dokładnie 10 cyfr bez myślników)
+                const nipRegex = /^\d{10}$/;
+                if (!nipRegex.test(formData.nip.trim())) {
+                    showAlert('Pole "NIP" jest wymagane i musi składać się z dokładnie 10 cyfr (bez myślników).', 'error');
+                    return;
+                }
+
                 setLoading(true);
                 try {
                     const response = await fetch(`${API_BASE}/zgloszenia`, {
@@ -668,7 +865,11 @@
                             kod_pocztowy: formData.kod_pocztowy.trim(),
                             miasto: formData.miasto.trim(),
                             wojewodztwo: formData.wojewodztwo,
-                            numer_fv: formData.numer_fv || null,
+                            przedmiot_zgloszenia: formData.przedmiot_zgloszenia,
+                            numer_seryjny: isSerialNumberAllowed(formData.przedmiot_zgloszenia) && formData.numer_seryjny ? formData.numer_seryjny.trim() : null,
+                            data_zakupu: formData.data_zakupu,
+                            numer_fv: formData.numer_fv.trim(),
+                            nip: formData.nip.trim(),
                             opis_usterki: formData.opis_usterki
                         })
                     });
@@ -689,7 +890,11 @@
                         kod_pocztowy: '',
                         miasto: '',
                         wojewodztwo: '',
+                        przedmiot_zgloszenia: '',
+                        numer_seryjny: '',
+                        data_zakupu: '',
                         numer_fv: '',
+                        nip: '',
                         opis_usterki: ''
                     });
                 } catch (err) {
@@ -772,7 +977,7 @@
                                 />
                             </div>
                             <div className="form-group full">
-                                <label htmlFor="adres">Ulica i numer domu / lokalu *</label>
+                                <label htmlFor="adres">Adres *</label>
                                 <input
                                     type="text"
                                     id="adres"
@@ -834,14 +1039,67 @@
                                     <option value="zachodniopomorskie">Zachodniopomorskie</option>
                                 </select>
                             </div>
-                            <div className="form-group full">
-                                <label htmlFor="numer_fv">Numer faktury / paragonu (opcjonalnie)</label>
+                            <div className="form-group">
+                                <label htmlFor="przedmiot_zgloszenia">Przedmiot zgłoszenia *</label>
+                                <select
+                                    id="przedmiot_zgloszenia"
+                                    required
+                                    value={formData.przedmiot_zgloszenia}
+                                    onChange={handleSubjectChange}
+                                >
+                                    <option value="">-- Wybierz przedmiot zgłoszenia --</option>
+                                    {PRZEDMIOTY_LISTA.map(item => (
+                                        <option key={item} value={item}>{item}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="form-group">
+                                <label htmlFor="numer_seryjny">
+                                    Numer seryjny {isSerialNumberAllowed(formData.przedmiot_zgloszenia) ? '(aktywny)' : '(tylko dla monitorów i tablic)'}
+                                </label>
+                                <input
+                                    type="text"
+                                    id="numer_seryjny"
+                                    disabled={!isSerialNumberAllowed(formData.przedmiot_zgloszenia)}
+                                    placeholder={isSerialNumberAllowed(formData.przedmiot_zgloszenia) ? 'np. SN123456789' : 'Dostępne tylko dla monitorów i tablic'}
+                                    value={formData.numer_seryjny}
+                                    onChange={e => setFormData({ ...formData, numer_seryjny: e.target.value })}
+                                    style={!isSerialNumberAllowed(formData.przedmiot_zgloszenia) ? { backgroundColor: '#f3f4f6', cursor: 'not-allowed', color: '#9ca3af' } : {}}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label htmlFor="data_zakupu">Data zakupu *</label>
+                                <input
+                                    type="date"
+                                    id="data_zakupu"
+                                    required
+                                    max={new Date().toISOString().split('T')[0]}
+                                    value={formData.data_zakupu}
+                                    onChange={e => setFormData({ ...formData, data_zakupu: e.target.value })}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label htmlFor="numer_fv">Numer faktury / paragonu *</label>
                                 <input
                                     type="text"
                                     id="numer_fv"
+                                    required
                                     placeholder="np. FV/2026/04/1234"
                                     value={formData.numer_fv}
                                     onChange={e => setFormData({ ...formData, numer_fv: e.target.value })}
+                                />
+                            </div>
+                            <div className="form-group">
+                                <label htmlFor="nip">NIP * (10 cyfr, bez myślników)</label>
+                                <input
+                                    type="text"
+                                    id="nip"
+                                    required
+                                    inputMode="numeric"
+                                    maxLength="10"
+                                    placeholder="np. 1234567890 (bez myślników)"
+                                    value={formData.nip}
+                                    onChange={handleNipChange}
                                 />
                             </div>
                             <div className="form-group full">
@@ -959,56 +1217,207 @@
         }
 
         // Kontroler statusu w wierszu tabeli (badge + przycisk akcji + rozwijana lista)
-        function StatusControl({ ticket, onUpdateStatus }) {
-            const nextStatusMap = {
-                'nowe': { next: 'w_realizacji', label: '➔ W realizacji' },
-                'w_realizacji': { next: 'zakończone', label: '✔ Zakończ' },
-                'zakończone': { next: 'nowe', label: '↺ Do nowych' }
-            };
-            const curStatus = ticket.status || 'nowe';
-            const nextConfig = nextStatusMap[curStatus] || { next: 'w_realizacji', label: 'Zmień status' };
+        // Modal opisu naprawy z automatycznym datowaniem
+        function RepairModal({ ticket, onClose, onSubmit }) {
+            const [opis, setOpis] = useState(ticket?.opis_naprawy || '');
+            const [submitting, setSubmitting] = useState(false);
+
+            if (!ticket) return null;
+
+            async function handleSubmit(e) {
+                e.preventDefault();
+                if (!opis.trim()) {
+                    alert('Podaj opis wykonanych prac naprawczych.');
+                    return;
+                }
+                setSubmitting(true);
+                try {
+                    await onSubmit(ticket.id, opis.trim());
+                } finally {
+                    setSubmitting(false);
+                }
+            }
 
             return (
-                <div className="status-cell">
-                    <span className={`status-badge status-${curStatus.replace(' ', '_')}`}>
-                        {curStatus}
-                    </span>
-                    <div className="status-actions">
-                        <button
-                            className="btn-status-change"
-                            onClick={() => onUpdateStatus(ticket.id, nextConfig.next)}
-                            title={`Kliknij, aby zmienić na: ${nextConfig.next}`}
-                        >
-                            {nextConfig.label}
-                        </button>
-                        <select
-                            className="status-select"
-                            value={curStatus}
-                            onChange={e => onUpdateStatus(ticket.id, e.target.value)}
-                            title="Wybierz dowolny status"
-                        >
-                            <option value="nowe">nowe</option>
-                            <option value="w_realizacji">w realizacji</option>
-                            <option value="zakończone">zakończone</option>
-                        </select>
+                <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+                    <div className="modal-card">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                            <h3 style={{ margin: 0, fontSize: '1.15rem', color: 'var(--text-main)' }}>
+                                🛠️ Raport z naprawy — Zgłoszenie #{ticket.id}
+                            </h3>
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '1.25rem', cursor: 'pointer' }}
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div style={{ background: 'rgba(255,255,255,0.03)', padding: '0.75rem', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem' }}>
+                            <div><strong>Klient:</strong> {ticket.imie} {ticket.nazwisko} {ticket.nazwa_firmy ? `(${ticket.nazwa_firmy})` : ''}</div>
+                            <div><strong>Produkt:</strong> {ticket.przedmiot_zgloszenia} {ticket.numer_seryjny ? `| SN: ${ticket.numer_seryjny}` : ''}</div>
+                            <div style={{ marginTop: '0.35rem', color: 'var(--text-muted)' }}>
+                                <strong>Zgłoszona usterka:</strong> {ticket.opis_usterki}
+                            </div>
+                        </div>
+
+                        <form onSubmit={handleSubmit}>
+                            <div className="form-group full" style={{ marginBottom: '1rem' }}>
+                                <label htmlFor="repairDescription" style={{ fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>
+                                    Opis wykonanych prac (co zostało zrobione / wymienione) *
+                                </label>
+                                <textarea
+                                    id="repairDescription"
+                                    required
+                                    rows="4"
+                                    placeholder="np. Wymieniono moduł zasilacza, przetestowano ekran dotykowy, wgrano aktualizację firmware..."
+                                    value={opis}
+                                    onChange={e => setOpis(e.target.value)}
+                                    style={{ width: '100%', resize: 'vertical' }}
+                                />
+                                <small style={{ color: 'var(--text-muted)', marginTop: '0.4rem', display: 'block', fontSize: '0.78rem' }}>
+                                    🕒 Wpis zostanie <strong>automatycznie opatrzony bieżącą datą i czasem</strong> serwera. Po zatwierdzeniu zlecenie natychmiast pojawi się u magazynierów ze statusem <strong>"Do wysyłki"</strong>.
+                                </small>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                                <button
+                                    type="button"
+                                    className="btn-clear"
+                                    onClick={onClose}
+                                    disabled={submitting}
+                                >
+                                    Anuluj
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="btn-repair"
+                                    style={{ padding: '0.6rem 1.2rem', fontSize: '0.85rem' }}
+                                    disabled={submitting}
+                                >
+                                    {submitting ? 'Zapisywanie...' : '✔ Zatwierdź naprawę i przekaż do wysyłki'}
+                                </button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             );
         }
 
-        // Panel zarządzania zgłoszeniami dla zalogowanego pracownika
+        // Kontroler statusu w wierszu tabeli dopasowany do ról
+        function StatusControl({ ticket, user, onUpdateStatus, onOpenRepairModal }) {
+            const role = user?.role || 'pracownik';
+            const curStatus = ticket.status || 'nowe';
+
+            const statusLabels = {
+                'nowe': 'nowe',
+                'w_realizacji': 'w realizacji',
+                'do_wysylki': 'do wysyłki',
+                'zakończone': 'zakończone'
+            };
+
+            const label = statusLabels[curStatus] || curStatus;
+
+            return (
+                <div className="status-cell">
+                    <span className={`status-badge status-${curStatus.replace(' ', '_')}`}>
+                        {label}
+                    </span>
+
+                    <div className="status-actions">
+                        {/* Rola: PRACOWNIK */}
+                        {role === 'pracownik' && (
+                            <>
+                                {(curStatus === 'nowe' || curStatus === 'w_realizacji') && (
+                                    <button
+                                        type="button"
+                                        className="btn-repair"
+                                        onClick={() => onOpenRepairModal(ticket)}
+                                        title="Opisz wykonane prace i przekaż do magazynu jako Do wysyłki"
+                                    >
+                                        🛠️ Oznacz jako naprawione
+                                    </button>
+                                )}
+                                {curStatus === 'do_wysylki' && (
+                                    <span style={{ fontSize: '0.75rem', color: '#c084fc', fontWeight: 600 }}>
+                                        📦 Przekazano do wysyłki
+                                    </span>
+                                )}
+                                {curStatus === 'zakończone' && (
+                                    <span style={{ fontSize: '0.75rem', color: '#5a80ff', fontWeight: 600 }}>
+                                        ✔ Zakończone
+                                    </span>
+                                )}
+                            </>
+                        )}
+
+                        {/* Rola: MAGAZYNIER */}
+                        {role === 'magazynier' && (
+                            <>
+                                {curStatus === 'do_wysylki' && (
+                                    <button
+                                        type="button"
+                                        className="btn-ship"
+                                        onClick={() => onUpdateStatus(ticket.id, 'zakończone')}
+                                        title="Zaznacz jako wysłane do klienta"
+                                    >
+                                        📦 Oznacz jako wysłane
+                                    </button>
+                                )}
+                                {curStatus === 'zakończone' && (
+                                    <span style={{ fontSize: '0.75rem', color: '#5a80ff', fontWeight: 600 }}>
+                                        ✔ Wysłano / Zakończono
+                                    </span>
+                                )}
+                            </>
+                        )}
+
+                        {/* Rola: ADMIN lub SERWISANT */}
+                        {(role === 'admin' || role === 'serwisant') && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                {(curStatus === 'nowe' || curStatus === 'w_realizacji') && (
+                                    <button
+                                        type="button"
+                                        className="btn-repair"
+                                        onClick={() => onOpenRepairModal(ticket)}
+                                        title="Opisz naprawę i oznacz jako Do wysyłki"
+                                    >
+                                        🛠️ Oznacz jako naprawione
+                                    </button>
+                                )}
+                                <select
+                                    className="status-select"
+                                    value={curStatus}
+                                    onChange={e => onUpdateStatus(ticket.id, e.target.value)}
+                                    title="Zmień status zgłoszenia"
+                                >
+                                    <option value="nowe">nowe</option>
+                                    <option value="w_realizacji">w realizacji</option>
+                                    <option value="do_wysylki">do wysyłki</option>
+                                    <option value="zakończone">zakończone</option>
+                                </select>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // Panel zarządzania zgłoszeniami dla zalogowanego pracownika / serwisanta / magazyniera / admina
         function Dashboard({ user, token, onLogout }) {
             const [tickets, setTickets] = useState([]);
+            const [workers, setWorkers] = useState([]);
             const [loading, setLoading] = useState(true);
             const [deletingId, setDeletingId] = useState(null);
             const [alert, setAlert] = useState(null);
+            const [repairModalTicket, setRepairModalTicket] = useState(null);
 
             function showAlert(message, type = 'success') {
                 setAlert({ message, type });
                 setTimeout(() => setAlert(null), 5000);
             }
 
-            // Osobna funkcja sprawdzająca status 401 lub 403 i wylogowująca użytkownika w razie braku autoryzacji
             function handleAuthError(response) {
                 if (response && (response.status === 401 || response.status === 403)) {
                     onLogout();
@@ -1017,8 +1426,6 @@
                 return false;
             }
 
-            // Pomocnik do zapytań z tokenem — pobiera aktualny token z localStorage (obsługuje m.in. manualną zmianę w DevTools),
-            // dokłada nagłówek Authorization oraz wylogowuje przy kodach 401/403
             async function apiFetch(endpoint, options = {}) {
                 const currentToken = localStorage.getItem('serwis_token');
                 const headers = {
@@ -1033,6 +1440,20 @@
                 }
 
                 return response;
+            }
+
+            async function fetchWorkers() {
+                if (user?.role !== 'admin' && user?.role !== 'serwisant') return;
+                try {
+                    const response = await apiFetch('/pracownicy');
+                    if (!response || handleAuthError(response)) return;
+                    const data = await response.json();
+                    if (response.ok && Array.isArray(data)) {
+                        setWorkers(data);
+                    }
+                } catch (err) {
+                    console.error('Błąd pobierania pracowników:', err);
+                }
             }
 
             async function fetchTickets() {
@@ -1056,7 +1477,51 @@
 
             useEffect(() => {
                 fetchTickets();
+                fetchWorkers();
             }, [token]);
+
+            async function handleAssignWorker(ticketId, pracownikId) {
+                try {
+                    const response = await apiFetch(`/zgloszenia/${ticketId}/przypisz`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pracownik_id: pracownikId || null })
+                    });
+                    if (!response || handleAuthError(response)) return;
+
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Nie udało się przypisać pracownika.');
+                    }
+
+                    showAlert(data.message, 'success');
+                    fetchTickets();
+                } catch (err) {
+                    showAlert(err.message, 'error');
+                }
+            }
+
+            async function handleRepairSubmit(ticketId, opisNaprawy) {
+                try {
+                    const response = await apiFetch(`/zgloszenia/${ticketId}/naprawione`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ opis_naprawy: opisNaprawy })
+                    });
+                    if (!response || handleAuthError(response)) return;
+
+                    const data = await response.json();
+                    if (!response.ok) {
+                        throw new Error(data.error || 'Nie udało się zatwierdzić naprawy.');
+                    }
+
+                    showAlert(`Zgłoszenie #${ticketId} zostało opisane i przekazane do magazynu jako "Do wysyłki"!`, 'success');
+                    setRepairModalTicket(null);
+                    fetchTickets();
+                } catch (err) {
+                    showAlert(err.message, 'error');
+                }
+            }
 
             async function handleUpdateStatus(id, newStatus) {
                 try {
@@ -1108,13 +1573,23 @@
                 }
             }
 
+            const getEmptyMessage = () => {
+                if (user?.role === 'pracownik') {
+                    return 'Brak przypisanych zleceń. Zlecenia pojawią się tutaj po przypisaniu ich przez serwisanta lub administratora.';
+                }
+                if (user?.role === 'magazynier') {
+                    return 'Brak zleceń oczekujących na wysyłkę. Zlecenia pojawią się tutaj ze statusem "Do wysyłki", gdy pracownik zakończy i opisze naprawę.';
+                }
+                return 'Brak zgłoszeń w bazie danych.';
+            };
+
             return (
                 <div className="card">
                     <div className="admin-header-bar">
                         <div>
                             <h2 className="card-title">Zgłoszenia serwisowe</h2>
                             <span className="badge-user">
-                                Zalogowano: {user?.username || 'Pracownik'} ({user?.role || 'admin'})
+                                Zalogowano: {user?.username || 'Użytkownik'} (Rola: {user?.role || 'pracownik'})
                             </span>
                         </div>
                         <div style={{ display: 'flex', gap: '0.75rem' }}>
@@ -1136,9 +1611,11 @@
                                     <th>ID</th>
                                     <th>Klient &amp; Kontakt</th>
                                     <th>Adres</th>
-                                    <th>Opis usterki</th>
-                                    <th>Nr FV</th>
-                                    <th>Status &amp; Zmiana</th>
+                                    <th>Przedmiot &amp; Usterka</th>
+                                    <th>Przypisany pracownik</th>
+                                    <th>Raport z naprawy</th>
+                                    <th>Nr FV &amp; NIP</th>
+                                    <th>Status</th>
                                     <th>Data</th>
                                     <th>Akcje</th>
                                 </tr>
@@ -1146,14 +1623,14 @@
                             <tbody>
                                 {loading ? (
                                     <tr>
-                                        <td colSpan="8" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                                        <td colSpan="10" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
                                             Ładowanie danych z bazy MySQL...
                                         </td>
                                     </tr>
                                 ) : tickets.length === 0 ? (
                                     <tr>
-                                        <td colSpan="8" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                                            Brak zgłoszeń w bazie danych.
+                                        <td colSpan="10" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem 1rem' }}>
+                                            {getEmptyMessage()}
                                         </td>
                                     </tr>
                                 ) : (
@@ -1164,7 +1641,7 @@
                                                 <div><strong>{t.imie} {t.nazwisko}</strong></div>
                                                 {t.nazwa_firmy && (
                                                     <div style={{ fontSize: '0.8rem', color: 'var(--primary)', fontWeight: 600 }}>
-                                                        🏢 {t.nazwa_firmy}
+                                                        Nazwa firmy: {t.nazwa_firmy}
                                                     </div>
                                                 )}
                                                 <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t.email}</div>
@@ -1183,10 +1660,102 @@
                                                     </div>
                                                 )}
                                             </td>
-                                            <td><p style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem' }}>{t.opis_usterki}</p></td>
-                                            <td><small>{t.numer_fv || '-'}</small></td>
                                             <td>
-                                                <StatusControl ticket={t} onUpdateStatus={handleUpdateStatus} />
+                                                {t.przedmiot_zgloszenia && (
+                                                    <div style={{ fontWeight: 600, color: 'var(--primary)', marginBottom: '3px' }}>
+                                                        Produkt: {t.przedmiot_zgloszenia}
+                                                    </div>
+                                                )}
+                                                {t.numer_seryjny && (
+                                                    <div style={{ fontSize: '0.78rem', color: '#1f2937', fontWeight: 600, marginBottom: '2px' }}>
+                                                        SN: {t.numer_seryjny}
+                                                    </div>
+                                                )}
+                                                {t.data_zakupu && (
+                                                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
+                                                        Data Zakupu: {t.data_zakupu}
+                                                    </div>
+                                                )}
+                                                <p style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem' }}>{t.opis_usterki}</p>
+                                            </td>
+                                            <td>
+                                                {(user?.role === 'admin' || user?.role === 'serwisant') ? (
+                                                    <select
+                                                        className="assign-select"
+                                                        value={t.przypisany_pracownik_id || ''}
+                                                        onChange={e => handleAssignWorker(t.id, e.target.value)}
+                                                        title="Przypisz to zlecenie pracownikowi"
+                                                    >
+                                                        <option value="">— Nieprzypisane —</option>
+                                                        {workers.map(w => (
+                                                            <option key={w.id} value={w.id}>
+                                                                {w.username} ({w.role})
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                ) : (
+                                                    <div>
+                                                        {t.przypisany_pracownik_username ? (
+                                                            <span style={{ fontWeight: 600, color: 'var(--primary)', fontSize: '0.85rem' }}>
+                                                                👤 {t.przypisany_pracownik_username}
+                                                            </span>
+                                                        ) : (
+                                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                                                                Nieprzypisane
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </td>
+                                            <td>
+                                                {t.opis_naprawy ? (
+                                                    <div className="repair-box">
+                                                        <div style={{ fontWeight: 600, color: ' var(--primary)', marginBottom: '2px' }}>
+                                                            🛠️ Naprawiono:
+                                                        </div>
+                                                        <p style={{ margin: 0, fontSize: '0.82rem', whiteSpace: 'pre-wrap' }}>
+                                                            {t.opis_naprawy}
+                                                        </p>
+                                                        {t.opis_naprawy_data && (
+                                                            <div className="repair-date">
+                                                                🕒 {t.opis_naprawy_data}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ) : (
+                                                    <div>
+                                                        {(user?.role === 'pracownik' || user?.role === 'serwisant' || user?.role === 'admin') && t.status !== 'zakończone' ? (
+                                                            <button
+                                                                type="button"
+                                                                className="btn-repair"
+                                                                onClick={() => setRepairModalTicket(t)}
+                                                                title="Wpisz co zostało zrobione i przekaż do wysyłki"
+                                                            >
+                                                                🛠️ Opisz naprawę
+                                                            </button>
+                                                        ) : (
+                                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                                                                Oczekuje na opis
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </td>
+                                            <td>
+                                                <div><strong>{t.numer_fv}</strong></div>
+                                                {t.nip && (
+                                                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                                                        NIP: {t.nip}
+                                                    </div>
+                                                )}
+                                            </td>
+                                            <td>
+                                                <StatusControl
+                                                    ticket={t}
+                                                    user={user}
+                                                    onUpdateStatus={handleUpdateStatus}
+                                                    onOpenRepairModal={ticketToRepair => setRepairModalTicket(ticketToRepair)}
+                                                />
                                             </td>
                                             <td>
                                                 <small>
@@ -1225,6 +1794,12 @@
                             </tbody>
                         </table>
                     </div>
+
+                    <RepairModal
+                        ticket={repairModalTicket}
+                        onClose={() => setRepairModalTicket(null)}
+                        onSubmit={handleRepairSubmit}
+                    />
                 </div>
             );
         }

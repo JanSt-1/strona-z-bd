@@ -95,4 +95,30 @@ describe('Testy integracyjne API (node:test + supertest)', () => {
             'Powinien zostać zwrócony komunikat o błędnych danych logowania'
         );
     });
+
+    // 5. GET /api/pracownicy bez podanego tokenu ma zwrócić status 401
+    it('GET /api/pracownicy bez tokenu powinien zwrócić status 401', async () => {
+        const response = await request(app).get('/api/pracownicy');
+        assert.strictEqual(response.status, 401);
+        assert.ok(response.body.error);
+    });
+
+    // 6. PATCH /api/zgloszenia/1/przypisz bez podanego tokenu ma zwrócić status 401
+    it('PATCH /api/zgloszenia/1/przypisz bez tokenu powinien zwrócić status 401', async () => {
+        const response = await request(app)
+            .patch('/api/zgloszenia/1/przypisz')
+            .send({ pracownik_id: 1 });
+        assert.strictEqual(response.status, 401);
+        assert.ok(response.body.error);
+    });
+
+    // 7. PATCH /api/zgloszenia/1/naprawione bez podanego tokenu ma zwrócić status 401
+    it('PATCH /api/zgloszenia/1/naprawione bez tokenu powinien zwrócić status 401', async () => {
+        const response = await request(app)
+            .patch('/api/zgloszenia/1/naprawione')
+            .send({ opis_naprawy: 'Wymieniono kabel' });
+        assert.strictEqual(response.status, 401);
+        assert.ok(response.body.error);
+    });
 });
+

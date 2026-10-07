@@ -125,9 +125,16 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 | `wojewodztwo` | `VARCHAR(50) NOT NULL` | Województwo (z listy 16 polskich województw) |
 | `numer_telefonu` | `VARCHAR(20) NOT NULL` | Telefon kontaktowy (+48 i 9 cyfr) |
 | `email` | `VARCHAR(100) NOT NULL` | Email klienta |
+| `przedmiot_zgloszenia` | `VARCHAR(100) NOT NULL` | Kategoria urządzenia wyselekcjonowana z listy |
+| `numer_seryjny` | `VARCHAR(100) NULL` | Numer seryjny (dostępny wyłącznie dla monitorów i tablic interaktywnych) |
+| `data_zakupu` | `DATE NOT NULL` | Data zakupu sprzętu (RRRR-MM-DD) |
 | `opis_usterki` | `TEXT NOT NULL` | Treść zgłoszenia, opis usterki |
-| `numer_fv` | `VARCHAR(50) NULL` | Opcjonalny numer faktury lub paragonu |
-| `status` | `ENUM('nowe', 'w_realizacji', 'zakończone')` | Domyślnie `'nowe'` |
+| `numer_fv` | `VARCHAR(50) NOT NULL` | Wymagany numer faktury lub paragonu |
+| `nip` | `VARCHAR(10) NOT NULL` | Wymagany NIP (10 cyfr, bez myślników) |
+| `przypisany_pracownik_id` | `INT NULL` | ID użytkownika z tabeli `uzytkownicy`, któremu przypisano zlecenie |
+| `opis_naprawy` | `TEXT NULL` | Opis wykonanych prac naprawczych wprowadzony przez pracownika |
+| `opis_naprawy_data` | `DATETIME NULL` | Automatyczna data i czas zatwierdzenia raportu z naprawy |
+| `status` | `ENUM/VARCHAR('nowe', 'w_realizacji', 'do_wysylki', 'zakończone')` | Domyślnie `'nowe'` |
 | `created_at` | `TIMESTAMP DEFAULT CURRENT_TIMESTAMP` | Data i czas rejestracji |
 
 ### Tabela `uzytkownicy`:
@@ -141,7 +148,29 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 
 ---
 
-## 6. Dokumentacja Endpointów API
+## 6. Role użytkowników i przepływ zleceń
+
+1. **`admin`**:
+   - Pełne uprawnienia do podglądu wszystkich zgłoszeń.
+   - Może przypisywać zlecenia pracownikom.
+   - Może zmieniać dowolny status, usuwać zgłoszenia (`DELETE /api/zgloszenia/:id`) oraz zakładać konta użytkowników (`POST /api/admin/users`).
+2. **`serwisant`**:
+   - Widzi wszystkie zlecenia.
+   - Może przypisywać zlecenia pracownikom (`PATCH /api/zgloszenia/:id/przypisz`).
+   - Może opisywać naprawy i aktualizować statusy.
+3. **`pracownik`**:
+   - **Domyślnie NIE widzi zleceń** w bazie – widzi wyłącznie zlecenia przypisane do niego przez serwisanta lub administratora.
+   - Przed oznaczeniem zlecenia jako naprawione **musi sporządzić opis wykonanych prac** (`PATCH /api/zgloszenia/:id/naprawione`).
+   - Wpis z opisem naprawy jest **automatycznie datowany (data i czas: `NOW()`)**.
+   - Po zatwierdzeniu naprawy zlecenie otrzymuje status **`do_wysylki`** i zostaje przekazane do magazynu.
+4. **`magazynier`**:
+   - **Domyślnie NIE widzi zleceń** nowych ani w toku naprawy.
+   - Zlecenie pojawia się u magazynierów **dopiero gdy pracownik zakończy i opisze naprawę** – ma wtedy status **`do_wysylki`**.
+   - Magazynier widzi dane wysyłkowe klienta, opis usterki, opis naprawy pracownika z datą i godziną, oraz ma przycisk do oznaczenia przesyłki jako wysłana / zakończona (`zakończone`).
+
+---
+
+## 7. Dokumentacja Endpointów API
 
 ### 1. Rejestracja nowego zgłoszenia (Publiczny)
 - **Metoda:** `POST`
@@ -159,8 +188,12 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
   "wojewodztwo": "mazowieckie",
   "numer_telefonu": "+48600700800",
   "email": "jan.kowalski@example.com",
+  "przedmiot_zgloszenia": "Monitor interaktywny myBoard Titan (Android 15)",
+  "numer_seryjny": "SN-987654321",
+  "data_zakupu": "2025-11-20",
   "opis_usterki": "Urządzenie nie włącza się po burzy.",
-  "numer_fv": "FV/2026/0123"
+  "numer_fv": "FV/2026/0123",
+  "nip": "1234567890"
 }
 ```
 - **Odpowiedź (201 Created):**
@@ -170,7 +203,6 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
   "id": 1
 }
 ```
-- **Błędy:** `400 Bad Request` (brak wymaganych pól, zły format kodu pocztowego/telefonu/emaila, niepoprawne województwo, przekroczenie limitu znaków), `500 Internal Server Error`.
 
 ---
 
@@ -197,45 +229,79 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
   }
 }
 ```
-- **Błędy:** `400 Bad Request` (brak username/hasła), `401 Unauthorized` (błędne dane), `429 Too Many Requests` (przekroczony limit prób).
 
 ---
 
-### 3. Pobieranie listy zgłoszeń (Chroniony)
+### 3. Pobieranie listy pracowników (Chroniony, Admin i Serwisant)
+- **Metoda:** `GET`
+- **Ścieżka:** `/api/pracownicy`
+- **Headers:** `Authorization: Bearer <TOKEN_JWT>`
+- **Uprawnienia:** `admin`, `serwisant`
+- **Odpowiedź (200 OK):** Lista użytkowników z rolą `pracownik` i `serwisant` do wyboru w selektorze przypisywania.
+
+---
+
+### 4. Pobieranie listy zgłoszeń (Chroniony, Zależny od roli)
 - **Metoda:** `GET`
 - **Ścieżka:** `/api/zgloszenia`
 - **Headers:** `Authorization: Bearer <TOKEN_JWT>`
-- **Uprawnienia:** `admin`, `pracownik`
-- **Odpowiedź (200 OK):** Tablica obiektów zgłoszeń posortowana od najnowszego (`ORDER BY created_at DESC`).
-- **Błędy:** `401 Unauthorized` (brak tokenu), `403 Forbidden` (nieprawidłowy lub wygasły token).
+- **Uprawnienia i widoczność:**
+  - `admin`, `serwisant`: widzą wszystkie zgłoszenia w systemie.
+  - `pracownik`: widzi wyłącznie zgłoszenia przypisane do niego (`WHERE przypisany_pracownik_id = req.user.id`). Domyślnie pusto.
+  - `magazynier`: widzi wyłącznie zgłoszenia gotowe do wysyłki (`WHERE status IN ('do_wysylki', 'zakończone')`). Domyślnie pusto.
+- **Odpowiedź (200 OK):** Tablica obiektów zgłoszeń posortowana od najnowszego.
 
 ---
 
-### 4. Aktualizacja statusu zgłoszenia (Chroniony)
-- **Metoda:** `PATCH` lub `PUT`
-- **Ścieżka:** `/api/zgloszenia/:id/status`
+### 5. Przypisanie zgłoszenia pracownikowi (Chroniony, Admin i Serwisant)
+- **Metoda:** `PATCH`
+- **Ścieżka:** `/api/zgloszenia/:id/przypisz`
 - **Headers:** `Content-Type: application/json`, `Authorization: Bearer <TOKEN_JWT>`
-- **Uprawnienia:** `admin`, `pracownik`
+- **Uprawnienia:** `admin`, `serwisant`
 - **Body:**
 ```json
 {
-  "status": "w_realizacji"
+  "pracownik_id": 2
 }
 ```
-*Dozwolone statusy:* `"nowe"`, `"w_realizacji"`, `"zakończone"`.
-- **Odpowiedź (200 OK):**
-```json
-{
-  "message": "Status zgłoszenia został zaktualizowany.",
-  "id": 1,
-  "status": "w_realizacji"
-}
-```
-- **Błędy:** `400 Bad Request` (niedozwolony status lub złe ID), `401 / 403` (brak/zły token), `404 Not Found` (brak zgłoszenia).
+*(lub `null` w celu cofnięcia przypisania)*
+- **Odpowiedź (200 OK):** Potwierdzenie przypisania i automatyczna zmiana statusu z `nowe` na `w_realizacji`.
 
 ---
 
-### 5. Usunięcie zgłoszenia (Chroniony, Tylko Admin)
+### 6. Opisanie naprawy i przekazanie do wysyłki (Chroniony)
+- **Metoda:** `PATCH`
+- **Ścieżka:** `/api/zgloszenia/:id/naprawione`
+- **Headers:** `Content-Type: application/json`, `Authorization: Bearer <TOKEN_JWT>`
+- **Uprawnienia:** `pracownik` (własne przypisane zlecenie), `serwisant`, `admin`.
+- **Body:**
+```json
+{
+  "opis_naprawy": "Wymieniono płytę główną zasilacza, przetestowano matrycę dotykową."
+}
+```
+- **Działanie:** Zapisuje treść opisu, ustawia `opis_naprawy_data = NOW()`, zmienia status na `do_wysylki`. Zlecenie natychmiast pojawia się u magazynierów.
+- **Odpowiedź (200 OK):**
+```json
+{
+  "message": "Zlecenie zostało opisane i przekazane do magazynu ze statusem \"Do wysyłki\".",
+  "id": 1,
+  "status": "do_wysylki",
+  "opis_naprawy": "..."
+}
+```
+
+---
+
+### 7. Aktualizacja statusu zgłoszenia (Chroniony)
+- **Metoda:** `PATCH` lub `PUT`
+- **Ścieżka:** `/api/zgloszenia/:id/status`
+- **Headers:** `Content-Type: application/json`, `Authorization: Bearer <TOKEN_JWT>`
+- **Dozwolone statusy:** `"nowe"`, `"w_realizacji"`, `"do_wysylki"`, `"zakończone"`. Magazynier może wyłącznie oznaczyć zlecenie jako `zakończone` (wysłane).
+
+---
+
+### 8. Usunięcie zgłoszenia (Chroniony, Tylko Admin)
 - **Metoda:** `DELETE`
 - **Ścieżka:** `/api/zgloszenia/:id`
 - **Headers:** `Authorization: Bearer <TOKEN_JWT>`

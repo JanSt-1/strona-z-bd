@@ -87,10 +87,23 @@ Pokryte przypadki testowe:
 2. `GET /api/zgloszenia` bez nagłówka Authorization -> **401 Unauthorized**.
 3. `GET /api/zgloszenia` z nieprawidłowym tokenem JWT -> **403 Forbidden**.
 4. `POST /api/login` z błędnym hasłem -> **401 Unauthorized**.
+5. `GET /api/pracownicy` bez tokenu -> **401 Unauthorized**.
+6. `PATCH /api/zgloszenia/:id/przypisz` bez tokenu -> **401 Unauthorized**.
+7. `PATCH /api/zgloszenia/:id/naprawione` bez tokenu -> **401 Unauthorized**.
 
 ---
 
-## Jak założyć pierwsze konto administratora
+## Role użytkowników i obsługa zleceń
+
+W systemie zaimplementowano role:
+- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie pracownikom, modyfikacja i usuwanie zgłoszeń, tworzenie użytkowników.
+- **`serwisant`**: Przegląd zleceń, przypisywanie zleceń pracownikom, raportowanie naprawy.
+- **`pracownik`**: Domyślnie nie widzi żadnych zleceń – widzi wyłącznie zlecenia przypisane do niego. Przed oznaczeniem jako naprawione musi sporządzić opis prac (automatycznie datowany z godziną i minutą). Po zatwierdzeniu zlecenie trafia do magazynu ze statusem **"Do wysyłki"**.
+- **`magazynier`**: Domyślnie nie widzi zleceń – widzi je dopiero po zakończeniu i opisaniu naprawy przez pracownika (ze statusem **"Do wysyłki"**). Ma możliwość oznaczenia przesyłki jako wysłana (**"zakończone"**).
+
+---
+
+## Jak założyć konto użytkownika
 
 W projekcie dostępny jest skrypt `create-user.js`, który bezpiecznie haszuje hasło za pomocą **bcrypt** i zapisuje konto w tabeli `uzytkownicy`.
 
@@ -98,6 +111,13 @@ W projekcie dostępny jest skrypt `create-user.js`, który bezpiecznie haszuje h
 ```bash
 node create-user.js <nazwa_uzytkownika> <haslo> [rola]
 ```
-- Dostępne role: `admin` lub `pracownik` (domyślnie: `pracownik`).
+- Dostępne role: `admin`, `serwisant`, `pracownik`, `magazynier` (domyślnie: `pracownik`).
+- Przykłady:
+  ```bash
+  node create-user.js admin HasloAdmina123 admin
+  node create-user.js tomasz HasloSerwisanta123 serwisant
+  node create-user.js marek HasloPracownika123 pracownik
+  node create-user.js janusz HasloMagazyniera123 magazynier
+  ```
 
 Po utworzeniu konta przejdź w przeglądarce do zakładki **„Panel pracownika”** i zaloguj się podaną nazwą użytkownika oraz hasłem.
