@@ -468,7 +468,8 @@ app.get('/api/zgloszenia', authenticateToken, async (req, res) => {
                 u.username AS przypisany_pracownik_username,
                 z.opis_naprawy,
                 DATE_FORMAT(z.opis_naprawy_data, '%Y-%m-%d %H:%i:%s') AS opis_naprawy_data,
-                DATE_FORMAT(z.data_wyslania, '%Y-%m-%d %H:%i:%s') AS data_wyslania
+                DATE_FORMAT(z.data_wyslania, '%Y-%m-%d %H:%i:%s') AS data_wyslania,
+                z.numer_listu
             FROM zgloszenia z
             LEFT JOIN uzytkownicy u ON z.przypisany_pracownik_id = u.id
             ${whereClause}
@@ -603,7 +604,7 @@ async function handleUpdateStatus(req, res) {
             error: 'Nieprawidłowe ID zgłoszenia. Wymagana jest liczba całkowita.'
         });
     }
-    const { status, opis_naprawy } = req.body || {};
+    const { status, opis_naprawy, numer_listu } = req.body || {};
 
     if (!status || !ALLOWED_STATUSES.includes(status)) {
         return res.status(400).json({
@@ -666,9 +667,11 @@ async function handleUpdateStatus(req, res) {
         let updateQuery = 'UPDATE zgloszenia SET status = ? WHERE id = ?';
         let updateParams = [status, id];
 
-        // Jeśli status zmienia się na 'zakończone', zapisz czas wysyłki
+        // Jeśli status zmienia się na 'zakończone', zapisz czas wysyłki i ewentualny numer listu
         if (status === 'zakończone') {
-            updateQuery = 'UPDATE zgloszenia SET status = ?, data_wyslania = NOW() WHERE id = ?';
+            const listu = (numer_listu && typeof numer_listu === 'string') ? numer_listu.trim() : null;
+            updateQuery = 'UPDATE zgloszenia SET status = ?, data_wyslania = NOW(), numer_listu = ? WHERE id = ?';
+            updateParams = [status, listu, id];
         }
 
         const [result] = await currentPool.query(updateQuery, updateParams);

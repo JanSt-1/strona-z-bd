@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS zgloszenia (
     opis_naprawy TEXT NULL,
     opis_naprawy_data DATETIME NULL,
     data_wyslania DATETIME NULL,
+    numer_listu VARCHAR(100) NULL,
     status ENUM(
         'nowe',
         'w_realizacji',
@@ -40,5 +41,5 @@ CREATE TABLE IF NOT EXISTS zgloszenia (
         'zakończone'
     ) DEFAULT 'nowe',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (przypisany_pracownik_id) REFERENCES uzytkownicy(id) ON DELETE SET NULL
+    FOREIGN KEY (przypisany_pracownik_id) REFERENCES uzytkownicy (id) ON DELETE SET NULL
 );

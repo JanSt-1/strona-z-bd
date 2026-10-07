@@ -1305,6 +1305,49 @@
             );
         }
 
+        // Komponent wysyłki z polem na numer listu przewozowego (dla magazyniera)
+        function ShipControl({ ticket, onUpdateStatus }) {
+            const [numer, setNumer] = React.useState('');
+            const [sending, setSending] = React.useState(false);
+
+            async function handleShip() {
+                setSending(true);
+                await onUpdateStatus(ticket.id, 'zakończone', { numer_listu: numer.trim() || null });
+                setSending(false);
+            }
+
+            return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                    <input
+                        type="text"
+                        placeholder="Nr listu przewozowego (opcjonalnie)"
+                        value={numer}
+                        onChange={e => setNumer(e.target.value)}
+                        style={{
+                            fontSize: '0.78rem',
+                            padding: '4px 8px',
+                            borderRadius: '6px',
+                            border: '1px solid var(--border)',
+                            background: 'var(--input-bg)',
+                            color: 'var(--text)',
+                            width: '100%',
+                            minWidth: '0'
+                        }}
+                        maxLength={100}
+                    />
+                    <button
+                        type="button"
+                        className="btn-ship"
+                        disabled={sending}
+                        onClick={handleShip}
+                        title="Zaznacz jako wysłane do klienta"
+                    >
+                        📦 {sending ? 'Zapisywanie...' : 'Oznacz jako wysłane'}
+                    </button>
+                </div>
+            );
+        }
+
         // Kontroler statusu w wierszu tabeli dopasowany do ról
         function StatusControl({ ticket, user, onUpdateStatus, onOpenRepairModal }) {
             const role = user?.role || 'pracownik';
@@ -1356,14 +1399,7 @@
                         {role === 'magazynier' && (
                             <>
                                 {curStatus === 'do_wysylki' && (
-                                    <button
-                                        type="button"
-                                        className="btn-ship"
-                                        onClick={() => onUpdateStatus(ticket.id, 'zakończone')}
-                                        title="Zaznacz jako wysłane do klienta"
-                                    >
-                                        📦 Oznacz jako wysłane
-                                    </button>
+                                    <ShipControl ticket={ticket} onUpdateStatus={onUpdateStatus} />
                                 )}
                                 {curStatus === 'zakończone' && (
                                     <span style={{ fontSize: '0.75rem', color: '#5a80ff', fontWeight: 600 }}>
@@ -1523,12 +1559,13 @@
                 }
             }
 
-            async function handleUpdateStatus(id, newStatus) {
+            async function handleUpdateStatus(id, newStatus, extraData) {
                 try {
+                    const body = { status: newStatus, ...extraData };
                     const response = await apiFetch(`/zgloszenia/${id}/status`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ status: newStatus })
+                        body: JSON.stringify(body)
                     });
                     if (!response || handleAuthError(response)) return;
 
@@ -1761,6 +1798,16 @@
                                                 <small>
                                                     {t.created_at ? new Date(t.created_at).toLocaleString('pl-PL') : '-'}
                                                 </small>
+                                                {t.data_wyslania && (
+                                                    <div style={{ marginTop: '4px', fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 600 }}>
+                                                        📦 Wysłano: {t.data_wyslania}
+                                                    </div>
+                                                )}
+                                                {t.numer_listu && (
+                                                    <div style={{ marginTop: '2px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                                        🚚 List: <strong style={{ color: 'var(--text)' }}>{t.numer_listu}</strong>
+                                                    </div>
+                                                )}
                                             </td>
                                             <td>
                                                 {user?.role === 'admin' ? (

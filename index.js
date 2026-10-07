@@ -29,7 +29,8 @@ if (!JWT_SECRET) {
             { name: 'przypisany_pracownik_id', def: 'INT NULL' },
             { name: 'opis_naprawy', def: 'TEXT NULL' },
             { name: 'opis_naprawy_data', def: 'DATETIME NULL' },
-            { name: 'data_wyslania', def: 'DATETIME NULL' }
+            { name: 'data_wyslania', def: 'DATETIME NULL' },
+            { name: 'numer_listu', def: "VARCHAR(100) NULL" }
         ];
 
         for (const col of columnsToCheck) {
