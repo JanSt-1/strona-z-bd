@@ -4,10 +4,19 @@ To pełna aplikacja webowa (SPA) umożliwiająca klientom szybkie rejestrowanie 
 
 ---
 
+## Architektura i Separation of Concerns
+
+Aplikacja backendowa jest rozdzielona zgodnie z zasadą separacji odpowiedzialności:
+- **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (CORS, JSON, pliki statyczne), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
+- **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację połączenia z bazą MySQL oraz uruchomienie nasłuchiwania (`app.listen()`).
+- **`app.test.js`**: Zestaw testów integracyjnych API bazujący na natywnym runnerze `node:test` oraz bibliotece `supertest`.
+
+---
+
 ## Wymagania wstępne
 
 Przed uruchomieniem projektu upewnij się, że masz zainstalowane:
-- **Node.js** (wersja 18 lub nowsza) oraz menedżer pakietów **npm**
+- **Node.js** (wersja 18 lub nowsza, zalecana 20+ z obsługą `node:test`) oraz menedżer pakietów **npm**
 - **MySQL** lub **MariaDB** (np. zainstalowany lokalnie serwer MySQL, pakiet XAMPP, Laragon lub kontener Docker)
 
 ---
@@ -45,9 +54,8 @@ npm run seed
 ### Krok 4: Utworzenie pierwszego konta administratora
 Skorzystaj z wbudowanego narzędzia CLI `create-user.js`:
 ```bash
-node create-user.js admin haslo admin
+node create-user.js nazwa_uzytkownika haslo admin
 ```
-*(Więcej szczegółów w sekcji poniżej).*
 
 ### Krok 5: Uruchomienie serwera
 Uruchom aplikację w trybie produkcyjnym:
@@ -61,6 +69,24 @@ npm run dev
 
 Po uruchomieniu aplikacja dostępna jest pod adresem:
 👉 **http://localhost:3000**
+
+---
+
+## Testy integracyjne
+
+Projekt posiada zestaw testów integracyjnych weryfikujących poprawność działania kluczowych endpointów API (walidacja, autoryzacja, mechanizm logowania).
+
+Uruchomienie testów:
+```bash
+npm test
+```
+*Skrypt wykonuje polecenie `node --test` z użyciem `supertest`. Dzięki wbudowanemu mockowaniu puli bazy danych w `app.test.js`, testy wykonują się błyskawicznie i nie wymagają aktywnego serwera MySQL.*
+
+Pokryte przypadki testowe:
+1. `POST /api/zgloszenia` bez wymaganych pól w body -> **400 Bad Request**.
+2. `GET /api/zgloszenia` bez nagłówka Authorization -> **401 Unauthorized**.
+3. `GET /api/zgloszenia` z nieprawidłowym tokenem JWT -> **403 Forbidden**.
+4. `POST /api/login` z błędnym hasłem -> **401 Unauthorized**.
 
 ---
 

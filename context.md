@@ -3,18 +3,23 @@
 ## 1. Przegląd i Cel Projektu
 Projekt to pełny system backendowy i frontendowy (SPA) do rejestracji i obsługi zgłoszeń serwisowych.
 Aplikacja składa się z:
-- **Backendu w Express.js (v5)**:
+- **Backendu w Express.js (v5) z architekturą Separation of Concerns**:
+  - **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (CORS, JSON, pliki statyczne), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` ułatwiające testowanie i zarządzanie pulą połączeń. Nie wywołuje `app.listen()`.
+  - **`index.js`**: Punkt wejściowy uruchamiający serwer – odpowiada za wczytanie `.env`, weryfikację połączenia z bazą MySQL oraz nasłuchiwanie na wybranym porcie (`app.listen()`).
   - Asynchroniczne połączenie z bazą **MySQL** z pulą połączeń (`mysql2/promise`).
   - Publiczny endpoint przyjmowania zgłoszeń serwisowych (`POST /api/zgloszenia`) z rygorystyczną walidacją pól.
-  - Moduł uwierzytelniania pracowników/administratorów oparty o nazwę użytkownika (`username`), haszowanie haseł **bcrypt** oraz tokeny **JWT** (`POST /api/login`) zabezpieczony **rate limiterem** (10 prób / 15 min).
+  - Moduł uwierzytelniania pracowników/administratorów oparty o nazwę użytkownika (`username`), haszowanie haseł **bcrypt** oraz tokeny **JWT** (`POST /api/login`) zabezpieczony **rate limiterem** (10 prób / 15 min, wyłączonym w środowisku testowym).
   - Kontrola uprawnień i ról (RBAC): role `admin` oraz `pracownik`.
   - Chronione endpointy zarządzania zgłoszeniami: pobieranie listy (`GET /api/zgloszenia`), aktualizacja statusu (`PATCH` / `PUT /api/zgloszenia/:id/status`) oraz usuwanie zgłoszeń (tylko rola `admin`: `DELETE /api/zgloszenia/:id`).
   - Chroniony endpoint administracyjny do tworzenia użytkowników (`POST /api/admin/users`, tylko `admin`).
   - Serwowanie plików statycznych (`public/`) bezpośrednio przez Express.
-- **Narzędzia CLI**:
+- **Zestawu Testów Integracyjnych**:
+  - Plik `app.test.js` oparty o natywny runner Node.js (`node:test`) oraz bibliotekę `supertest`.
+  - Izolacja testów poprzez mockowanie zapytań SQL (`app.setPool()`), co pozwala na uruchamianie testów bez aktywnej bazy danych MySQL (np. w środowisku CI/CD).
+- **Narzędzi CLI**:
   - `create-user.js` do bezpiecznego tworzenia kont pracowników i administratorów w bazie z haszowaniem bcrypt.
   - `seed.js` do automatycznego wgrywania schematu bazy danych `schemat.sql`.
-- **Frontend SPA (React 18)**:
+- **Frontendu SPA (React 18)**:
   - Zlokalizowany w katalogu `public/index.html` (React + ReactDOM + Babel Standalone).
   - Publiczny formularz zgłoszeniowy z maskowaniem/walidacją numeru telefonu (`+48 ` i 9 cyfr).
   - Panel pracownika z logowaniem, tabelą zgłoszeń, zmianą statusu (interaktywny przycisk i select), usuwaniem (dla admina) oraz reaktywnym stanem.
@@ -25,17 +30,30 @@ Aplikacja składa się z:
 ## 2. Co zostało zrobione i aktualny stan techniczny
 
 - [x] **Backend & Baza Danych:**
-  - Zainicjalizowano `package.json` ze skryptami (`start`, `dev`, `seed`).
-  - Skonfigurowano zależności: `express` (v5), `mysql2`, `jsonwebtoken`, `bcrypt`, `dotenv`, `cors`, `express-rate-limit`.
-  - Zapewniono bezpieczną obsługę `JWT_SECRET` (aplikacja zatrzymuje start, gdy klucz nie jest zdefiniowany w `.env`).
+  - Zainicjalizowano `package.json` ze skryptami (`start`, `dev`, `seed`, `test`).
+  - Skonfigurowano zależności: `express` (v5), `mysql2`, `jsonwebtoken`, `bcrypt`, `dotenv`, `cors`, `express-rate-limit`, a w devDependencies: `supertest`.
+  - Przeprowadzono refaktoryzację pod kątem **Separation of Concerns**:
+    - `app.js` definiuje i eksportuje samą aplikację Express bez `app.listen()`.
+    - `index.js` importuje `app.js`, weryfikuje łączność z bazą i uruchamia serwer HTTP.
+    - Dodano metody `app.setPool()` oraz `app.getPool()` do dynamicznej podmiany puli bazy danych.
+  - Zapewniono bezpieczną obsługę `JWT_SECRET` (aplikacja zatrzymuje start serwera, gdy klucz nie jest zdefiniowany w `.env`).
   - Przygotowano pliki `.env` oraz `.env.example`.
   - Utworzono `schemat.sql` oraz skrypt `seed.js` (aplikuje schemat bazy bez generowania zbędnych danych demo).
   - Utworzono skrypt CLI `create-user.js` do dodawania użytkowników z rolami `admin` i `pracownik`.
   - Zaimplementowano model ról (RBAC): middleware `authenticateToken` oraz `requireAdmin`.
-  - Zaimplementowano `loginLimiter` (`express-rate-limit`) ograniczający brute-force na `POST /api/login` (10 prób / 15 min z 1 IP).
+  - Zaimplementowano `loginLimiter` (`express-rate-limit`) ograniczający brute-force na `POST /api/login` (10 prób / 15 min z 1 IP, pomijany przy `NODE_ENV === 'test'`).
   - Zaimplementowano bezpieczne usuwanie zgłoszeń (`DELETE /api/zgloszenia/:id`) dostępne wyłącznie dla roli `admin`.
   - Zaimplementowano endpoint tworzenia użytkowników (`POST /api/admin/users`) dla roli `admin`.
   - Serwowanie katalogu `public/` przez Express (`app.use(express.static(path.join(__dirname, 'public')))`).
+
+- [x] **Testy Integracyjne:**
+  - Utworzono plik `app.test.js` wykorzystujący wbudowany moduł `node:test` oraz `supertest`.
+  - Skonfigurowano skrypt `"test": "node --test"` w `package.json`.
+  - Pokryto testami kluczowe wymagania integracyjne:
+    - `POST /api/zgloszenia` bez przesłanych pól w body zwraca kod `400`.
+    - `GET /api/zgloszenia` bez podanego nagłówka autoryzacyjnego zwraca kod `401`.
+    - `GET /api/zgloszenia` z niepoprawnym tokenem JWT zwraca kod `403`.
+    - `POST /api/login` ze złym hasłem dla istniejącego użytkownika zwraca kod `401`.
 
 - [x] **Frontend (React 18 w `public/index.html`):**
   - Reaktywne komponenty: `App`, `Header`, `PublicTicketForm`, `LoginForm`, `Dashboard`, `StatusControl`, `Alert`.
@@ -58,10 +76,13 @@ strona_z_bd/
 ├── .env                     # Zmienne środowiskowe (ignorowane w git)
 ├── .env.example             # Szablon konfiguracji zmiennych środowiskowych
 ├── .gitignore               # Wykluczenia gita: node_modules, .env
+├── README.md                # Dokumentacja projektu i instrukcja wdrożenia
+├── app.js                   # Instancja Express.js (konfiguracja middleware, routingu, walidacji, JWT i puli DB bez app.listen())
+├── app.test.js              # Testy integracyjne API (node:test + supertest)
 ├── context.md               # [TEN PLIK] Pełny, aktualny kontekst dla deweloperów i agentów AI
 ├── create-user.js           # CLI: tworzenie kont użytkowników (admin / pracownik) z hashowaniem bcrypt
-├── index.js                 # Główny serwer Express.js (routing API, middleware JWT, RBAC, rate-limiting)
-├── package.json             # Zależności i skrypty npm
+├── index.js                 # Punkt wejściowy serwera: importuje app.js, sprawdza bazę i wywołuje app.listen()
+├── package.json             # Zależności i skrypty npm (start, dev, seed, test)
 ├── package-lock.json        # Zablokowane wersje pakietów npm
 ├── schemat.sql              # Schemat bazy MySQL (tabele: zgloszenia, uzytkownicy)
 ├── seed.js                  # Skrypt inicjalizujący schemat bazy MySQL
@@ -148,7 +169,7 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 ### 2. Logowanie do panelu (Publiczny, Rate-Limited)
 - **Metoda:** `POST`
 - **Ścieżka:** `/api/login`
-- **Ograniczenie:** `10 prób / 15 minut` na dany adres IP (`loginLimiter`).
+- **Ograniczenie:** `10 prób / 15 minut` na dany adres IP (`loginLimiter`, pomijany w `NODE_ENV === 'test'`).
 - **Body:**
 ```json
 {
@@ -266,7 +287,7 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 ## 7. Instrukcja uruchomienia i obsługi
 
 ### Wymagania wstępne:
-1. Node.js (>= 18)
+1. Node.js (>= 18, zalecana wersja z `node:test`)
 2. Uruchomiony serwer MySQL (np. XAMPP, MariaDB, Docker)
 
 ### Krok 1: Wgranie schematu bazy
@@ -294,19 +315,30 @@ npm run dev
 ```
 Domyślny adres: `http://localhost:3000`
 
+### Krok 4: Uruchomienie testów integracyjnych
+```bash
+npm test
+```
+*Uruchamia `node --test` dla pliku `app.test.js`. Testy nie wymagają działającej bazy MySQL dzięki wstrzykiwanej puli mockowej.*
+
 ---
 
 ## 8. Wskazówki i konwencje dla Agentów AI
 
-1. **Struktura frontendu:**
+1. **Separation of Concerns (app.js vs index.js):**
+   - Całą logikę tras, middleware i konfiguracji Express należy utrzymywać w `app.js`.
+   - `index.js` służy wyłącznie jako punkt startowy serwera (`app.listen()`) i nie powinien zawierać definicji tras.
+   - Nowe testy integracyjne powinny importować `app.js` i przekazywać instancję do `supertest(app)`.
+   - W przypadku testów wymagających mockowania zapytań SQL należy korzystać z `app.setPool(mockPool)` oraz przywracać oryginalną pulę w `after()`.
+2. **Struktura frontendu:**
    - Cały frontend mieści się w `public/index.html`.
    - Zasoby statyczne znajdują się w folderze `public/`.
    - Zapytania autoryzowane w panelu pracownika (`Dashboard`) muszą korzystać z `apiFetch`, aby token był pobierany dynamicznie z `localStorage.getItem('serwis_token')`, a błędy 401/403 automatycznie delegowane do `handleAuthError(response)`.
-2. **Autoryzacja i role:**
+3. **Autoryzacja i role:**
    - W JWT zapisywane są: `id`, `username`, `role`.
    - Każdy chroniony endpoint wymaga `authenticateToken`.
    - Operacje destrukcyjne (usuwanie `DELETE /api/zgloszenia/:id`) oraz administracyjne (`POST /api/admin/users`) wymagają dodatkowo `requireAdmin`.
-3. **Baza danych:**
+4. **Baza danych:**
    - Wszystkie zapytania SQL używają zapytań parametryzowanych (`?`) za pośrednictwem puli połączeń `mysql2/promise`.
    - Nie dodawać twardo zakodowanych haseł ani sekretów JWT do kodu.
 

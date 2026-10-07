@@ -6,7 +6,7 @@
  *   node create-user.js <nazwa_uzytkownika> <haslo> [rola]
  *
  * Przykład:
- *   node create-user.js janek Haslo123 pracownik
+ *   node create-user.js uzytkownik Haslo123 pracownik
  *   node create-user.js serwisant Tajne456 admin
  *
  * Dostępne role: admin, pracownik (domyślnie: pracownik)
