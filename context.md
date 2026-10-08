@@ -22,7 +22,7 @@ Aplikacja składa się z:
 - **Zestawu Testów Integracyjnych**:
   - Plik `app.test.js` oparty o natywny runner Node.js (`node:test`) oraz bibliotekę `supertest`.
   - Izolacja testów poprzez mockowanie zapytań SQL (`app.setPool()`), co pozwala na uruchamianie testów bez aktywnej bazy danych MySQL (np. w środowisku CI/CD).
-  - Pokrycie 8 kluczowych przypadków testowych API (w tym walidacja warunkowego numeru seryjnego).
+  - Pokrycie 9 kluczowych przypadków testowych API (w tym walidacja warunkowego numeru seryjnego oraz pełnego cyklu logowania i autoryzacji JWT).
 - **Narzędzi CLI**:
   - `create-user.js` do bezpiecznego tworzenia kont użytkowników w bazie z haszowaniem bcrypt dla ról: `admin`, `serwisant`, `pracownik`, `magazynier`.
   - `seed.js` do automatycznego wgrywania schematu bazy danych `schemat.sql`.
@@ -48,7 +48,7 @@ Aplikacja składa się z:
     - `app.js` definiuje i eksportuje samą aplikację Express bez `app.listen()`.
     - `index.js` importuje `app.js`, weryfikuje łączność z bazą, przeprowadza automatyczną migrację brakujących kolumn tabeli `zgloszenia` i uruchamia serwer HTTP.
     - Dodano metody `app.setPool()` oraz `app.getPool()` do dynamicznej podmiany puli bazy danych.
-  - Zapewniono bezpieczną obsługę `JWT_SECRET` (aplikacja zatrzymuje start serwera, gdy klucz nie jest zdefiniowany w `.env`).
+  - Zapewniono bezpieczną obsługę `JWT_SECRET` (aplikacja zatrzymuje start serwera, gdy klucz nie jest zdefiniowany w `.env`; brak jakichkolwiek fallbacków na sekrety testowe w kodzie produkcyjnym; algorytm `HS256` wymuszany jawnie).
   - Przygotowano pliki `.env` oraz `.env.example`.
   - Utworzono `schemat.sql` oraz skrypt `seed.js` (tworzy tabele `uzytkownicy` i `zgloszenia` z kluczami obcymi).
   - Utworzono skrypt CLI `create-user.js` do dodawania użytkowników z rolami `admin`, `serwisant`, `pracownik`, `magazynier`.
@@ -71,7 +71,7 @@ Aplikacja składa się z:
 - [x] **Testy Integracyjne:**
   - Utworzono plik `app.test.js` wykorzystujący wbudowany moduł `node:test` oraz `supertest`.
   - Skonfigurowano skrypt `"test": "node --test"` w `package.json`.
-  - Pokryto testami 8 kluczowych wymagań integracyjnych:
+  - Pokryto testami 9 kluczowych wymagań integracyjnych:
     1. `POST /api/zgloszenia` bez przesłanych pól w body zwraca kod `400`.
     2. `GET /api/zgloszenia` bez podanego nagłówka autoryzacyjnego zwraca kod `401`.
     3. `GET /api/zgloszenia` z niepoprawnym tokenem JWT zwraca kod `403`.
@@ -80,6 +80,7 @@ Aplikacja składa się z:
     6. `PATCH /api/zgloszenia/1/przypisz` bez tokenu zwraca kod `401`.
     7. `PATCH /api/zgloszenia/1/naprawione` bez tokenu zwraca kod `401`.
     8. `POST /api/zgloszenia` dla monitora interaktywnego bez numeru seryjnego zwraca kod `400`.
+    9. `POST /api/login` z prawidłowymi danymi zwraca token JWT i pozwala na autoryzowany dostęp do chronionego `GET /api/zgloszenia`.
 
 - [x] **Frontend (React 18 w `public/index.html`):**
   - Reaktywne komponenty: `App`, `Header`, `PublicTicketForm`, `LoginForm`, `Dashboard`, `StatusControl`, `ShipControl`, `RepairModal`, `Alert`.
@@ -109,7 +110,7 @@ strona_z_bd/
 ├── .gitignore               # Wykluczenia gita: node_modules, .env
 ├── README.md                # Główna dokumentacja projektu i instrukcja wdrożenia
 ├── app.js                   # Instancja Express.js (konfiguracja middleware, routingu, walidacji, JWT i puli DB bez app.listen())
-├── app.test.js              # Testy integracyjne API (node:test + supertest, 8 testów)
+├── app.test.js              # Testy integracyjne API (node:test + supertest, 9 testów)
 ├── context.md               # [TEN PLIK] Pełny, aktualny kontekst dla deweloperów i agentów AI
 ├── create-user.js           # CLI: tworzenie kont użytkowników (admin, serwisant, pracownik, magazynier) z bcrypt
 ├── index.js                 # Punkt wejściowy: import app.js, auto-migracja kolumn w DB, app.listen()
@@ -507,6 +508,11 @@ npm test
 4. **Baza danych:**
    - Wszystkie zapytania SQL używają zapytań parametryzowanych (`?`) za pośrednictwem puli połączeń `mysql2/promise`.
    - Nie dodawać twardo zakodowanych haseł ani sekretów JWT do kodu.
+5. **BEZWZGLĘDNY ZAKAZ TWORZENIA FURTEK I DZIUR W WALIDACJI (SECURITY & VALIDATION INTEGRITY):**
+   - **Zakaz hardcodowania domyślnych sekretów testowych:** Nigdy nie dodawać do kodu aplikacji produkcyjnej (`app.js`, `index.js` itp.) domyślnych/fallbackowych wartości dla sekretów, np. `const JWT_SECRET = process.env.JWT_SECRET || 'sekret_dla_testow'`. W kodzie aplikacji klucz `JWT_SECRET` **musi** pochodzić wyłącznie ze zmiennych środowiskowych (`process.env.JWT_SECRET`), a w przypadku jego braku aplikacja ma natychmiast rzucać błąd (`throw new Error(...)`) blokujący działanie.
+   - **Izolacja środowiska testowego:** Wszelkie mocki, wartości testowe czy zmienne środowiskowe na potrzeby testów integracyjnych wolno konfigurować **wyłącznie wewnątrz plików testowych** (np. `app.test.js`) przed załadowaniem aplikacji. Nigdy nie wolno zanieczyszczać kodu produkcyjnego furtkami ułatwiającymi testy kosztem bezpieczeństwa.
+   - **Zakaz osłabiania reguł walidacji:** Żaden agent nie ma prawa usuwać, omijać ani rozluźniać walidacji wejściowych (np. formatu NIP, kodu pocztowego, numeru telefonu, listy dozwolonych przedmiotów, ról RBAC, weryfikacji hasła bcrypt) ani wprowadzać obejść typu "pomiń walidację w testach". Testy muszą dostosowywać się do rygorystycznych reguł produkcyjnych, a nie odwrotnie.
+   - **Wymuszenie bezpiecznych algorytmów:** Tokeny JWT muszą być weryfikowane z jawnym wskazaniem bezpiecznego algorytmu (`{ algorithms: ['HS256'] }`) oraz generowane z `{ algorithm: 'HS256' }`, aby zapobiec atakom typu Algorithm Confusion lub manipulacji nagłówkiem `alg: none`.
 
 ---
 
