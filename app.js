@@ -33,8 +33,14 @@ app.locals.pool = currentPool;
 // --- Middlewares ---
 app.use(cors());
 app.use(express.json());
-// Serwowanie plików statycznych (np. index.html)
-app.use(express.static(path.join(__dirname, 'public')));
+// Serwowanie plików statycznych (np. index.html) – bez cache dla .html
+app.use(express.static(path.join(__dirname, 'public'), { etag: false, lastModified: false }));
+app.use((req, res, next) => {
+    if (req.path.endsWith('.html') || req.path === '/') {
+        res.set('Cache-Control', 'no-store');
+    }
+    next();
+});
 
 // --- Middleware autoryzacji JWT ---
 function authenticateToken(req, res, next) {
@@ -685,9 +691,14 @@ async function handleUpdateStatus(req, res) {
         let updateQuery = 'UPDATE zgloszenia SET status = ? WHERE id = ?';
         let updateParams = [status, id];
 
-        // Jeśli status zmienia się na 'zakończone', zapisz czas wysyłki i ewentualny numer listu
+        // Jeśli status zmienia się na 'zakończone', zapisz czas wysyłki i numer listu (obowiązkowy dla magazyniera)
         if (status === 'zakończone') {
             const listu = (numer_listu && typeof numer_listu === 'string') ? numer_listu.trim() : null;
+            if (req.user.role === 'magazynier' && !listu) {
+                return res.status(400).json({
+                    error: 'Podanie numeru listu przewozowego jest obowiązkowe przy oznaczaniu zlecenia jako wysłane.'
+                });
+            }
             updateQuery = 'UPDATE zgloszenia SET status = ?, data_wyslania = NOW(), numer_listu = ? WHERE id = ?';
             updateParams = [status, listu, id];
         }

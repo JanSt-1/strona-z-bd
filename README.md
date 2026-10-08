@@ -111,7 +111,7 @@ W systemie zaimplementowano role:
 - **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie pracownikom i serwisantom, bezpośrednia modyfikacja statusów z listy, usuwanie zgłoszeń, tworzenie użytkowników przez API.
 - **`serwisant`**: Przegląd wszystkich zleceń i przypisywanie ich pracownikom. Nie posiada uprawnień do zmiany statusu ani opisywania napraw (może wyłącznie koordynować i delegować zadania).
 - **`pracownik`**: Domyślnie widzi wyłącznie zlecenia przypisane do siebie. Zlecenie po przypisaniu ma status **"nowe"** – pracownik musi sam kliknąć przycisk **„Rozpocznij realizację”** (zmiana statusu na **"w realizacji"**). Po ukończeniu naprawy klika **„Oznacz jako naprawione”** i sporządza wymagany opis prac (automatycznie datowany z godziną i minutą). Po zatwierdzeniu zlecenie trafia do magazynu ze statusem **"Do wysyłki"**.
-- **`magazynier`**: Domyślnie nie widzi zleceń nowych ani w trakcie naprawy – widzi je dopiero po zakończeniu i opisaniu naprawy przez pracownika (ze statusem **"Do wysyłki"**). Ma możliwość wpisania numeru listu przewozowego (`numer_listu`) oraz oznaczenia przesyłki jako wysłana (**"zakończone"**), co automatycznie odnotowuje datę i godzinę wysyłki (`data_wyslania`).
+- **`magazynier`**: Domyślnie nie widzi zleceń nowych ani w trakcie naprawy – widzi je dopiero po zakończeniu i opisaniu naprawy przez pracownika (ze statusem **"Do wysyłki"**). Musi wprowadzić numer listu przewozowego (`numer_listu`, pole obowiązkowe) oraz oznaczenia przesyłki jako wysłana (**"zakończone"**), co automatycznie odnotowuje datę i godzinę wysyłki (`data_wyslania`).
 
 ---
 

@@ -58,7 +58,7 @@ Aplikacja składa się z:
     - `przypisany_pracownik_id` (relacja FK do tabeli `uzytkownicy`),
     - `opis_naprawy` oraz `opis_naprawy_data` (rejestracja przebiegu naprawy serwisowej),
     - `data_wyslania` (automatyczna data i czas wysyłki przez magazyniera),
-    - `numer_listu` (opcjonalny numer listu przewozowego wprowadzany przez magazyniera).
+    - `numer_listu` (obowiązkowy numer listu przewozowego wprowadzany przez magazyniera przy oznaczaniu jako wysłane).
   - Wdrożono endpointy obsługujące role:
     - `GET /api/pracownicy` (admin, serwisant),
     - `PATCH /api/zgloszenia/:id/przypisz` (admin, serwisant; przypisanie nie zmienia automatycznie statusu na 'w_realizacji'),
@@ -224,7 +224,7 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
    - **Domyślnie NIE widzi zleceń** nowych ani w toku naprawy.
    - Zlecenie pojawia się u magazynierów **dopiero gdy pracownik zakończy i opisze naprawę** – ma wtedy status **`do_wysylki`**.
    - Magazynier widzi dane wysyłkowe klienta, opis usterki, opis naprawy pracownika wraz z datą i godziną naprawy.
-   - Posiada dedykowany formularz wysyłki (`ShipControl`): może wprowadzić **numer listu przewozowego** (pole tekstowe, opcjonalne) oraz kliknąć **„Oznacz jako wysłane”** (`zakończone`), co automatycznie zapisuje bieżącą datę wysyłki (`data_wyslania = NOW()`) i numer listu w bazie.
+   - Posiada dedykowany formularz wysyłki (`ShipControl`): musi wprowadzić **numer listu przewozowego** (pole tekstowe, obowiązkowe) oraz kliknąć **„Oznacz jako wysłane”** (`zakończone`), co automatycznie zapisuje bieżącą datę wysyłki (`data_wyslania = NOW()`) i numer listu w bazie.
 
 ---
 
@@ -365,7 +365,7 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 - **Zasady biznesowe ról:**
   - `serwisant`: brak uprawnień do zmiany statusu (odpowiedź `403 Forbidden`).
   - `magazynier`: może wyłącznie ustawić status `"zakończone"`.
-  - Przy statusie `"zakończone"`: przyjmowany jest opcjonalny parametr `"numer_listu"`, a serwer automatycznie ustawia `data_wyslania = NOW()`.
+  - Przy statusie `"zakończone"`: wymagany jest parametr `"numer_listu"` (dla magazyniera), a serwer automatycznie ustawia `data_wyslania = NOW()`.
   - `pracownik`: może modyfikować status tylko swojego przypisanego zlecenia i wyłącznie na `"w_realizacji"` lub `"do_wysylki"` (przy czym dla `"do_wysylki"` wymagany jest opis naprawy).
   - `admin`: może dowolnie modyfikować status zgłoszenia.
 - **Body przykładowe (dla magazyniera):**
