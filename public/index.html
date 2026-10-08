@@ -71,17 +71,6 @@
             gap: 0.75rem;
         }
 
-        .brand h1 {
-            font-size: 1.4rem;
-            font-weight: 700;
-            letter-spacing: -0.02em;
-        }
-
-        .brand p {
-            font-size: 0.82rem;
-            color: var(--text-muted);
-        }
-
         .nav-tabs {
             display: flex;
             gap: 0.5rem;
@@ -412,8 +401,8 @@
             border: 1px solid rgba(16, 185, 129, 0.3);
         }
 
-        .btn-repair {
-            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        .btn-repair,
+        .btn-ship {
             color: white;
             border: none;
             padding: 0.38rem 0.75rem;
@@ -426,6 +415,10 @@
             align-items: center;
             gap: 0.35rem;
             white-space: nowrap;
+        }
+
+        .btn-repair {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
         }
 
         .btn-repair:hover:not(:disabled) {
@@ -435,18 +428,6 @@
 
         .btn-ship {
             background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
-            color: white;
-            border: none;
-            padding: 0.38rem 0.75rem;
-            border-radius: 6px;
-            font-size: 0.76rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: inline-flex;
-            align-items: center;
-            gap: 0.35rem;
-            white-space: nowrap;
         }
 
         .btn-ship:hover:not(:disabled) {
@@ -688,7 +669,7 @@
             'Tablica interaktywna myBoard Silver',
             'Tablica interaktywna myBoard Black',
             'Akcesoria do tablic interaktywnych myBoard',
-            'Akcesoria ddla monitorów interaktywnych myBoard',
+            'Akcesoria dla monitorów interaktywnych myBoard',
             'Pracownie językowe',
             'Podłoga interaktywna SmartFloor',
             'Meble',
@@ -761,28 +742,39 @@
             { code: '95', miasto: 'Gorzów Wielkopolski' }
         ];
 
+        // Lista województw (etykieta w <option> to wartość z wielką literą)
+        const WOJEWODZTWA = [
+            'dolnośląskie', 'kujawsko-pomorskie', 'lubelskie', 'lubuskie',
+            'łódzkie', 'małopolskie', 'mazowieckie', 'opolskie',
+            'podkarpackie', 'podlaskie', 'pomorskie', 'śląskie',
+            'świętokrzyskie', 'warmińsko-mazurskie', 'wielkopolskie', 'zachodniopomorskie'
+        ];
+
+        // Pusty stan formularza zgłoszenia
+        const EMPTY_FORM = {
+            imie: '',
+            nazwisko: '',
+            nazwa_firmy: '',
+            numer_telefonu: '',
+            email: '',
+            adres: '',
+            kod_pocztowy: '',
+            miasto: '',
+            wojewodztwo: '',
+            nip: '',
+            telefon_kierunkowy: '',
+            telefon_firmowy_7: '',
+            przedmiot_zgloszenia: '',
+            numer_seryjny: '',
+            data_zakupu: '',
+            numer_fv: '',
+            opis_usterki: ''
+        };
+
 
         // Formularz publiczny dodawania zgłoszenia
         function PublicTicketForm() {
-            const [formData, setFormData] = useState({
-                imie: '',
-                nazwisko: '',
-                nazwa_firmy: '',
-                numer_telefonu: '',
-                email: '',
-                adres: '',
-                kod_pocztowy: '',
-                miasto: '',
-                wojewodztwo: '',
-                nip: '',
-                telefon_kierunkowy: '',
-                telefon_firmowy_7: '',
-                przedmiot_zgloszenia: '',
-                numer_seryjny: '',
-                data_zakupu: '',
-                numer_fv: '',
-                opis_usterki: ''
-            });
+            const [formData, setFormData] = useState(EMPTY_FORM);
             const [loading, setLoading] = useState(false);
             const [alert, setAlert] = useState(null);
 
@@ -801,16 +793,7 @@
                 }
                 digits = digits.slice(0, 9);
 
-                let formatted = '+48 ';
-                if (digits.length === 0) {
-                    formatted = '+48 ';
-                } else if (digits.length <= 3) {
-                    formatted = `+48 ${digits}`;
-                } else if (digits.length <= 6) {
-                    formatted = `+48 ${digits.slice(0, 3)} ${digits.slice(3)}`;
-                } else {
-                    formatted = `+48 ${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
-                }
+                const formatted = '+48 ' + [digits.slice(0, 3), digits.slice(3, 6), digits.slice(6)].filter(Boolean).join(' ');
 
                 setFormData(prev => ({ ...prev, numer_telefonu: formatted }));
             }
@@ -869,99 +852,39 @@
 
             // Czyszczenie wszystkich danych wprowadzonych do formularza
             function handleReset() {
-                setFormData({
-                    imie: '',
-                    nazwisko: '',
-                    nazwa_firmy: '',
-                    numer_telefonu: '',
-                    email: '',
-                    adres: '',
-                    kod_pocztowy: '',
-                    miasto: '',
-                    wojewodztwo: '',
-                    nip: '',
-                    telefon_kierunkowy: '',
-                    telefon_firmowy_7: '',
-                    przedmiot_zgloszenia: '',
-                    numer_seryjny: '',
-                    data_zakupu: '',
-                    numer_fv: '',
-                    opis_usterki: ''
-                });
+                setFormData(EMPTY_FORM);
                 setAlert(null);
             }
 
             async function handleSubmit(e) {
                 e.preventDefault();
 
-                // Walidacja czy imię i nazwisko nie zawierają cyfr
-                if (/\d/.test(formData.imie)) {
-                    showAlert('Pole "Imię" nie może zawierać cyfr.', 'error');
-                    return;
-                }
-                if (/\d/.test(formData.nazwisko)) {
-                    showAlert('Pole "Nazwisko" nie może zawierać cyfr.', 'error');
-                    return;
-                }
-
-                // Walidacja numeru telefonu (musi zawierać co najmniej 9 cyfr po +48)
+                // Walidacje w kolejności sprawdzania – pierwszy błąd przerywa wysyłkę
                 const cleanDigits = formData.numer_telefonu.replace(/\D/g, '').replace(/^48/, '');
-                if (cleanDigits.length < 9) {
-                    showAlert('Proszę podać pełny, 9-cyfrowy numer telefonu po prefiksie +48.', 'error');
-                    return;
-                }
-
-                // Walidacja formatu kodu pocztowego (XX-XXX)
-                const postalRegex = /^\d{2}-\d{3}$/;
-                if (!postalRegex.test(formData.kod_pocztowy.trim())) {
-                    showAlert('Kod pocztowy musi mieć format XX-XXX (np. 00-001).', 'error');
-                    return;
-                }
-
-                // Walidacja wyboru województwa
-                if (!formData.wojewodztwo) {
-                    showAlert('Proszę wybrać województwo z listy.', 'error');
-                    return;
-                }
-
-                // Walidacja wyboru przedmiotu zgłoszenia
-                if (!formData.przedmiot_zgloszenia) {
-                    showAlert('Proszę wybrać przedmiot zgłoszenia z listy.', 'error');
-                    return;
-                }
-
-                // Walidacja numeru seryjnego (jeśli aktywny dla przedmiotu, jest obowiązkowy)
-                if (isSerialNumberAllowed(formData.przedmiot_zgloszenia) && !formData.numer_seryjny.trim()) {
-                    showAlert('Pole "Numer seryjny (S/N)" jest obowiązkowe dla wybranego przedmiotu zgłoszenia.', 'error');
-                    return;
-                }
-
-                // Walidacja daty zakupu
-                if (!formData.data_zakupu) {
-                    showAlert('Proszę wybrać datę zakupu sprzętu z kalendarza.', 'error');
-                    return;
-                }
-
-                // Walidacja numeru faktury / paragonu (wymagany)
-                if (!formData.numer_fv.trim()) {
-                    showAlert('Pole "Numer faktury / paragonu" jest wymagane.', 'error');
-                    return;
-                }
-
-                // Walidacja numeru NIP (wymagany, dokładnie 10 cyfr bez myślników)
-                const nipRegex = /^\d{10}$/;
-                if (!nipRegex.test(formData.nip.trim())) {
-                    showAlert('Pole "NIP" jest wymagane i musi składać się z dokładnie 10 cyfr (bez myślników).', 'error');
-                    return;
-                }
-
-                // Walidacja telefonu firmowego (obowiązkowy)
-                if (!formData.telefon_kierunkowy) {
-                    showAlert('Proszę wybrać 2-cyfrowy numer kierunkowy dla telefonu firmowego.', 'error');
-                    return;
-                }
-                if (formData.telefon_firmowy_7.length < 7) {
-                    showAlert('Dla telefonu firmowego należy podać pełne 7 cyfr po numerze kierunkowym.', 'error');
+                const validationError = [
+                    // imię i nazwisko bez cyfr
+                    [/\d/.test(formData.imie), 'Pole "Imię" nie może zawierać cyfr.'],
+                    [/\d/.test(formData.nazwisko), 'Pole "Nazwisko" nie może zawierać cyfr.'],
+                    // numer telefonu (co najmniej 9 cyfr po +48)
+                    [cleanDigits.length < 9, 'Proszę podać pełny, 9-cyfrowy numer telefonu po prefiksie +48.'],
+                    // kod pocztowy (XX-XXX)
+                    [!/^\d{2}-\d{3}$/.test(formData.kod_pocztowy.trim()), 'Kod pocztowy musi mieć format XX-XXX (np. 00-001).'],
+                    // województwo i przedmiot zgłoszenia
+                    [!formData.wojewodztwo, 'Proszę wybrać województwo z listy.'],
+                    [!formData.przedmiot_zgloszenia, 'Proszę wybrać przedmiot zgłoszenia z listy.'],
+                    // numer seryjny (obowiązkowy, jeśli aktywny dla przedmiotu)
+                    [isSerialNumberAllowed(formData.przedmiot_zgloszenia) && !formData.numer_seryjny.trim(), 'Pole "Numer seryjny (S/N)" jest obowiązkowe dla wybranego przedmiotu zgłoszenia.'],
+                    // data zakupu i numer faktury / paragonu
+                    [!formData.data_zakupu, 'Proszę wybrać datę zakupu sprzętu z kalendarza.'],
+                    [!formData.numer_fv.trim(), 'Pole "Numer faktury / paragonu" jest wymagane.'],
+                    // NIP (wymagany, dokładnie 10 cyfr bez myślników)
+                    [!/^\d{10}$/.test(formData.nip.trim()), 'Pole "NIP" jest wymagane i musi składać się z dokładnie 10 cyfr (bez myślników).'],
+                    // telefon firmowy (obowiązkowy)
+                    [!formData.telefon_kierunkowy, 'Proszę wybrać 2-cyfrowy numer kierunkowy dla telefonu firmowego.'],
+                    [formData.telefon_firmowy_7.length < 7, 'Dla telefonu firmowego należy podać pełne 7 cyfr po numerze kierunkowym.']
+                ].find(([invalid]) => invalid);
+                if (validationError) {
+                    showAlert(validationError[1], 'error');
                     return;
                 }
 
@@ -995,25 +918,7 @@
                     }
 
                     showAlert(`Dziękujemy! ${data.message} Numer zgłoszenia: #${data.id}`, 'success');
-                    setFormData({
-                        imie: '',
-                        nazwisko: '',
-                        nazwa_firmy: '',
-                        numer_telefonu: '+48 ',
-                        email: '',
-                        adres: '',
-                        kod_pocztowy: '',
-                        miasto: '',
-                        wojewodztwo: '',
-                        nip: '',
-                        telefon_kierunkowy: '',
-                        telefon_firmowy_7: '',
-                        przedmiot_zgloszenia: '',
-                        numer_seryjny: '',
-                        data_zakupu: '',
-                        numer_fv: '',
-                        opis_usterki: ''
-                    });
+                    setFormData({ ...EMPTY_FORM, numer_telefonu: '+48 ' });
                 } catch (err) {
                     showAlert(err.message, 'error');
                 } finally {
@@ -1157,22 +1062,9 @@
                                         onChange={e => setFormData({ ...formData, wojewodztwo: e.target.value })}
                                     >
                                         <option value="">-- Wybierz województwo --</option>
-                                        <option value="dolnośląskie">Dolnośląskie</option>
-                                        <option value="kujawsko-pomorskie">Kujawsko-pomorskie</option>
-                                        <option value="lubelskie">Lubelskie</option>
-                                        <option value="lubuskie">Lubuskie</option>
-                                        <option value="łódzkie">Łódzkie</option>
-                                        <option value="małopolskie">Małopolskie</option>
-                                        <option value="mazowieckie">Mazowieckie</option>
-                                        <option value="opolskie">Opolskie</option>
-                                        <option value="podkarpackie">Podkarpackie</option>
-                                        <option value="podlaskie">Podlaskie</option>
-                                        <option value="pomorskie">Pomorskie</option>
-                                        <option value="śląskie">Śląskie</option>
-                                        <option value="świętokrzyskie">Świętokrzyskie</option>
-                                        <option value="warmińsko-mazurskie">Warmińsko-mazurskie</option>
-                                        <option value="wielkopolskie">Wielkopolskie</option>
-                                        <option value="zachodniopomorskie">Zachodniopomorskie</option>
+                                        {WOJEWODZTWA.map(w => (
+                                            <option key={w} value={w}>{w.charAt(0).toUpperCase() + w.slice(1)}</option>
+                                        ))}
                                     </select>
                                 </div>
                                 <div className="form-group">
@@ -1707,16 +1599,23 @@
                 }
             }
 
+            // apiFetch + odczyt JSON; zwraca null przy błędzie autoryzacji, a przy !response.ok rzuca błąd
+            async function apiJson(endpoint, options, fallbackError) {
+                const response = await apiFetch(endpoint, options);
+                if (!response) return null;
+
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || fallbackError);
+                }
+                return data;
+            }
+
             async function fetchTickets() {
                 setLoading(true);
                 try {
-                    const response = await apiFetch('/zgloszenia');
-                    if (!response || handleAuthError(response)) return;
-
-                    const data = await response.json();
-                    if (!response.ok) {
-                        throw new Error(data.error || 'Błąd podczas pobierania zgłoszeń.');
-                    }
+                    const data = await apiJson('/zgloszenia', {}, 'Błąd podczas pobierania zgłoszeń.');
+                    if (!data) return;
 
                     setTickets(Array.isArray(data) ? data : []);
                 } catch (err) {
@@ -1733,17 +1632,12 @@
 
             async function handleAssignWorker(ticketId, pracownikId) {
                 try {
-                    const response = await apiFetch(`/zgloszenia/${ticketId}/przypisz`, {
+                    const data = await apiJson(`/zgloszenia/${ticketId}/przypisz`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ pracownik_id: pracownikId || null })
-                    });
-                    if (!response || handleAuthError(response)) return;
-
-                    const data = await response.json();
-                    if (!response.ok) {
-                        throw new Error(data.error || 'Nie udało się przypisać pracownika.');
-                    }
+                    }, 'Nie udało się przypisać pracownika.');
+                    if (!data) return;
 
                     showAlert(data.message, 'success');
                     fetchTickets();
@@ -1754,17 +1648,12 @@
 
             async function handleRepairSubmit(ticketId, opisNaprawy) {
                 try {
-                    const response = await apiFetch(`/zgloszenia/${ticketId}/naprawione`, {
+                    const data = await apiJson(`/zgloszenia/${ticketId}/naprawione`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ opis_naprawy: opisNaprawy })
-                    });
-                    if (!response || handleAuthError(response)) return;
-
-                    const data = await response.json();
-                    if (!response.ok) {
-                        throw new Error(data.error || 'Nie udało się zatwierdzić naprawy.');
-                    }
+                    }, 'Nie udało się zatwierdzić naprawy.');
+                    if (!data) return;
 
                     showAlert(`Zgłoszenie #${ticketId} zostało opisane i przekazane do magazynu jako "Do wysyłki"!`, 'success');
                     setRepairModalTicket(null);
@@ -1777,17 +1666,12 @@
             async function handleUpdateStatus(id, newStatus, extraData) {
                 try {
                     const body = { status: newStatus, ...extraData };
-                    const response = await apiFetch(`/zgloszenia/${id}/status`, {
+                    const data = await apiJson(`/zgloszenia/${id}/status`, {
                         method: 'PATCH',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify(body)
-                    });
-                    if (!response || handleAuthError(response)) return;
-
-                    const data = await response.json();
-                    if (!response.ok) {
-                        throw new Error(data.error || 'Nie udało się zaktualizować statusu.');
-                    }
+                    }, 'Nie udało się zaktualizować statusu.');
+                    if (!data) return;
 
                     showAlert(`Zgłoszenie #${id}: zmieniono status na "${newStatus}".`, 'success');
                     fetchTickets();
@@ -1806,15 +1690,10 @@
 
                 setDeletingId(id);
                 try {
-                    const response = await apiFetch(`/zgloszenia/${id}`, {
+                    const data = await apiJson(`/zgloszenia/${id}`, {
                         method: 'DELETE'
-                    });
-                    if (!response || handleAuthError(response)) return;
-
-                    const data = await response.json();
-                    if (!response.ok) {
-                        throw new Error(data.error || 'Nie udało się usunąć zgłoszenia.');
-                    }
+                    }, 'Nie udało się usunąć zgłoszenia.');
+                    if (!data) return;
 
                     showAlert(`Zgłoszenie #${id} zostało pomyślnie usunięte.`, 'success');
                     setTickets(prev => prev.filter(t => t.id !== id));

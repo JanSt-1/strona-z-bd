@@ -2,6 +2,10 @@ const { describe, it, before, after } = require('node:test');
 const assert = require('node:assert');
 const request = require('supertest');
 const bcrypt = require('bcrypt');
+
+if (!process.env.JWT_SECRET) {
+    process.env.JWT_SECRET = 'klucz_jwt_do_izolowanych_testow_1234567890';
+}
 const app = require('./app');
 
 describe('Testy integracyjne API (node:test + supertest)', () => {
@@ -148,6 +152,27 @@ describe('Testy integracyjne API (node:test + supertest)', () => {
             'Pole "numer_seryjny" jest obowiązkowe dla wybranego przedmiotu zgłoszenia.'
         );
     });
+
+    // 9. Poprawne logowanie zwraca token JWT, który pozwala na dostęp do chronionego GET /api/zgloszenia
+    it('POST /api/login z poprawnymi danymi zwraca token JWT i pozwala na autoryzowany dostęp', async () => {
+        const loginResponse = await request(app)
+            .post('/api/login')
+            .send({
+                username: 'user_testowy',
+                password: 'prawidloweHaslo123'
+            });
+
+        assert.strictEqual(loginResponse.status, 200);
+        assert.ok(loginResponse.body.token, 'Odpowiedź powinna zawierać token');
+
+        const authResponse = await request(app)
+            .get('/api/zgloszenia')
+            .set('Authorization', `Bearer ${loginResponse.body.token}`);
+
+        assert.strictEqual(authResponse.status, 200);
+        assert.ok(Array.isArray(authResponse.body), 'Odpowiedź powinna być tablicą');
+    });
 });
+
 
 
