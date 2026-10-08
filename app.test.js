@@ -38,6 +38,20 @@ describe('Testy integracyjne API (node:test + supertest)', () => {
                     }
                     return [[]];
                 }
+
+                // Zapytanie o zgłoszenie po ID
+                if (typeof sql === 'string' && sql.includes('zgloszenia') && sql.includes('WHERE id = ?')) {
+                    return [
+                        [
+                            {
+                                id: 1,
+                                status: 'w_realizacji',
+                                przypisany_pracownik_id: 1,
+                                opis_naprawy: null
+                            }
+                        ]
+                    ];
+                }
                 return [[]];
             },
             getConnection: async () => ({
@@ -171,6 +185,29 @@ describe('Testy integracyjne API (node:test + supertest)', () => {
 
         assert.strictEqual(authResponse.status, 200);
         assert.ok(Array.isArray(authResponse.body), 'Odpowiedź powinna być tablicą');
+    });
+
+    // 10. Próba cofnięcia statusu przez pracownika (z w_realizacji do nowe) zwraca status 403
+    it('PATCH /api/zgloszenia/1/status cofanie statusu przez pracownika powinno zwrócić status 403', async () => {
+        const loginResponse = await request(app)
+            .post('/api/login')
+            .send({
+                username: 'user_testowy',
+                password: 'prawidloweHaslo123'
+            });
+
+        const token = loginResponse.body.token;
+
+        const response = await request(app)
+            .patch('/api/zgloszenia/1/status')
+            .set('Authorization', `Bearer ${token}`)
+            .send({ status: 'nowe' });
+
+        assert.strictEqual(response.status, 403);
+        assert.strictEqual(
+            response.body.error,
+            'Cofanie statusu zgłoszenia jest dozwolone wyłącznie dla administratora.'
+        );
     });
 });
 

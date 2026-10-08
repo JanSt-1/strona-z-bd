@@ -388,14 +388,18 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
 
         const [result] = await currentPool.query(
             `UPDATE zgloszenia 
-             SET przypisany_pracownik_id = ? 
+             SET przypisany_pracownik_id = ?,
+                 status = CASE WHEN status = 'nowe' AND ? IS NOT NULL THEN 'w_realizacji' ELSE status END
              WHERE id = ?`,
-            [assignedId, id]
+            [assignedId, assignedId, id]
         );
 
         if (result.affectedRows === 0) {
             return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
         }
+
+        const [rows] = await currentPool.query('SELECT status FROM zgloszenia WHERE id = ?', [id]);
+        const currentStatus = rows?.[0]?.status;
 
         return res.json({
             message: assignedId
@@ -403,17 +407,26 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
                 : `Cofnięto przypisanie zlecenia #${id}.`,
             id,
             przypisany_pracownik_id: assignedId,
-            przypisany_pracownik_username: assignedUsername
+            przypisany_pracownik_username: assignedUsername,
+            status: currentStatus
         });
     }));
 
-// Role, którym nie wolno oznaczać zleceń jako naprawione (serwisant tylko przypisuje, magazynier nie naprawia)
-const CANNOT_REPAIR = new Map([
-    ['serwisant', 'Serwisant nie posiada uprawnień do oznaczania zleceń jako naprawione.'],
-    ['magazynier', 'Magazynier nie posiada uprawnień do oznaczania zleceń jako naprawione.']
-]);
+// Mapa dozwolonych przejść statusów i ról uprawnionych do ich wykonania:
+// - nowe -> w_realizacji: automatycznie przy przypisaniu (admin, serwisant)
+// - w_realizacji -> do_wysylki: przypisany pracownik, serwisant, admin (tylko z opisem naprawy)
+// - do_wysylki -> zakończone: magazynier, admin
+// - cofanie statusu: tylko admin
+const PRZEJSCIA = {
+    nowe:         { w_realizacji: ['admin', 'serwisant'] },
+    w_realizacji: { do_wysylki: ['admin', 'serwisant', 'pracownik'] },
+    do_wysylki:   { 'zakończone': ['admin', 'magazynier'] }
+};
 
-// 7. PATCH /api/zgloszenia/:id/naprawione - Opisanie naprawy przez pracownika i przekazanie do magazynu (Do wysyłki)
+const ALLOWED_STATUSES = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
+const STATUS_ORDER = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
+
+// 7. PATCH /api/zgloszenia/:id/naprawione - Opisanie naprawy przez przypisanego pracownika, serwisanta lub admina
 app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
     safe('Błąd podczas zatwierdzania naprawy:', 'Błąd serwera podczas zatwierdzania naprawy zgłoszenia.', async (req, res) => {
         const id = parseInt(req.params.id, 10);
@@ -433,14 +446,15 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
 
         const ticket = rows[0];
 
+        // Zgodnie z PRZEJSCIA: do_wysylki z w_realizacji mogą wykonać admin, serwisant, pracownik
+        const allowedRoles = PRZEJSCIA.w_realizacji.do_wysylki;
+        if (!allowedRoles.includes(req.user.role)) {
+            return fail(res, 'Brak uprawnień do oznaczania zleceń jako naprawione.', 403);
+        }
+
         // Pracownik może oznaczyć jako naprawione tylko zlecenie przypisane do siebie
         if (req.user.role === 'pracownik' && ticket.przypisany_pracownik_id !== req.user.id) {
             return fail(res, 'Możesz oznaczyć jako naprawione tylko zlecenie przypisane do Ciebie.', 403);
-        }
-
-        // Serwisant i magazynier nie wykonują napraw
-        if (CANNOT_REPAIR.has(req.user.role)) {
-            return fail(res, CANNOT_REPAIR.get(req.user.role), 403);
         }
 
         await currentPool.query(
@@ -457,8 +471,6 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
     }));
 
 // 8. PATCH/PUT /api/zgloszenia/:id/status - Aktualizacja statusu zgłoszenia
-const ALLOWED_STATUSES = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
-
 const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd serwera podczas aktualizacji statusu zgłoszenia.', async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
@@ -476,28 +488,37 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
     }
     const ticket = rows[0];
 
-    // Reguły ról:
-    // 1. Serwisant może wyłącznie przypisywać zgłoszenia pracownikom, nie może zmieniać statusu
-    if (req.user.role === 'serwisant') {
-        return fail(res, 'Serwisant może tylko przypisywać zgłoszenia i nie ma uprawnień do zmiany statusu.', 403);
+    if (ticket.status === status) {
+        return res.json({
+            message: 'Status zgłoszenia pozostaje bez zmian.',
+            id: Number(id),
+            status
+        });
     }
 
-    // 2. Magazynier może wyłącznie oznaczyć zlecenie jako wysłane ('zakończone')
-    if (req.user.role === 'magazynier' && status !== 'zakończone') {
-        return fail(res, 'Magazynier może wyłącznie oznaczyć zlecenie jako wysłane/zakończone.', 403);
-    }
+    const currentIndex = STATUS_ORDER.indexOf(ticket.status);
+    const targetIndex = STATUS_ORDER.indexOf(status);
+    const isRollback = targetIndex < currentIndex;
 
-    // 3. Pracownik może zmieniać status tylko zlecenia przypisanego do siebie i tylko na 'w_realizacji' lub 'do_wysylki'
-    if (req.user.role === 'pracownik') {
-        if (ticket.przypisany_pracownik_id !== req.user.id) {
+    // Reguła: Cofanie statusu jest dozwolone wyłącznie dla administratora
+    if (isRollback) {
+        if (req.user.role !== 'admin') {
+            return fail(res, 'Cofanie statusu zgłoszenia jest dozwolone wyłącznie dla administratora.', 403);
+        }
+    } else {
+        // Przejście w przód – weryfikacja z mapą PRZEJSCIA
+        const allowedRoles = PRZEJSCIA[ticket.status]?.[status];
+        if (!allowedRoles || !allowedRoles.includes(req.user.role)) {
+            return fail(res, `Brak uprawnień do zmiany statusu ze statusu "${ticket.status}" na "${status}".`, 403);
+        }
+
+        // Pracownik może zmieniać status wyłącznie zlecenia przypisanego do siebie
+        if (req.user.role === 'pracownik' && ticket.przypisany_pracownik_id !== req.user.id) {
             return fail(res, 'Możesz zmieniać status tylko zlecenia przypisanego do Ciebie.', 403);
         }
-        if (status !== 'w_realizacji' && status !== 'do_wysylki') {
-            return fail(res, 'Pracownik może zmienić status wyłącznie na "w realizacji" lub "do wysyłki".', 403);
-        }
     }
 
-    // 4. Jeśli ustawiany jest status 'do_wysylki', wymagany jest opis naprawy
+    // Jeśli status zmienia się na 'do_wysylki', wymagany jest opis naprawy
     if (status === 'do_wysylki') {
         const opis = (opis_naprawy && typeof opis_naprawy === 'string' && opis_naprawy.trim()) || ticket.opis_naprawy;
         if (!opis) {
@@ -512,7 +533,8 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
         return res.json({
             message: 'Status zaktualizowany na "do_wysylki" wraz z opisem naprawy.',
             id: Number(id),
-            status
+            status,
+            opis_naprawy: opis.trim()
         });
     }
 

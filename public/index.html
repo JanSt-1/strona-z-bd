@@ -1514,7 +1514,21 @@
                             </>
                         )}
 
-                        {/* Rola: SERWISANT — nie zmienia statusu, może tylko przypisywać innym */}
+                        {/* Rola: SERWISANT */}
+                        {role === 'serwisant' && (
+                            <>
+                                {curStatus === 'w_realizacji' && (
+                                    <button
+                                        type="button"
+                                        className="btn-repair"
+                                        onClick={() => onOpenRepairModal(ticket)}
+                                        title="Opisz wykonane prace i oznacz jako Do wysyłki"
+                                    >
+                                        Oznacz jako naprawione
+                                    </button>
+                                )}
+                            </>
+                        )}
 
                         {/* Rola: ADMIN */}
                         {role === 'admin' && (

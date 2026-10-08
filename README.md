@@ -102,16 +102,18 @@ Pokryte przypadki testowe:
 6. `PATCH /api/zgloszenia/:id/przypisz` bez tokenu -> **401 Unauthorized**.
 7. `PATCH /api/zgloszenia/:id/naprawione` bez tokenu -> **401 Unauthorized**.
 8. `POST /api/zgloszenia` dla monitora interaktywnego bez numeru seryjnego -> **400 Bad Request**.
+9. `POST /api/login` z poprawnymi danymi zwraca token JWT i pozwala na autoryzowany dostęp -> **200 OK**.
+10. `PATCH /api/zgloszenia/1/status` próba cofnięcia statusu przez pracownika -> **403 Forbidden**.
 
 ---
 
-## Role użytkowników i obsługa zleceń
+## Role użytkowników i przejścia statusów
 
-W systemie zaimplementowano role:
-- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie pracownikom i serwisantom, bezpośrednia modyfikacja statusów z listy, usuwanie zgłoszeń, tworzenie użytkowników przez API.
-- **`serwisant`**: Przegląd wszystkich zleceń i przypisywanie ich pracownikom. Nie posiada uprawnień do zmiany statusu ani opisywania napraw (może wyłącznie koordynować i delegować zadania).
-- **`pracownik`**: Domyślnie widzi wyłącznie zlecenia przypisane do siebie. Zlecenie po przypisaniu ma status **"nowe"** – pracownik musi sam kliknąć przycisk **„Rozpocznij realizację”** (zmiana statusu na **"w realizacji"**). Po ukończeniu naprawy klika **„Oznacz jako naprawione”** i sporządza wymagany opis prac (automatycznie datowany z godziną i minutą). Po zatwierdzeniu zlecenie trafia do magazynu ze statusem **"Do wysyłki"**.
-- **`magazynier`**: Domyślnie nie widzi zleceń nowych ani w trakcie naprawy – widzi je dopiero po zakończeniu i opisaniu naprawy przez pracownika (ze statusem **"Do wysyłki"**). Musi wprowadzić numer listu przewozowego (`numer_listu`, pole obowiązkowe) oraz oznaczenia przesyłki jako wysłana (**"zakończone"**), co automatycznie odnotowuje datę i godzinę wysyłki (`data_wyslania`).
+W systemie zaimplementowano role oraz ścisłą mapę przejść statusów (`PRZEJSCIA`):
+- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie zadań, zmiana statusów, wyłączne uprawnienie do cofania statusów wstecz, usuwanie zgłoszeń, tworzenie użytkowników przez API.
+- **`serwisant`**: Przegląd wszystkich zleceń i przypisywanie ich pracownikom (przypisanie zlecenia o statusie "nowe" automatycznie zmienia status na "w realizacji"). Może również oznaczyć zlecenie jako naprawione ("w realizacji" -> "do wysyłki") z opisem naprawy.
+- **`pracownik`**: Domyślnie widzi wyłącznie zlecenia przypisane do siebie. Może oznaczyć zlecenie jako naprawione ("w realizacji" -> "do wysyłki") ze sporządzeniem wymaganego opisu prac.
+- **`magazynier`**: Widzi zlecenia gotowe do wysyłki ("do wysyłki") oraz zakończone. Może oznaczyć zlecenie jako wysłane ("do wysyłki" -> "zakończone") podając numer listu przewozowego (`numer_listu`).
 
 ---
 
