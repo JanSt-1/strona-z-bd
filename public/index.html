@@ -158,6 +158,48 @@
             color: var(--text-muted);
         }
 
+        .form-section {
+            background: rgba(255, 255, 255, 0.75);
+            border: 1px solid rgba(0, 92, 31, 0.22);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+            backdrop-filter: blur(6px);
+        }
+
+        .form-section-header {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            margin-bottom: 1.25rem;
+            padding-bottom: 0.65rem;
+            border-bottom: 1.5px solid rgba(0, 92, 31, 0.18);
+        }
+
+        .form-section-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: #0d5537;
+            color: #ffffff;
+            font-size: 0.85rem;
+            font-weight: 700;
+            flex-shrink: 0;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+        }
+
+        .form-section-title {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #0d5537;
+            letter-spacing: -0.01em;
+            margin: 0;
+        }
+
         .form-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
@@ -573,6 +615,11 @@
         }
 
         @media (max-width: 768px) {
+            .form-section {
+                padding: 1.1rem;
+                margin-bottom: 1.2rem;
+            }
+
             .form-grid {
                 grid-template-columns: 1fr;
             }
@@ -673,6 +720,62 @@
             return isMonitor || isTablica;
         }
 
+        // =========================================================================
+        // LISTA 49 POLSKICH NUMERÓW KIERUNKOWYCH (STREF NUMERACYJNYCH)
+        // =========================================================================
+        const NUMERY_KIERUNKOWE_PL = [
+            { code: '12', miasto: 'Kraków' },
+            { code: '13', miasto: 'Krosno' },
+            { code: '14', miasto: 'Tarnów' },
+            { code: '15', miasto: 'Tarnobrzeg' },
+            { code: '16', miasto: 'Przemyśl' },
+            { code: '17', miasto: 'Rzeszów' },
+            { code: '18', miasto: 'Nowy Sącz' },
+            { code: '22', miasto: 'Warszawa' },
+            { code: '23', miasto: 'Ciechanów' },
+            { code: '24', miasto: 'Płock' },
+            { code: '25', miasto: 'Siedlce' },
+            { code: '29', miasto: 'Ostrołęka' },
+            { code: '32', miasto: 'Katowice' },
+            { code: '33', miasto: 'Bielsko-Biała' },
+            { code: '34', miasto: 'Częstochowa' },
+            { code: '41', miasto: 'Kielce' },
+            { code: '42', miasto: 'Łódź' },
+            { code: '43', miasto: 'Sieradz' },
+            { code: '44', miasto: 'Piotrków Trybunalski' },
+            { code: '46', miasto: 'Skierniewice' },
+            { code: '48', miasto: 'Radom' },
+            { code: '52', miasto: 'Bydgoszcz' },
+            { code: '54', miasto: 'Włocławek' },
+            { code: '55', miasto: 'Elbląg' },
+            { code: '56', miasto: 'Toruń' },
+            { code: '58', miasto: 'Gdańsk' },
+            { code: '59', miasto: 'Słupsk' },
+            { code: '61', miasto: 'Poznań' },
+            { code: '62', miasto: 'Kalisz' },
+            { code: '63', miasto: 'Konin' },
+            { code: '65', miasto: 'Leszno' },
+            { code: '67', miasto: 'Piła' },
+            { code: '68', miasto: 'Zielona Góra' },
+            { code: '71', miasto: 'Wrocław' },
+            { code: '74', miasto: 'Wałbrzych' },
+            { code: '75', miasto: 'Jelenia Góra' },
+            { code: '76', miasto: 'Legnica' },
+            { code: '77', miasto: 'Opole' },
+            { code: '81', miasto: 'Lublin' },
+            { code: '82', miasto: 'Chełm' },
+            { code: '83', miasto: 'Biała Podlaska' },
+            { code: '84', miasto: 'Zamość' },
+            { code: '85', miasto: 'Białystok' },
+            { code: '86', miasto: 'Łomża' },
+            { code: '87', miasto: 'Suwałki' },
+            { code: '89', miasto: 'Olsztyn' },
+            { code: '91', miasto: 'Szczecin' },
+            { code: '94', miasto: 'Koszalin' },
+            { code: '95', miasto: 'Gorzów Wielkopolski' }
+        ];
+
+
         // Formularz publiczny dodawania zgłoszenia
         function PublicTicketForm() {
             const [formData, setFormData] = useState({
@@ -685,11 +788,13 @@
                 kod_pocztowy: '',
                 miasto: '',
                 wojewodztwo: '',
+                nip: '',
+                telefon_kierunkowy: '',
+                telefon_firmowy_7: '',
                 przedmiot_zgloszenia: '',
                 numer_seryjny: '',
                 data_zakupu: '',
                 numer_fv: '',
-                nip: '',
                 opis_usterki: ''
             });
             const [loading, setLoading] = useState(false);
@@ -728,6 +833,12 @@
                 if ((e.key === 'Backspace' || e.key === 'Delete') && e.target.selectionStart <= 4 && e.target.selectionEnd <= 4) {
                     e.preventDefault();
                 }
+            }
+
+            // Obsługa wpisywania 7 cyfr telefonu firmowego (tylko cyfry, max 7)
+            function handleCompanyPhone7Change(e) {
+                const digits = e.target.value.replace(/\D/g, '').slice(0, 7);
+                setFormData(prev => ({ ...prev, telefon_firmowy_7: digits }));
             }
 
             // Obsługa wpisywania kodu pocztowego (tylko cyfry, format XX-XXX z automatycznym myślnikiem)
@@ -782,11 +893,13 @@
                     kod_pocztowy: '',
                     miasto: '',
                     wojewodztwo: '',
+                    nip: '',
+                    telefon_kierunkowy: '',
+                    telefon_firmowy_7: '',
                     przedmiot_zgloszenia: '',
                     numer_seryjny: '',
                     data_zakupu: '',
                     numer_fv: '',
-                    nip: '',
                     opis_usterki: ''
                 });
                 setAlert(null);
@@ -831,6 +944,12 @@
                     return;
                 }
 
+                // Walidacja numeru seryjnego (jeśli aktywny dla przedmiotu, jest obowiązkowy)
+                if (isSerialNumberAllowed(formData.przedmiot_zgloszenia) && !formData.numer_seryjny.trim()) {
+                    showAlert('Pole "Numer seryjny (S/N)" jest obowiązkowe dla wybranego przedmiotu zgłoszenia.', 'error');
+                    return;
+                }
+
                 // Walidacja daty zakupu
                 if (!formData.data_zakupu) {
                     showAlert('Proszę wybrać datę zakupu sprzętu z kalendarza.', 'error');
@@ -847,6 +966,16 @@
                 const nipRegex = /^\d{10}$/;
                 if (!nipRegex.test(formData.nip.trim())) {
                     showAlert('Pole "NIP" jest wymagane i musi składać się z dokładnie 10 cyfr (bez myślników).', 'error');
+                    return;
+                }
+
+                // Walidacja telefonu firmowego (obowiązkowy)
+                if (!formData.telefon_kierunkowy) {
+                    showAlert('Proszę wybrać 2-cyfrowy numer kierunkowy dla telefonu firmowego.', 'error');
+                    return;
+                }
+                if (formData.telefon_firmowy_7.length < 7) {
+                    showAlert('Dla telefonu firmowego należy podać pełne 7 cyfr po numerze kierunkowym.', 'error');
                     return;
                 }
 
@@ -890,11 +1019,13 @@
                         kod_pocztowy: '',
                         miasto: '',
                         wojewodztwo: '',
+                        nip: '',
+                        telefon_kierunkowy: '',
+                        telefon_firmowy_7: '',
                         przedmiot_zgloszenia: '',
                         numer_seryjny: '',
                         data_zakupu: '',
                         numer_fv: '',
-                        nip: '',
                         opis_usterki: ''
                     });
                 } catch (err) {
@@ -903,6 +1034,9 @@
                     setLoading(false);
                 }
             }
+
+            const isSnActive = isSerialNumberAllowed(formData.przedmiot_zgloszenia);
+            const selectedCityInfo = NUMERY_KIERUNKOWE_PL.find(item => item.code === formData.telefon_kierunkowy);
 
             return (
                 <main className="card">
@@ -914,205 +1048,274 @@
                     <Alert alert={alert} />
 
                     <form onSubmit={handleSubmit}>
-                        <div className="form-grid">
-                            <div className="form-group">
-                                <label htmlFor="imie">Imię *</label>
-                                <input
-                                    type="text"
-                                    id="imie"
-                                    required
-                                    placeholder="np. Jan"
-                                    value={formData.imie}
-                                    onChange={e => setFormData({ ...formData, imie: e.target.value })}
-                                />
+                        {/* Część 1: Dane osoby zgłaszającej */}
+                        <section className="form-section">
+                            <div className="form-section-header">
+                                <span className="form-section-badge">1</span>
+                                <h3 className="form-section-title">Dane osoby zgłaszającej</h3>
                             </div>
-                            <div className="form-group">
-                                <label htmlFor="nazwisko">Nazwisko *</label>
-                                <input
-                                    type="text"
-                                    id="nazwisko"
-                                    required
-                                    placeholder="np. Kowalski"
-                                    value={formData.nazwisko}
-                                    onChange={e => setFormData({ ...formData, nazwisko: e.target.value })}
-                                />
+                            <div className="form-grid">
+                                <div className="form-group">
+                                    <label htmlFor="imie">Imię *</label>
+                                    <input
+                                        type="text"
+                                        id="imie"
+                                        required
+                                        placeholder="np. Jan"
+                                        value={formData.imie}
+                                        onChange={e => setFormData({ ...formData, imie: e.target.value })}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="nazwisko">Nazwisko *</label>
+                                    <input
+                                        type="text"
+                                        id="nazwisko"
+                                        required
+                                        placeholder="np. Kowalski"
+                                        value={formData.nazwisko}
+                                        onChange={e => setFormData({ ...formData, nazwisko: e.target.value })}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="numer_telefonu">Telefon kontaktowy *</label>
+                                    <input
+                                        type="tel"
+                                        id="numer_telefonu"
+                                        required
+                                        maxLength="15"
+                                        placeholder="+48 500 600 700"
+                                        value={formData.numer_telefonu}
+                                        onChange={handlePhoneChange}
+                                        onKeyDown={handlePhoneKeyDown}
+                                        onFocus={e => {
+                                            if (!e.target.value || e.target.value.trim() === '+48') {
+                                                setFormData(prev => ({ ...prev, numer_telefonu: '+48 ' }));
+                                            }
+                                        }}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="email">E-mail *</label>
+                                    <input
+                                        type="email"
+                                        id="email"
+                                        required
+                                        placeholder="np. jan.kowalski@example.com"
+                                        value={formData.email}
+                                        onChange={e => setFormData({ ...formData, email: e.target.value })}
+                                    />
+                                </div>
                             </div>
-                            <div className="form-group">
-                                <label htmlFor="numer_telefonu">Numer telefonu * (tylko cyfry)</label>
-                                <input
-                                    type="tel"
-                                    id="numer_telefonu"
-                                    required
-                                    maxLength="15"
-                                    placeholder="+48 500 600 700"
-                                    value={formData.numer_telefonu}
-                                    onChange={handlePhoneChange}
-                                    onKeyDown={handlePhoneKeyDown}
-                                    onFocus={e => {
-                                        if (!e.target.value || e.target.value.trim() === '+48') {
-                                            setFormData(prev => ({ ...prev, numer_telefonu: '+48 ' }));
-                                        }
-                                    }}
-                                />
+                        </section>
+
+                        {/* Część 2: Dane firmy */}
+                        <section className="form-section">
+                            <div className="form-section-header">
+                                <span className="form-section-badge">2</span>
+                                <h3 className="form-section-title">Dane firmy</h3>
                             </div>
-                            <div className="form-group">
-                                <label htmlFor="email">Adres E-mail *</label>
-                                <input
-                                    type="email"
-                                    id="email"
-                                    required
-                                    placeholder="np. jan.kowalski@example.com"
-                                    value={formData.email}
-                                    onChange={e => setFormData({ ...formData, email: e.target.value })}
-                                />
+                            <div className="form-grid">
+                                <div className="form-group full">
+                                    <label htmlFor="nazwa_firmy">Nazwa firmy (opcjonalnie)</label>
+                                    <input
+                                        type="text"
+                                        id="nazwa_firmy"
+                                        placeholder="np. Kowalski Sp. z o.o."
+                                        value={formData.nazwa_firmy}
+                                        onChange={e => setFormData({ ...formData, nazwa_firmy: e.target.value })}
+                                    />
+                                </div>
+                                <div className="form-group full">
+                                    <label htmlFor="adres">Adres *</label>
+                                    <input
+                                        type="text"
+                                        id="adres"
+                                        required
+                                        placeholder="np. ul. Lipowa 12/4"
+                                        value={formData.adres}
+                                        onChange={e => setFormData({ ...formData, adres: e.target.value })}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="kod_pocztowy">Kod pocztowy * (tylko cyfry, XX-XXX)</label>
+                                    <input
+                                        type="text"
+                                        id="kod_pocztowy"
+                                        required
+                                        inputMode="numeric"
+                                        maxLength="6"
+                                        placeholder="00-000"
+                                        value={formData.kod_pocztowy}
+                                        onChange={handlePostalCodeChange}
+                                        onKeyDown={handlePostalCodeKeyDown}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="miasto">Miasto *</label>
+                                    <input
+                                        type="text"
+                                        id="miasto"
+                                        required
+                                        placeholder="np. Warszawa"
+                                        value={formData.miasto}
+                                        onChange={e => setFormData({ ...formData, miasto: e.target.value })}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="wojewodztwo">Województwo *</label>
+                                    <select
+                                        id="wojewodztwo"
+                                        required
+                                        value={formData.wojewodztwo}
+                                        onChange={e => setFormData({ ...formData, wojewodztwo: e.target.value })}
+                                    >
+                                        <option value="">-- Wybierz województwo --</option>
+                                        <option value="dolnośląskie">Dolnośląskie</option>
+                                        <option value="kujawsko-pomorskie">Kujawsko-pomorskie</option>
+                                        <option value="lubelskie">Lubelskie</option>
+                                        <option value="lubuskie">Lubuskie</option>
+                                        <option value="łódzkie">Łódzkie</option>
+                                        <option value="małopolskie">Małopolskie</option>
+                                        <option value="mazowieckie">Mazowieckie</option>
+                                        <option value="opolskie">Opolskie</option>
+                                        <option value="podkarpackie">Podkarpackie</option>
+                                        <option value="podlaskie">Podlaskie</option>
+                                        <option value="pomorskie">Pomorskie</option>
+                                        <option value="śląskie">Śląskie</option>
+                                        <option value="świętokrzyskie">Świętokrzyskie</option>
+                                        <option value="warmińsko-mazurskie">Warmińsko-mazurskie</option>
+                                        <option value="wielkopolskie">Wielkopolskie</option>
+                                        <option value="zachodniopomorskie">Zachodniopomorskie</option>
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="nip">NIP * (10 cyfr, bez myślników)</label>
+                                    <input
+                                        type="text"
+                                        id="nip"
+                                        required
+                                        inputMode="numeric"
+                                        maxLength="10"
+                                        placeholder="np. 1234567890 (bez myślników)"
+                                        value={formData.nip}
+                                        onChange={handleNipChange}
+                                    />
+                                </div>
+                                {/* Telefon firmowy / stacjonarny — obowiązkowy */}
+                                <div className="form-group full">
+                                    <label htmlFor="telefon_kierunkowy">
+                                        Telefon firmowy / stacjonarny *
+                                    </label>
+                                    <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                                        {/* Wybór numeru kierunkowego */}
+                                        <div style={{ flex: '1 1 220px' }}>
+                                            <select
+                                                id="telefon_kierunkowy"
+                                                value={formData.telefon_kierunkowy}
+                                                onChange={e => setFormData({ ...formData, telefon_kierunkowy: e.target.value })}
+                                            >
+                                                <option value="">-- Kierunkowy (2 cyfry) --</option>
+                                                {NUMERY_KIERUNKOWE_PL.map(item => (
+                                                    <option key={item.code} value={item.code}>
+                                                        ({item.code}) {item.miasto}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        {/* Pole 7 cyfr */}
+                                        <div style={{ flex: '2 1 240px' }}>
+                                            <input
+                                                type="text"
+                                                id="telefon_firmowy_7"
+                                                inputMode="numeric"
+                                                maxLength="7"
+                                                placeholder="Pozostałe 7 cyfr (np. 1234567)"
+                                                value={formData.telefon_firmowy_7}
+                                                onChange={handleCompanyPhone7Change}
+                                            />
+                                        </div>
+                                    </div>
+                                    {/* Podpowiedź: nazwa strefy po wybraniu kierunkowego */}
+
+                                </div>
                             </div>
-                            <div className="form-group full">
-                                <label htmlFor="nazwa_firmy">Nazwa firmy (opcjonalnie)</label>
-                                <input
-                                    type="text"
-                                    id="nazwa_firmy"
-                                    placeholder="np. Kowalski Sp. z o.o."
-                                    value={formData.nazwa_firmy}
-                                    onChange={e => setFormData({ ...formData, nazwa_firmy: e.target.value })}
-                                />
+                        </section>
+
+                        {/* Część 3: Zgłaszana usterka */}
+                        <section className="form-section">
+                            <div className="form-section-header">
+                                <span className="form-section-badge">3</span>
+                                <h3 className="form-section-title">Zgłaszana usterka</h3>
                             </div>
-                            <div className="form-group full">
-                                <label htmlFor="adres">Adres *</label>
-                                <input
-                                    type="text"
-                                    id="adres"
-                                    required
-                                    placeholder="np. ul. Lipowa 12/4"
-                                    value={formData.adres}
-                                    onChange={e => setFormData({ ...formData, adres: e.target.value })}
-                                />
+                            <div className="form-grid">
+                                <div className="form-group">
+                                    <label htmlFor="data_zakupu">Data zakupu *</label>
+                                    <input
+                                        type="date"
+                                        id="data_zakupu"
+                                        required
+                                        max={new Date().toISOString().split('T')[0]}
+                                        value={formData.data_zakupu}
+                                        onChange={e => setFormData({ ...formData, data_zakupu: e.target.value })}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="numer_fv">Numer faktury / paragonu *</label>
+                                    <input
+                                        type="text"
+                                        id="numer_fv"
+                                        required
+                                        placeholder="np. FV/2026/04/1234"
+                                        value={formData.numer_fv}
+                                        onChange={e => setFormData({ ...formData, numer_fv: e.target.value })}
+                                    />
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="przedmiot_zgloszenia">Przedmiot zgłoszenia *</label>
+                                    <select
+                                        id="przedmiot_zgloszenia"
+                                        required
+                                        value={formData.przedmiot_zgloszenia}
+                                        onChange={handleSubjectChange}
+                                    >
+                                        <option value="">-- Wybierz przedmiot zgłoszenia --</option>
+                                        {PRZEDMIOTY_LISTA.map(item => (
+                                            <option key={item} value={item}>{item}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label htmlFor="numer_seryjny">
+                                        Numer seryjny (S/N) {isSnActive ? (
+                                            <span style={{ color: '#dc2626', fontWeight: 600 }}>* (wymagany)</span>
+                                        ) : (
+                                            <span style={{ color: '#6b7280', fontWeight: 'normal', fontSize: '0.8rem' }}>(tylko dla monitorów i tablic)</span>
+                                        )}
+                                    </label>
+                                    <input
+                                        type="text"
+                                        id="numer_seryjny"
+                                        required={isSnActive}
+                                        disabled={!isSnActive}
+                                        placeholder={isSnActive ? 'np. SN123456789 (pole wymagane)' : 'Dostępne tylko dla monitorów i tablic'}
+                                        value={formData.numer_seryjny}
+                                        onChange={e => setFormData({ ...formData, numer_seryjny: e.target.value })}
+                                        style={!isSnActive ? { backgroundColor: '#f3f4f6', cursor: 'not-allowed', color: '#9ca3af' } : {}}
+                                    />
+                                </div>
+                                <div className="form-group full">
+                                    <label htmlFor="opis_usterki">Dokładny opis usterki *</label>
+                                    <textarea
+                                        id="opis_usterki"
+                                        required
+                                        placeholder="Opisz objawy, okoliczności powstania awarii oraz model urządzenia..."
+                                        value={formData.opis_usterki}
+                                        onChange={e => setFormData({ ...formData, opis_usterki: e.target.value })}
+                                    />
+                                </div>
                             </div>
-                            <div className="form-group">
-                                <label htmlFor="kod_pocztowy">Kod pocztowy * (tylko cyfry, XX-XXX)</label>
-                                <input
-                                    type="text"
-                                    id="kod_pocztowy"
-                                    required
-                                    inputMode="numeric"
-                                    maxLength="6"
-                                    placeholder="00-000"
-                                    value={formData.kod_pocztowy}
-                                    onChange={handlePostalCodeChange}
-                                    onKeyDown={handlePostalCodeKeyDown}
-                                />
-                            </div>
-                            <div className="form-group">
-                                <label htmlFor="miasto">Miasto *</label>
-                                <input
-                                    type="text"
-                                    id="miasto"
-                                    required
-                                    placeholder="np. Warszawa"
-                                    value={formData.miasto}
-                                    onChange={e => setFormData({ ...formData, miasto: e.target.value })}
-                                />
-                            </div>
-                            <div className="form-group full">
-                                <label htmlFor="wojewodztwo">Województwo *</label>
-                                <select
-                                    id="wojewodztwo"
-                                    required
-                                    value={formData.wojewodztwo}
-                                    onChange={e => setFormData({ ...formData, wojewodztwo: e.target.value })}
-                                >
-                                    <option value="">-- Wybierz województwo --</option>
-                                    <option value="dolnośląskie">Dolnośląskie</option>
-                                    <option value="kujawsko-pomorskie">Kujawsko-pomorskie</option>
-                                    <option value="lubelskie">Lubelskie</option>
-                                    <option value="lubuskie">Lubuskie</option>
-                                    <option value="łódzkie">Łódzkie</option>
-                                    <option value="małopolskie">Małopolskie</option>
-                                    <option value="mazowieckie">Mazowieckie</option>
-                                    <option value="opolskie">Opolskie</option>
-                                    <option value="podkarpackie">Podkarpackie</option>
-                                    <option value="podlaskie">Podlaskie</option>
-                                    <option value="pomorskie">Pomorskie</option>
-                                    <option value="śląskie">Śląskie</option>
-                                    <option value="świętokrzyskie">Świętokrzyskie</option>
-                                    <option value="warmińsko-mazurskie">Warmińsko-mazurskie</option>
-                                    <option value="wielkopolskie">Wielkopolskie</option>
-                                    <option value="zachodniopomorskie">Zachodniopomorskie</option>
-                                </select>
-                            </div>
-                            <div className="form-group">
-                                <label htmlFor="przedmiot_zgloszenia">Przedmiot zgłoszenia *</label>
-                                <select
-                                    id="przedmiot_zgloszenia"
-                                    required
-                                    value={formData.przedmiot_zgloszenia}
-                                    onChange={handleSubjectChange}
-                                >
-                                    <option value="">-- Wybierz przedmiot zgłoszenia --</option>
-                                    {PRZEDMIOTY_LISTA.map(item => (
-                                        <option key={item} value={item}>{item}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div className="form-group">
-                                <label htmlFor="numer_seryjny">
-                                    Numer seryjny {isSerialNumberAllowed(formData.przedmiot_zgloszenia) ? '(aktywny)' : '(tylko dla monitorów i tablic)'}
-                                </label>
-                                <input
-                                    type="text"
-                                    id="numer_seryjny"
-                                    disabled={!isSerialNumberAllowed(formData.przedmiot_zgloszenia)}
-                                    placeholder={isSerialNumberAllowed(formData.przedmiot_zgloszenia) ? 'np. SN123456789' : 'Dostępne tylko dla monitorów i tablic'}
-                                    value={formData.numer_seryjny}
-                                    onChange={e => setFormData({ ...formData, numer_seryjny: e.target.value })}
-                                    style={!isSerialNumberAllowed(formData.przedmiot_zgloszenia) ? { backgroundColor: '#f3f4f6', cursor: 'not-allowed', color: '#9ca3af' } : {}}
-                                />
-                            </div>
-                            <div className="form-group">
-                                <label htmlFor="data_zakupu">Data zakupu *</label>
-                                <input
-                                    type="date"
-                                    id="data_zakupu"
-                                    required
-                                    max={new Date().toISOString().split('T')[0]}
-                                    value={formData.data_zakupu}
-                                    onChange={e => setFormData({ ...formData, data_zakupu: e.target.value })}
-                                />
-                            </div>
-                            <div className="form-group">
-                                <label htmlFor="numer_fv">Numer faktury / paragonu *</label>
-                                <input
-                                    type="text"
-                                    id="numer_fv"
-                                    required
-                                    placeholder="np. FV/2026/04/1234"
-                                    value={formData.numer_fv}
-                                    onChange={e => setFormData({ ...formData, numer_fv: e.target.value })}
-                                />
-                            </div>
-                            <div className="form-group">
-                                <label htmlFor="nip">NIP * (10 cyfr, bez myślników)</label>
-                                <input
-                                    type="text"
-                                    id="nip"
-                                    required
-                                    inputMode="numeric"
-                                    maxLength="10"
-                                    placeholder="np. 1234567890 (bez myślników)"
-                                    value={formData.nip}
-                                    onChange={handleNipChange}
-                                />
-                            </div>
-                            <div className="form-group full">
-                                <label htmlFor="opis_usterki">Dokładny opis usterki *</label>
-                                <textarea
-                                    id="opis_usterki"
-                                    required
-                                    placeholder="Opisz objawy, okoliczności powstania awarii oraz model urządzenia..."
-                                    value={formData.opis_usterki}
-                                    onChange={e => setFormData({ ...formData, opis_usterki: e.target.value })}
-                                />
-                            </div>
-                        </div>
+                        </section>
 
                         <div className="form-actions">
                             <button type="submit" className="btn-submit" disabled={loading}>

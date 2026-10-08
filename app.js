@@ -291,17 +291,20 @@ app.post('/api/zgloszenia', async (req, res) => {
         });
     }
 
-    // 11. Walidacja numeru seryjnego (dozwolony i zapisywany TYLKO dla monitorów i tablic interaktywnych)
+    // 11. Walidacja numeru seryjnego (obowiązkowy dla monitorów i tablic interaktywnych)
     let cleanNumerSeryjny = null;
     if (isSerialNumberAllowed(przedmiot_zgloszenia)) {
-        if (numer_seryjny && typeof numer_seryjny === 'string' && numer_seryjny.trim() !== '') {
-            if (numer_seryjny.trim().length > 100) {
-                return res.status(400).json({
-                    error: 'Pole "numer_seryjny" przekracza maksymalną dozwoloną długość (100 znaków).'
-                });
-            }
-            cleanNumerSeryjny = numer_seryjny.trim();
+        if (!numer_seryjny || typeof numer_seryjny !== 'string' || numer_seryjny.trim() === '') {
+            return res.status(400).json({
+                error: 'Pole "numer_seryjny" jest obowiązkowe dla wybranego przedmiotu zgłoszenia.'
+            });
         }
+        if (numer_seryjny.trim().length > 100) {
+            return res.status(400).json({
+                error: 'Pole "numer_seryjny" przekracza maksymalną dozwoloną długość (100 znaków).'
+            });
+        }
+        cleanNumerSeryjny = numer_seryjny.trim();
     } else {
         // Dla innych produktów numer seryjny nie może być podany / jest ignorowany
         cleanNumerSeryjny = null;

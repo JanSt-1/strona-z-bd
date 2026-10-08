@@ -120,5 +120,34 @@ describe('Testy integracyjne API (node:test + supertest)', () => {
         assert.strictEqual(response.status, 401);
         assert.ok(response.body.error);
     });
+
+    // 8. POST /api/zgloszenia z monitorem interaktywnym bez numeru seryjnego ma zwrócić status 400
+    it('POST /api/zgloszenia dla monitora bez numeru seryjnego powinien zwrócić status 400', async () => {
+        const response = await request(app)
+            .post('/api/zgloszenia')
+            .send({
+                imie: 'Jan',
+                nazwisko: 'Kowalski',
+                adres: 'ul. Testowa 1',
+                kod_pocztowy: '00-001',
+                miasto: 'Warszawa',
+                wojewodztwo: 'mazowieckie',
+                numer_telefonu: '+48123456789',
+                email: 'jan@example.com',
+                przedmiot_zgloszenia: 'Monitor interaktywny myBoard Titan (Android 15)',
+                numer_seryjny: '',
+                data_zakupu: '2026-01-01',
+                numer_fv: 'FV/123/2026',
+                nip: '1234567890',
+                opis_usterki: 'Brak obrazu'
+            });
+
+        assert.strictEqual(response.status, 400);
+        assert.strictEqual(
+            response.body.error,
+            'Pole "numer_seryjny" jest obowiązkowe dla wybranego przedmiotu zgłoszenia.'
+        );
+    });
 });
+
 
