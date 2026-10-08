@@ -16,16 +16,12 @@
 
     <style>
         :root {
-            --bg-color: #025810;
             --card-bg: rgba(0, 71, 30, 0.397);
             --card-border: rgba(0, 196, 26, 0.596);
             --primary: #005c1f;
-            --primary-hover: #005c1f;
             --accent: #002911;
             --text-main: #000000;
             --text-muted: #121416;
-            --success: #10b981;
-            --warning: #f59e0b;
             --danger: #ef4444;
             --input-bg: rgb(255, 255, 255);
             --input-border: rgba(0, 129, 17, 0.12);
@@ -46,7 +42,13 @@
         }
 
         .container {
-            max-width: 1100px;
+            max-width: 63%;
+            margin: 0 auto;
+            padding: 0 1rem 2rem 1rem;
+        }
+
+        .container-dashboard {
+            max-width: 98%;
             margin: 0 auto;
             padding: 0 1rem 2rem 1rem;
         }
@@ -78,20 +80,6 @@
         .brand p {
             font-size: 0.82rem;
             color: var(--text-muted);
-        }
-
-        .react-badge {
-            display: inline-block;
-            font-size: 0.65rem;
-            font-weight: 700;
-            background: rgba(6, 182, 212, 0.2);
-            color: #22d3ee;
-            border: 1px solid rgba(6, 182, 212, 0.4);
-            padding: 0.15rem 0.45rem;
-            border-radius: 6px;
-            margin-left: 0.5rem;
-            vertical-align: middle;
-            text-transform: uppercase;
         }
 
         .nav-tabs {
@@ -257,7 +245,7 @@
             align-items: center;
             justify-content: center;
             gap: 0.5rem;
-            background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+            background: var(--primary);
             color: #fff;
             border: none;
             padding: 0.85rem 1.75rem;
@@ -720,9 +708,7 @@
             return isMonitor || isTablica;
         }
 
-        // =========================================================================
         // LISTA 49 POLSKICH NUMERÓW KIERUNKOWYCH (STREF NUMERACYJNYCH)
-        // =========================================================================
         const NUMERY_KIERUNKOWE_PL = [
             { code: '12', miasto: 'Kraków' },
             { code: '13', miasto: 'Krosno' },
@@ -1392,7 +1378,6 @@
                                     type="text"
                                     id="loginUsername"
                                     required
-                                    placeholder="np. admin"
                                     autoComplete="username"
                                     value={username}
                                     onChange={e => setUsername(e.target.value)}
@@ -1404,7 +1389,6 @@
                                     type="password"
                                     id="loginPassword"
                                     required
-                                    placeholder="Wpisz hasło"
                                     autoComplete="current-password"
                                     value={password}
                                     onChange={e => setPassword(e.target.value)}
@@ -1576,19 +1560,30 @@
                         {/* Rola: PRACOWNIK */}
                         {role === 'pracownik' && (
                             <>
-                                {(curStatus === 'nowe' || curStatus === 'w_realizacji') && (
+                                {curStatus === 'nowe' && (
+                                    <button
+                                        type="button"
+                                        className="btn-repair"
+                                        style={{ background: 'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)' }}
+                                        onClick={() => onUpdateStatus(ticket.id, 'w_realizacji')}
+                                        title="Rozpocznij realizację tego zgłoszenia"
+                                    >
+                                        Rozpocznij realizację
+                                    </button>
+                                )}
+                                {curStatus === 'w_realizacji' && (
                                     <button
                                         type="button"
                                         className="btn-repair"
                                         onClick={() => onOpenRepairModal(ticket)}
                                         title="Opisz wykonane prace i przekaż do magazynu jako Do wysyłki"
                                     >
-                                        🛠️ Oznacz jako naprawione
+                                        Oznacz jako naprawione
                                     </button>
                                 )}
                                 {curStatus === 'do_wysylki' && (
                                     <span style={{ fontSize: '0.75rem', color: '#c084fc', fontWeight: 600 }}>
-                                        📦 Przekazano do wysyłki
+                                        Przekazano do wysyłki
                                     </span>
                                 )}
                                 {curStatus === 'zakończone' && (
@@ -1613,8 +1608,10 @@
                             </>
                         )}
 
-                        {/* Rola: ADMIN lub SERWISANT */}
-                        {(role === 'admin' || role === 'serwisant') && (
+                        {/* Rola: SERWISANT — nie zmienia statusu, może tylko przypisywać innym */}
+
+                        {/* Rola: ADMIN */}
+                        {role === 'admin' && (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                                 {(curStatus === 'nowe' || curStatus === 'w_realizacji') && (
                                     <button
@@ -1623,7 +1620,7 @@
                                         onClick={() => onOpenRepairModal(ticket)}
                                         title="Opisz naprawę i oznacz jako Do wysyłki"
                                     >
-                                        🛠️ Oznacz jako naprawione
+                                        Oznacz jako naprawione
                                     </button>
                                 )}
                                 <select
@@ -1952,31 +1949,31 @@
                                                 {t.opis_naprawy ? (
                                                     <div className="repair-box">
                                                         <div style={{ fontWeight: 600, color: ' var(--primary)', marginBottom: '2px' }}>
-                                                            🛠️ Naprawiono:
+                                                            Naprawiono:
                                                         </div>
                                                         <p style={{ margin: 0, fontSize: '0.82rem', whiteSpace: 'pre-wrap' }}>
                                                             {t.opis_naprawy}
                                                         </p>
                                                         {t.opis_naprawy_data && (
                                                             <div className="repair-date">
-                                                                🕒 {t.opis_naprawy_data}
+                                                                {t.opis_naprawy_data}
                                                             </div>
                                                         )}
                                                     </div>
                                                 ) : (
                                                     <div>
-                                                        {(user?.role === 'pracownik' || user?.role === 'serwisant' || user?.role === 'admin') && t.status !== 'zakończone' ? (
+                                                        {user?.role === 'admin' && t.status !== 'zakończone' ? (
                                                             <button
                                                                 type="button"
                                                                 className="btn-repair"
                                                                 onClick={() => setRepairModalTicket(t)}
                                                                 title="Wpisz co zostało zrobione i przekaż do wysyłki"
                                                             >
-                                                                🛠️ Opisz naprawę
+                                                                Opisz naprawę
                                                             </button>
                                                         ) : (
                                                             <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                                                                Oczekuje na opis
+                                                                {user?.role === 'pracownik' && t.status === 'nowe' ? 'Wymaga rozpoczęcia' : 'Oczekuje na opis'}
                                                             </span>
                                                         )}
                                                     </div>
@@ -2004,12 +2001,12 @@
                                                 </small>
                                                 {t.data_wyslania && (
                                                     <div style={{ marginTop: '4px', fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 600 }}>
-                                                        📦 Wysłano: {t.data_wyslania}
+                                                        Wysłano: {t.data_wyslania}
                                                     </div>
                                                 )}
                                                 {t.numer_listu && (
                                                     <div style={{ marginTop: '2px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                                        🚚 List: <strong style={{ color: 'var(--text)' }}>{t.numer_listu}</strong>
+                                                        List: <strong style={{ color: 'var(--text)' }}>{t.numer_listu}</strong>
                                                     </div>
                                                 )}
                                             </td>
@@ -2085,7 +2082,7 @@
                 <>
                     <Header activeTab={activeTab} setActiveTab={setActiveTab} />
 
-                    <main className="container">
+                    <main className={activeTab !== 'public' && token ? 'container-dashboard' : 'container'}>
                         {activeTab === 'public' ? (
                             <PublicTicketForm />
                         ) : token ? (

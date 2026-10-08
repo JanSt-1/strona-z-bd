@@ -520,10 +520,9 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
 
         const [result] = await currentPool.query(
             `UPDATE zgloszenia 
-             SET przypisany_pracownik_id = ?, 
-                 status = CASE WHEN status = 'nowe' AND ? IS NOT NULL THEN 'w_realizacji' ELSE status END 
+             SET przypisany_pracownik_id = ? 
              WHERE id = ?`,
-            [assignedId, assignedId, id]
+            [assignedId, id]
         );
 
         if (result.affectedRows === 0) {
@@ -570,6 +569,13 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken, async (req, res) 
         if (req.user.role === 'pracownik' && ticket.przypisany_pracownik_id !== req.user.id) {
             return res.status(403).json({
                 error: 'Możesz oznaczyć jako naprawione tylko zlecenie przypisane do Ciebie.'
+            });
+        }
+
+        // Serwisant nie wykonuje napraw - tylko przypisuje zgłoszenia pracownikom
+        if (req.user.role === 'serwisant') {
+            return res.status(403).json({
+                error: 'Serwisant nie posiada uprawnień do oznaczania zleceń jako naprawione.'
             });
         }
 
@@ -625,7 +631,14 @@ async function handleUpdateStatus(req, res) {
         const ticket = rows[0];
 
         // Reguły ról:
-        // 1. Magazynier może wyłącznie oznaczyć zlecenie jako wysłane ('zakończone')
+        // 1. Serwisant może wyłącznie przypisywać zgłoszenia pracownikom, nie może zmieniać statusu
+        if (req.user.role === 'serwisant') {
+            return res.status(403).json({
+                error: 'Serwisant może tylko przypisywać zgłoszenia i nie ma uprawnień do zmiany statusu.'
+            });
+        }
+
+        // 2. Magazynier może wyłącznie oznaczyć zlecenie jako wysłane ('zakończone')
         if (req.user.role === 'magazynier') {
             if (status !== 'zakończone') {
                 return res.status(403).json({
@@ -634,17 +647,26 @@ async function handleUpdateStatus(req, res) {
             }
         }
 
-        // 2. Pracownik: jeśli ustawia 'do_wysylki', musi podać lub posiadać opis naprawy
+        // 3. Pracownik może zmieniać status tylko zlecenia przypisanego do siebie i tylko na 'w_realizacji' lub 'do_wysylki'
+        if (req.user.role === 'pracownik') {
+            if (ticket.przypisany_pracownik_id !== req.user.id) {
+                return res.status(403).json({
+                    error: 'Możesz zmieniać status tylko zlecenia przypisanego do Ciebie.'
+                });
+            }
+            if (status !== 'w_realizacji' && status !== 'do_wysylki') {
+                return res.status(403).json({
+                    error: 'Pracownik może zmienić status wyłącznie na "w realizacji" lub "do wysyłki".'
+                });
+            }
+        }
+
+        // 4. Jeśli ustawiany jest status 'do_wysylki', wymagany jest opis naprawy
         if (status === 'do_wysylki') {
             const opis = (opis_naprawy && typeof opis_naprawy === 'string' && opis_naprawy.trim()) || ticket.opis_naprawy;
             if (!opis) {
                 return res.status(400).json({
                     error: 'Przed oznaczeniem zlecenia jako naprawione / do wysyłki wymagany jest opis wykonanych prac (np. co zostało zrobione).'
-                });
-            }
-            if (req.user.role === 'pracownik' && ticket.przypisany_pracownik_id !== req.user.id) {
-                return res.status(403).json({
-                    error: 'Możesz zmieniać status tylko zlecenia przypisanego do Ciebie.'
                 });
             }
 
@@ -657,13 +679,6 @@ async function handleUpdateStatus(req, res) {
                 message: 'Status zaktualizowany na "do_wysylki" wraz z opisem naprawy.',
                 id: Number(id),
                 status
-            });
-        }
-
-        // Pracownik może zmieniać status tylko własnego przypisanego zlecenia
-        if (req.user.role === 'pracownik' && ticket.przypisany_pracownik_id !== req.user.id) {
-            return res.status(403).json({
-                error: 'Możesz zmieniać status tylko zlecenia przypisanego do Ciebie.'
             });
         }
 

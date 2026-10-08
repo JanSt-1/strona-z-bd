@@ -101,15 +101,16 @@ Pokryte przypadki testowe:
 5. `GET /api/pracownicy` bez tokenu -> **401 Unauthorized**.
 6. `PATCH /api/zgloszenia/:id/przypisz` bez tokenu -> **401 Unauthorized**.
 7. `PATCH /api/zgloszenia/:id/naprawione` bez tokenu -> **401 Unauthorized**.
+8. `POST /api/zgloszenia` dla monitora interaktywnego bez numeru seryjnego -> **400 Bad Request**.
 
 ---
 
 ## Role użytkowników i obsługa zleceń
 
 W systemie zaimplementowano role:
-- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie pracownikom i serwisantom, modyfikacja i usuwanie zgłoszeń, tworzenie użytkowników przez API.
-- **`serwisant`**: Przegląd wszystkich zleceń, przypisywanie zleceń pracownikom, raportowanie i opisywanie napraw.
-- **`pracownik`**: Domyślnie nie widzi obcych zleceń – widzi wyłącznie zlecenia przypisane do niego. Przed oznaczeniem jako naprawione musi sporządzić opis prac (automatycznie datowany z godziną i minutą). Po zatwierdzeniu zlecenie trafia do magazynu ze statusem **"Do wysyłki"**.
+- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie pracownikom i serwisantom, bezpośrednia modyfikacja statusów z listy, usuwanie zgłoszeń, tworzenie użytkowników przez API.
+- **`serwisant`**: Przegląd wszystkich zleceń i przypisywanie ich pracownikom. Nie posiada uprawnień do zmiany statusu ani opisywania napraw (może wyłącznie koordynować i delegować zadania).
+- **`pracownik`**: Domyślnie widzi wyłącznie zlecenia przypisane do siebie. Zlecenie po przypisaniu ma status **"nowe"** – pracownik musi sam kliknąć przycisk **„Rozpocznij realizację”** (zmiana statusu na **"w realizacji"**). Po ukończeniu naprawy klika **„Oznacz jako naprawione”** i sporządza wymagany opis prac (automatycznie datowany z godziną i minutą). Po zatwierdzeniu zlecenie trafia do magazynu ze statusem **"Do wysyłki"**.
 - **`magazynier`**: Domyślnie nie widzi zleceń nowych ani w trakcie naprawy – widzi je dopiero po zakończeniu i opisaniu naprawy przez pracownika (ze statusem **"Do wysyłki"**). Ma możliwość wpisania numeru listu przewozowego (`numer_listu`) oraz oznaczenia przesyłki jako wysłana (**"zakończone"**), co automatycznie odnotowuje datę i godzinę wysyłki (`data_wyslania`).
 
 ---

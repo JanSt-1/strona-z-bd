@@ -13,24 +13,27 @@ Aplikacja składa się z:
   - Chronione endpointy zarządzania zgłoszeniami:
     - Pobieranie listy zgłoszeń zależne od roli (`GET /api/zgloszenia`).
     - Pobieranie listy pracowników do delegowania zadań (`GET /api/pracownicy`).
-    - Przypisywanie zgłoszeń pracownikom (`PATCH /api/zgloszenia/:id/przypisz`).
-    - Raportowanie i opisywanie wykonanych prac naprawczych (`PATCH /api/zgloszenia/:id/naprawione`).
-    - Aktualizacja statusu zgłoszenia wraz z obsługą numeru listu przewozowego i czasu wysyłki (`PATCH` / `PUT /api/zgloszenia/:id/status`).
+    - Przypisywanie zgłoszeń pracownikom (`PATCH /api/zgloszenia/:id/przypisz`, bez automatycznej zmiany statusu).
+    - Raportowanie i opisywanie wykonanych prac naprawczych (`PATCH /api/zgloszenia/:id/naprawione`, dostępne dla `pracownik` i `admin`).
+    - Aktualizacja statusu zgłoszenia wraz z obsługą numeru listu przewozowego i czasu wysyłki (`PATCH` / `PUT /api/zgloszenia/:id/status`, z blokadą dla `serwisant` i restrykcją dla `pracownik`).
     - Usuwanie zgłoszeń (tylko rola `admin`: `DELETE /api/zgloszenia/:id`).
   - Chroniony endpoint administracyjny do tworzenia kont użytkowników z dowolną rolą (`POST /api/admin/users`, tylko `admin`).
   - Serwowanie plików statycznych (`public/`) bezpośrednio przez Express.
 - **Zestawu Testów Integracyjnych**:
   - Plik `app.test.js` oparty o natywny runner Node.js (`node:test`) oraz bibliotekę `supertest`.
   - Izolacja testów poprzez mockowanie zapytań SQL (`app.setPool()`), co pozwala na uruchamianie testów bez aktywnej bazy danych MySQL (np. w środowisku CI/CD).
-  - Pokrycie 7 kluczowych przypadków testowych API.
+  - Pokrycie 8 kluczowych przypadków testowych API (w tym walidacja warunkowego numeru seryjnego).
 - **Narzędzi CLI**:
   - `create-user.js` do bezpiecznego tworzenia kont użytkowników w bazie z haszowaniem bcrypt dla ról: `admin`, `serwisant`, `pracownik`, `magazynier`.
   - `seed.js` do automatycznego wgrywania schematu bazy danych `schemat.sql`.
 - **Frontendu SPA (React 18)**:
   - Zlokalizowany w katalogu `public/index.html` (React + ReactDOM + Babel Standalone).
+  - Niezależne skalowanie kontenerów: `.container` dla formularza publicznego oraz dedykowany `.container-dashboard` dla panelu pracownika.
   - Publiczny formularz zgłoszeniowy z maskowaniem/walidacją numeru telefonu (`+48 ` i 9 cyfr), NIP-u, kodu pocztowego, listy województw i kategorii sprzętu.
   - Panel pracownika z logowaniem, tabelą zgłoszeń dostosowaną do ról (`admin`, `serwisant`, `pracownik`, `magazynier`).
-  - Zmiana statusu: modal opisu naprawy (`RepairModal`), przypisywanie pracownika z listy w czasie rzeczywistym, kontrolka wysyłki z polem na numer listu przewozowego (`ShipControl`) dla magazyniera.
+  - Dedykowany przepływ statusów: pracownik samodzielnie rozpoczyna realizację przyciskiem `Rozpocznij realizację` (zmiana statusu z `nowe` na `w realizacji`), a po wykonaniu zadania klika `Oznacz jako naprawione` w kolumnie Status (usunięto nadmiarowy przycisk `Opisz naprawę` dla pracownika).
+  - Serwisant ma możliwość wyłącznie przypisywania zleceń pracownikom (bez selektora i przycisków zmiany statusu).
+  - Kontrolka wysyłki z polem na numer listu przewozowego (`ShipControl`) dla magazyniera.
   - Wyświetlanie informacji o dacie wysyłki oraz numerze listu przewozowego w wierszu zgłoszenia.
   - Automatyczna obsługa wygaśnięcia lub sfałszowania sesji: funkcja `handleAuthError` i `apiFetch` dynamicznie pobierają token z `localStorage.getItem('serwis_token')`, natychmiast wylogowując użytkownika w przypadku otrzymania kodu `401` lub `403`.
 
@@ -58,9 +61,9 @@ Aplikacja składa się z:
     - `numer_listu` (opcjonalny numer listu przewozowego wprowadzany przez magazyniera).
   - Wdrożono endpointy obsługujące role:
     - `GET /api/pracownicy` (admin, serwisant),
-    - `PATCH /api/zgloszenia/:id/przypisz` (admin, serwisant),
-    - `PATCH /api/zgloszenia/:id/naprawione` (pracownik, serwisant, admin),
-    - `PATCH /api/zgloszenia/:id/status` (obsługa `data_wyslania` i `numer_listu` przy statusie `zakończone`),
+    - `PATCH /api/zgloszenia/:id/przypisz` (admin, serwisant; przypisanie nie zmienia automatycznie statusu na 'w_realizacji'),
+    - `PATCH /api/zgloszenia/:id/naprawione` (pracownik dla przypisanych zadań, admin; rola serwisant otrzymuje 403),
+    - `PATCH /api/zgloszenia/:id/status` (admin - pełna edycja; pracownik - zmiana statusu na 'w_realizacji' i 'do_wysylki' dla własnych zadań; magazynier - wyłącznie 'zakończone'; serwisant - blokada 403),
     - `DELETE /api/zgloszenia/:id` (tylko admin),
     - `POST /api/admin/users` (tylko admin).
   - Serwowanie katalogu `public/` przez Express (`app.use(express.static(path.join(__dirname, 'public')))`).
@@ -68,7 +71,7 @@ Aplikacja składa się z:
 - [x] **Testy Integracyjne:**
   - Utworzono plik `app.test.js` wykorzystujący wbudowany moduł `node:test` oraz `supertest`.
   - Skonfigurowano skrypt `"test": "node --test"` w `package.json`.
-  - Pokryto testami 7 kluczowych wymagań integracyjnych:
+  - Pokryto testami 8 kluczowych wymagań integracyjnych:
     1. `POST /api/zgloszenia` bez przesłanych pól w body zwraca kod `400`.
     2. `GET /api/zgloszenia` bez podanego nagłówka autoryzacyjnego zwraca kod `401`.
     3. `GET /api/zgloszenia` z niepoprawnym tokenem JWT zwraca kod `403`.
@@ -76,6 +79,7 @@ Aplikacja składa się z:
     5. `GET /api/pracownicy` bez nagłówka Authorization zwraca kod `401`.
     6. `PATCH /api/zgloszenia/1/przypisz` bez tokenu zwraca kod `401`.
     7. `PATCH /api/zgloszenia/1/naprawione` bez tokenu zwraca kod `401`.
+    8. `POST /api/zgloszenia` dla monitora interaktywnego bez numeru seryjnego zwraca kod `400`.
 
 - [x] **Frontend (React 18 w `public/index.html`):**
   - Reaktywne komponenty: `App`, `Header`, `PublicTicketForm`, `LoginForm`, `Dashboard`, `StatusControl`, `ShipControl`, `RepairModal`, `Alert`.
@@ -83,11 +87,12 @@ Aplikacja składa się z:
   - Logowanie z zapisem do `localStorage` (`serwis_token`, `serwis_user`) i natychmiastową reakcją interfejsu.
   - Wyświetlanie etykiety roli zalogowanego użytkownika (badge `admin`, `serwisant`, `pracownik`, `magazynier`).
   - Obsługa uprawnień w widoku tabeli:
-    - `admin` i `serwisant`: widzą wszystkie zlecenia, mają rozwijaną listę do natychmiastowego przypisania zgłoszenia pracownikowi,
-    - `pracownik`: widzi wyłącznie swoje przypisane zlecenia; posiada przycisk otwierający modal z wymaganym opisem wykonanych napraw, po czym zgłoszenie przechodzi do statusu `do_wysylki`,
+    - `admin`: widzi wszystkie zlecenia, przypisuje pracownikom, modyfikuje statusy z listy rozwijanej, usuwa zgłoszenia (`DELETE`),
+    - `serwisant`: widzi wszystkie zlecenia, ma rozwijaną listę do przypisania zgłoszenia pracownikowi, brak możliwości zmiany statusu (brak listy rozwijanej i przycisków naprawy),
+    - `pracownik`: widzi wyłącznie swoje przypisane zlecenia; gdy status to `nowe`, klika przycisk `Rozpocznij realizację` (przejście na `w realizacji`), po ukończeniu klika `Oznacz jako naprawione` w kolumnie Status i sporządza raport, po czym zlecenie przechodzi do statusu `do_wysylki` (usunięto zduplikowany przycisk `Opisz naprawę` w kolumnie raportu dla pracownika),
     - `magazynier`: widzi zlecenia ze statusem `do_wysylki` i `zakończone`; posiada kontrolkę `ShipControl` z polem tekstowym na numer listu przewozowego i przyciskiem oznaczenia jako wysłane (`zakończone`),
     - `admin`: jako jedyny posiada przycisk usuwania zgłoszeń (`DELETE`).
-  - Prezentacja szczegółów wysyłki: w kolumnie daty zgłoszenia prezentowane są informacje o dacie wysyłki (`📦 Wysłano: ...`) oraz numerze listu przewozowego (`🚚 List: ...`).
+  - Prezentacja szczegółów wysyłki: w kolumnie daty zgłoszenia prezentowane są informacje o dacie wysyłki (`Wysłano: ...`) oraz numerze listu przewozowego (`List: ...`).
   - **Dynamiczne sprawdzanie tokenu i obsługa 401/403:**
     - Wydzielona funkcja `handleAuthError(response)` wywołująca `onLogout()`.
     - Pomocnik `apiFetch(endpoint, options)` pobierający `localStorage.getItem('serwis_token')` w locie przed każdym zapytaniem.
@@ -104,7 +109,7 @@ strona_z_bd/
 ├── .gitignore               # Wykluczenia gita: node_modules, .env
 ├── README.md                # Główna dokumentacja projektu i instrukcja wdrożenia
 ├── app.js                   # Instancja Express.js (konfiguracja middleware, routingu, walidacji, JWT i puli DB bez app.listen())
-├── app.test.js              # Testy integracyjne API (node:test + supertest, 7 testów)
+├── app.test.js              # Testy integracyjne API (node:test + supertest, 8 testów)
 ├── context.md               # [TEN PLIK] Pełny, aktualny kontekst dla deweloperów i agentów AI
 ├── create-user.js           # CLI: tworzenie kont użytkowników (admin, serwisant, pracownik, magazynier) z bcrypt
 ├── index.js                 # Punkt wejściowy: import app.js, auto-migracja kolumn w DB, app.listen()
@@ -183,9 +188,13 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
           │ (status: 'nowe')
           ▼
 [Admin / Serwisant] ─── Przypisuje pracownika ───► [Pracownik]
+                                                        │ (status nadal: 'nowe')
+                                                        ▼
+                                             [Kliknięcie "Rozpocznij realizację"]
                                                         │ (status: 'w_realizacji')
                                                         ▼
                                              [Wykonuje naprawę]
+                                             [Kliknięcie "Oznacz jako naprawione"]
                                              [Wprowadza opis prac]
                                                         │ (status: 'do_wysylki')
                                                         ▼
@@ -203,11 +212,12 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
    - Może zmieniać dowolny status, usuwać zgłoszenia (`DELETE /api/zgloszenia/:id`) oraz zakładać konta użytkowników z dowolną rolą (`POST /api/admin/users`).
 2. **`serwisant`**:
    - Widzi wszystkie zlecenia w systemie.
-   - Może przypisywać zlecenia pracownikom (`PATCH /api/zgloszenia/:id/przypisz`).
-   - Może opisywać naprawy (`PATCH /api/zgloszenia/:id/naprawione`) i aktualizować statusy.
+   - Może wyłącznie przypisywać zlecenia pracownikom (`PATCH /api/zgloszenia/:id/przypisz`).
+   - Nie posiada uprawnień do zmiany statusu ani opisywania napraw (brak listy wyboru statusów i przycisków naprawy w UI, blokada 403 w API).
 3. **`pracownik`**:
    - **Domyślnie NIE widzi obcych zleceń** – widzi wyłącznie zlecenia przypisane do niego przez serwisanta lub administratora.
-   - Przed przekazaniem do magazynu **musi sporządzić opis wykonanych prac** (`PATCH /api/zgloszenia/:id/naprawione` lub modal w UI).
+   - Przypisane zlecenie ma status **`nowe`** – pracownik musi sam kliknąć przycisk **„Rozpocznij realizację”** (zmiana statusu na **`w_realizacji`**).
+   - Dopiero po rozpoczęciu zlecenia pracownik klika **„Oznacz jako naprawione”** w kolumnie Status i **musi sporządzić opis wykonanych prac** w modalu.
    - Wpis z opisem naprawy jest **automatycznie datowany (data i czas: `NOW()`)**.
    - Po zatwierdzeniu naprawy zlecenie otrzymuje status **`do_wysylki`** i zostaje przekazane do magazynu.
 4. **`magazynier`**:
@@ -319,7 +329,7 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 }
 ```
 *(lub `null` w celu cofnięcia przypisania)*
-- **Odpowiedź (200 OK):** Potwierdzenie przypisania i automatyczna zmiana statusu z `nowe` na `w_realizacji`.
+- **Odpowiedź (200 OK):** Potwierdzenie przypisania (status zgłoszenia nie ulega automatycznej zmianie i pozostaje `nowe`).
 
 ---
 
@@ -327,7 +337,7 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 - **Metoda:** `PATCH`
 - **Ścieżka:** `/api/zgloszenia/:id/naprawione`
 - **Headers:** `Content-Type: application/json`, `Authorization: Bearer <TOKEN_JWT>`
-- **Uprawnienia:** `pracownik` (własne przypisane zlecenie), `serwisant`, `admin`.
+- **Uprawnienia:** `pracownik` (własne przypisane zlecenie), `admin`. Rola `serwisant` otrzymuje `403 Forbidden`.
 - **Body:**
 ```json
 {
@@ -353,9 +363,11 @@ Baza danych: `serwis_db` (kodowanie `utf8mb4_unicode_ci`).
 - **Headers:** `Content-Type: application/json`, `Authorization: Bearer <TOKEN_JWT>`
 - **Dozwolone statusy:** `"nowe"`, `"w_realizacji"`, `"do_wysylki"`, `"zakończone"`.
 - **Zasady biznesowe ról:**
+  - `serwisant`: brak uprawnień do zmiany statusu (odpowiedź `403 Forbidden`).
   - `magazynier`: może wyłącznie ustawić status `"zakończone"`.
   - Przy statusie `"zakończone"`: przyjmowany jest opcjonalny parametr `"numer_listu"`, a serwer automatycznie ustawia `data_wyslania = NOW()`.
-  - `pracownik`: może modyfikować status tylko swojego zlecenia; przy ustawianiu `"do_wysylki"` wymagany jest opis naprawy.
+  - `pracownik`: może modyfikować status tylko swojego przypisanego zlecenia i wyłącznie na `"w_realizacji"` lub `"do_wysylki"` (przy czym dla `"do_wysylki"` wymagany jest opis naprawy).
+  - `admin`: może dowolnie modyfikować status zgłoszenia.
 - **Body przykładowe (dla magazyniera):**
 ```json
 {
