@@ -8,7 +8,7 @@ To pełna aplikacja webowa (SPA) umożliwiająca klientom szybkie rejestrowanie 
 
 Aplikacja backendowa jest rozdzielona zgodnie z zasadą separacji odpowiedzialności:
 - **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (CORS, JSON, pliki statyczne), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
-- **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację połączenia z bazą MySQL, automatyczną weryfikację/migrację brakujących kolumn tabeli `zgloszenia` oraz uruchomienie nasłuchiwania (`app.listen()`).
+- **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację obecności `JWT_SECRET`, test połączenia z bazą MySQL oraz uruchomienie nasłuchiwania HTTP (`app.listen()`).
 - **`app.test.js`**: Zestaw testów integracyjnych API bazujący na natywnym runnerze `node:test` oraz bibliotece `supertest`.
 
 ---
@@ -50,7 +50,7 @@ Uruchom skrypt tworzący bazę `serwis_db` oraz tabele na podstawie schematu `sc
 ```bash
 npm run seed
 ```
-*(Uwaga: Podczas startu serwera plik `index.js` automatycznie sprawdza strukturę tabeli i uzupełnia brakujące kolumny, w tym `numer_listu`, `data_wyslania`, `opis_naprawy` itp.).*
+*(Skrypt ten aplikuje pełną strukturę tabel `uzytkownicy` i `zgloszenia` z pliku `schemat.sql`, w tym pola `numer_listu`, `data_wyslania`, `opis_naprawy` itp.).*
 
 ### Krok 4: Utworzenie pierwszych kont użytkowników
 Skorzystaj z wbudowanego narzędzia CLI `create-user.js`:

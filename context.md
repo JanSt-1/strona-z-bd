@@ -5,7 +5,7 @@ Projekt to pełny system backendowy i frontendowy (SPA) do rejestracji i komplek
 Aplikacja składa się z:
 - **Backendu w Express.js (v5) z architekturą Separation of Concerns**:
   - **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (CORS, JSON, pliki statyczne), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` ułatwiające testowanie i zarządzanie pulą połączeń. Nie wywołuje `app.listen()`.
-  - **`index.js`**: Punkt wejściowy uruchamiający serwer – odpowiada za wczytanie `.env`, weryfikację połączenia z bazą MySQL, automatyczną weryfikację/migrację kolumn w tabeli `zgloszenia` oraz nasłuchiwanie na wybranym porcie (`app.listen()`).
+  - **`index.js`**: Punkt wejściowy uruchamiający serwer – odpowiada za wczytanie `.env`, weryfikację obecności `JWT_SECRET`, test połączenia z bazą MySQL oraz nasłuchiwanie na wybranym porcie (`app.listen()`).
   - Asynchroniczne połączenie z bazą **MySQL** z pulą połączeń (`mysql2/promise`).
   - Publiczny endpoint przyjmowania zgłoszeń serwisowych (`POST /api/zgloszenia`) z rygorystyczną walidacją 15 pól (m.in. NIP, kod pocztowy, województwo, dozwolone kategorie sprzętu, warunkowy numer seryjny).
   - Moduł uwierzytelniania użytkowników oparty o nazwę użytkownika (`username`), haszowanie haseł **bcrypt** oraz tokeny **JWT** (`POST /api/login`) zabezpieczony **rate limiterem** (10 prób / 15 min, wyłączonym w środowisku testowym).
@@ -46,7 +46,7 @@ Aplikacja składa się z:
   - Skonfigurowano zależności: `express` (v5), `mysql2`, `jsonwebtoken`, `bcrypt`, `dotenv`, `cors`, `express-rate-limit`, a w devDependencies: `supertest`.
   - Przeprowadzono architekturę **Separation of Concerns**:
     - `app.js` definiuje i eksportuje samą aplikację Express bez `app.listen()`.
-    - `index.js` importuje `app.js`, weryfikuje łączność z bazą, przeprowadza automatyczną migrację brakujących kolumn tabeli `zgloszenia` i uruchamia serwer HTTP.
+    - `index.js` importuje `app.js`, weryfikuje obecność `JWT_SECRET`, testuje łączność z bazą i uruchamia serwer HTTP.
     - Dodano metody `app.setPool()` oraz `app.getPool()` do dynamicznej podmiany puli bazy danych.
   - Zapewniono bezpieczną obsługę `JWT_SECRET` (aplikacja zatrzymuje start serwera, gdy klucz nie jest zdefiniowany w `.env`; brak jakichkolwiek fallbacków na sekrety testowe w kodzie produkcyjnym; algorytm `HS256` wymuszany jawnie).
   - Przygotowano pliki `.env` oraz `.env.example`.
@@ -113,7 +113,7 @@ strona_z_bd/
 ├── app.test.js              # Testy integracyjne API (node:test + supertest, 9 testów)
 ├── context.md               # [TEN PLIK] Pełny, aktualny kontekst dla deweloperów i agentów AI
 ├── create-user.js           # CLI: tworzenie kont użytkowników (admin, serwisant, pracownik, magazynier) z bcrypt
-├── index.js                 # Punkt wejściowy: import app.js, auto-migracja kolumn w DB, app.listen()
+├── index.js                 # Punkt wejściowy: import app.js, weryfikacja JWT_SECRET i połączenia z DB, app.listen()
 ├── package.json             # Zależności i skrypty npm (start, dev, seed, test)
 ├── package-lock.json        # Zablokowane wersje pakietów npm
 ├── schemat.sql              # Schemat bazy MySQL (tabele: uzytkownicy, zgloszenia)
@@ -493,7 +493,7 @@ npm test
 
 1. **Separation of Concerns (app.js vs index.js):**
    - Całą logikę tras, middleware i konfiguracji Express należy utrzymywać w `app.js`.
-   - `index.js` służy wyłącznie jako punkt startowy serwera (`app.listen()`), wykonuje ewentualną weryfikację/dodanie brakujących kolumn i nie powinien zawierać definicji tras.
+   - `index.js` służy wyłącznie jako punkt startowy serwera (`app.listen()`), weryfikuje `JWT_SECRET` oraz połączenie z bazą i nie powinien zawierać definicji tras.
    - Nowe testy integracyjne powinny importować `app.js` i przekazywać instancję do `supertest(app)`.
    - W przypadku testów wymagających mockowania zapytań SQL należy korzystać z `app.setPool(mockPool)` oraz przywracać oryginalną pulę w `after()`.
 2. **Struktura frontendu:**
