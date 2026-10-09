@@ -11,7 +11,7 @@ strona_z_bd/
 ├── .env / .env.example      # Zmienne: PORT, DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT, JWT_SECRET
 ├── app.js                   # Instancja Express: middleware, RBAC, walidacja, JWT, routing, pula DB (bez app.listen())
 ├── index.js                 # Entrypoint serwera: weryfikacja .env i JWT_SECRET, test DB, app.listen()
-├── app.test.js              # Testy integracyjne API (node:test + supertest, 10 testów, mock DB przez app.setPool())
+├── app.test.js              # Testy integracyjne API (node:test + supertest, 38 testów, mock DB przez app.setPool())
 ├── schemat.sql              # Schemat MySQL (tabele: uzytkownicy, zgloszenia)
 ├── seed.js                  # Inicjalizacja bazy i aplikowanie schemat.sql (`npm run seed`)
 ├── create-user.js           # CLI: tworzenie kont z haszowaniem bcrypt (`node create-user.js <user> <pass> [rola]`)
@@ -43,7 +43,7 @@ strona_z_bd/
 
 ## 3. Role Użytkowników i Przejścia Statusów (RBAC)
 
-### Mapa przejść statusów w kodzie (`PRZEJSCIA`)
+### Mapa przejść statusów i funkcja `czyMoznaZmienic(rola, zStatusu, naStatus)`
 ```javascript
 const PRZEJSCIA = {
     nowe:         { w_realizacji: ['admin', 'serwisant'] },
@@ -51,21 +51,26 @@ const PRZEJSCIA = {
     do_wysylki:   { 'zakończone': ['admin', 'magazynier'] }
 };
 ```
+Wszystkie endpointy modyfikujące status zgłoszenia (`PATCH/PUT /api/zgloszenia/:id/status`, `PATCH /api/zgloszenia/:id/naprawione`, `PATCH /api/zgloszenia/:id/przypisz`) korzystają ze wspólnej funkcji walidacji:
+`czyMoznaZmienic(rola, zStatusu, naStatus)`:
+- **409 Conflict:** gdy przejście jest niedozwolone w cyklu życia (np. pomijanie etapów: `nowe` → `zakończone`, `w_realizacji` → `zakończone`) – komunikat: `Nie można zmienić statusu z »${zStatusu}« na »${naStatus}«.`.
+- **403 Forbidden:** gdy dane przejście istnieje w procesie lub jest cofnięciem, lecz rola użytkownika nie ma uprawnień (np. cofanie przez nie-admina, pracownik próbujący `nowe` → `w_realizacji`).
 
 ### Reguły przejść statusów:
 | Z → Na | Kto | Warunki i zachowanie |
 | :--- | :--- | :--- |
 | `nowe` → `w_realizacji` | automatycznie przy przypisaniu (`admin`, `serwisant`) | W `PATCH /api/zgloszenia/:id/przypisz` przypisanie pracownika automatycznie zmienia status z `nowe` na `w_realizacji`. Dostępne także przez endpoint statusu. |
-| `w_realizacji` → `do_wysylki` | przypisany pracownik, serwisant, admin | **Tylko z opisem naprawy** (`opis_naprawy`). Automatycznie zapisuje `opis_naprawy_data = NOW()`. Pracownik może zmienić wyłącznie własne zlecenie. |
+| `w_realizacji` → `do_wysylki` | przypisany pracownik, serwisant, admin | **Wyłącznie przez `PATCH /api/zgloszenia/:id/naprawione`** (z wymaganym `opis_naprawy`). Automatycznie zapisuje `opis_naprawy_data = NOW()`. W `/status` zmiana na `do_wysylki` jest zablokowana (400). |
 | `do_wysylki` → `zakończone` | magazynier, admin | Oznaczenie jako wysłane. Magazynier ma obowiązek podać `numer_listu` (zapisywane `data_wyslania = NOW()`). |
 | **Cofanie statusu** | **tylko admin** | Zmiana statusu wstecz wg kolejności `['nowe', 'w_realizacji', 'do_wysylki', 'zakończone']` jest dozwolona wyłącznie dla `admin` (dla pozostałych ról: 403 Forbidden). |
+| **Niedozwolony skok** | **nikt** | Przejścia niezdefiniowane w `PRZEJSCIA` (np. `nowe` → `zakończone`) zwracają **409 Conflict**. |
 
 ### Widoczność i uprawnienia ról:
 | Rola | Widoczność zgłoszeń | Przypisywanie pracownika | Zmiana statusu / Naprawa | Inne uprawnienia |
 | :--- | :--- | :--- | :--- | :--- |
 | **`admin`** | Wszystkie | Tak | Pełne przejścia w przód oraz **wyłączne prawo do cofania statusów** | Usuwanie (`DELETE`), tworzenie kont (`POST /api/admin/users`) |
-| **`serwisant`** | Wszystkie | Tak (auto: `nowe` → `w_realizacji`) | Może oznaczyć `w_realizacji` → `do_wysylki` (z opisem naprawy) | — |
-| **`pracownik`** | **Tylko przypisane do siebie** | Nie | Może oznaczyć `w_realizacji` → `do_wysylki` (z opisem naprawy dla własnych zadań) | — |
+| **`serwisant`** | Wszystkie | Tak (auto: `nowe` → `w_realizacji`) | Może oznaczyć `w_realizacji` → `do_wysylki` (przez `/naprawione`) | — |
+| **`pracownik`** | **Tylko przypisane do siebie** | Nie | Może oznaczyć `w_realizacji` → `do_wysylki` (przez `/naprawione` dla własnych zadań) | — |
 | **`magazynier`** | **Tylko `do_wysylki` i `zakończone`** | Nie | Wyłącznie `do_wysylki` → `zakończone` (wymagany `numer_listu`) | — |
 
 ---
@@ -80,9 +85,9 @@ Format odpowiedzi błędów: `{ error: string }`.
 | `POST` | `/api/login` | Publiczny | Logowanie (`username`, `password`). Rate limit: 10 prób / 15 min z IP (pomijany w `NODE_ENV === 'test'`). Weryfikacja hasła przez bcrypt. Zwraca 200 `{ token, user: { id, username, role } }`. |
 | `GET` | `/api/pracownicy` | JWT (`admin`, `serwisant`) | Pobiera listę pracowników do przypisania (`pracownik`, `serwisant`). |
 | `GET` | `/api/zgloszenia` | JWT (dowolna rola) | Lista zgłoszeń filtrowana wg roli użytkownika (pracownik: przypisane; magazynier: `do_wysylki`, `zakończone`; admin/serwisant: wszystkie). |
-| `PATCH` | `/api/zgloszenia/:id/przypisz` | JWT (`admin`, `serwisant`) | Przypisanie pracownika (`{ pracownik_id }` lub `null`). Jeśli status to `nowe` i przypisywany jest pracownik, status automatycznie przechodzi na `w_realizacji`. |
-| `PATCH` | `/api/zgloszenia/:id/naprawione` | JWT (`pracownik`, `serwisant`, `admin`) | Zatwierdzenie naprawy (`{ opis_naprawy }`). Ustawia status `do_wysylki` oraz `opis_naprawy_data = NOW()`. Dla pracownika dotyczy wyłącznie przypisanego zadania. Magazynier otrzymuje 403. |
-| `PATCH/PUT`| `/api/zgloszenia/:id/status` | JWT (zgodnie z RBAC) | Zmiana statusu wg mapy `PRZEJSCIA`. Cofanie statusu dozwolone wyłącznie dla `admin`. Przy `do_wysylki` wymagany opis naprawy. Przy `zakończone` magazynier musi podać `numer_listu` (`data_wyslania = NOW()`). |
+| `PATCH` | `/api/zgloszenia/:id/przypisz` | JWT (`admin`, `serwisant`) | Przypisanie pracownika (`{ pracownik_id }` lub `null`). Wybrany użytkownik musi mieć rolę mogącą naprawiać (`pracownik` lub `serwisant`, błąd 400 dla innych). Jeśli status to `nowe` i przypisywany jest pracownik, status automatycznie przechodzi na `w_realizacji`. |
+| `PATCH` | `/api/zgloszenia/:id/naprawione` | JWT (`pracownik`, `serwisant`, `admin`) | **Jedyna droga do statusu `do_wysylki`**. Zatwierdzenie naprawy (`{ opis_naprawy }`). Ustawia status `do_wysylki` oraz `opis_naprawy_data = NOW()`. Dla pracownika dotyczy wyłącznie przypisanego zadania. Magazynier otrzymuje 403. |
+| `PATCH/PUT`| `/api/zgloszenia/:id/status` | JWT (zgodnie z RBAC) | Zmiana statusu wg mapy `PRZEJSCIA` z wyłączeniem `do_wysylki` (blokada 400 – wymagane użycie `/naprawione`). Cofanie statusu dozwolone wyłącznie dla `admin`. Przy `zakończone` magazynier musi podać `numer_listu` (`data_wyslania = NOW()`). |
 | `DELETE`| `/api/zgloszenia/:id` | JWT (`admin`) | Usunięcie zgłoszenia z bazy danych. |
 | `POST` | `/api/admin/users` | JWT (`admin`) | Utworzenie nowego użytkownika (`username`, `password`, `role`). Haszowanie bcrypt (salt 10). |
 | `GET` | `/api/health` | Publiczny | Health check bazy MySQL: `{ status: 'ok', database: 'connected' }`. |
@@ -106,7 +111,7 @@ npm run seed              # Wgranie schematu bazy danych (schemat.sql)
 node create-user.js admin Haslo123 admin   # Utworzenie pierwszego konta
 npm start                 # Start serwera (port 3000)
 npm run dev               # Start serwera w trybie watch
-npm test                  # Uruchomienie 10 testów integracyjnych (node --test app.test.js)
+npm test                  # Uruchomienie 38 testów integracyjnych (node --test app.test.js)
 ```
 
 ---

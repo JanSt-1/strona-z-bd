@@ -125,7 +125,7 @@ const ALLOWED_PRZEDMIOTY = [
     'Tablica interaktywna myBoard Silver',
     'Tablica interaktywna myBoard Black',
     'Akcesoria do tablic interaktywnych myBoard',
-    'Akcesoria ddla monitorów interaktywnych myBoard',
+    'Akcesoria dla monitorów interaktywnych myBoard',
     'Pracownie językowe',
     'Podłoga interaktywna SmartFloor',
     'Meble',
@@ -173,9 +173,9 @@ app.post('/api/zgloszenia', async (req, res) => {
         const value = (req.body || {})[name];
         const error = typeof value !== 'string' ? 'musi być tekstem.'
             : value.trim().length === 0 ? 'nie może być puste.'
-            : value.trim().length > maxLengths[name]
-                ? `przekracza maksymalną dozwoloną długość (${maxLengths[name]} znaków).`
-                : null;
+                : value.trim().length > maxLengths[name]
+                    ? `przekracza maksymalną dozwoloną długość (${maxLengths[name]} znaków).`
+                    : null;
         if (error) return fail(res, `Pole "${name}" ${error}`);
         c[name] = value.trim();
     }
@@ -204,7 +204,7 @@ app.post('/api/zgloszenia', async (req, res) => {
         [!/^\+48\d{9}$/.test(c.numer_telefonu), 'Pole "numer_telefonu" musi zawierać prefiks +48 oraz dokładnie 9 cyfr.'],
         // przedmiot zgłoszenia z listy
         [!ALLOWED_PRZEDMIOTY.some(item => item.toLowerCase() === c.przedmiot_zgloszenia.toLowerCase()),
-            `Pole "przedmiot_zgloszenia" zawiera nieprawidłową wartość. Dozwolone: ${ALLOWED_PRZEDMIOTY.join(', ')}`],
+        `Pole "przedmiot_zgloszenia" zawiera nieprawidłową wartość. Dozwolone: ${ALLOWED_PRZEDMIOTY.join(', ')}`],
         // data zakupu (RRRR-MM-DD)
         [!/^\d{4}-\d{2}-\d{2}$/.test(c.data_zakupu) || isNaN(Date.parse(c.data_zakupu)), 'Pole "data_zakupu" musi mieć poprawny format daty (RRRR-MM-DD).']
     ];
@@ -281,31 +281,31 @@ app.post('/api/login', loginLimiter, async (req, res) => {
     }
 
     return safe('Błąd podczas logowania:', 'Błąd serwera podczas procesu logowania.', async () => {
-    const [rows] = await currentPool.query(
-        'SELECT id, username, password_hash, role FROM uzytkownicy WHERE username = ?',
-        [loginUsername]
-    );
+        const [rows] = await currentPool.query(
+            'SELECT id, username, password_hash, role FROM uzytkownicy WHERE username = ?',
+            [loginUsername]
+        );
 
-    const user = rows?.[0];
-    // Hasło porównywane wyłącznie przez bcrypt (hash musi mieć prefiks $2a$/$2b$/$2y$)
-    const isPasswordValid = !!user && typeof user.password_hash === 'string' &&
-        /^\$2[aby]\$/.test(user.password_hash) &&
-        await bcrypt.compare(password, user.password_hash);
+        const user = rows?.[0];
+        // Hasło porównywane wyłącznie przez bcrypt (hash musi mieć prefiks $2a$/$2b$/$2y$)
+        const isPasswordValid = !!user && typeof user.password_hash === 'string' &&
+            /^\$2[aby]\$/.test(user.password_hash) &&
+            await bcrypt.compare(password, user.password_hash);
 
-    if (!isPasswordValid) {
-        return fail(res, 'Nieprawidłowa nazwa użytkownika lub hasło.', 401);
-    }
+        if (!isPasswordValid) {
+            return fail(res, 'Nieprawidłowa nazwa użytkownika lub hasło.', 401);
+        }
 
-    const payload = { id: user.id, username: user.username, role: user.role };
+        const payload = { id: user.id, username: user.username, role: user.role };
 
-    // Generowanie tokenu JWT ważnego przez 24 godziny
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '24h', algorithm: 'HS256' });
+        // Generowanie tokenu JWT ważnego przez 24 godziny
+        const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '24h', algorithm: 'HS256' });
 
-    return res.json({
-        message: 'Zalogowano pomyślnie.',
-        token,
-        user: payload
-    });
+        return res.json({
+            message: 'Zalogowano pomyślnie.',
+            token,
+            user: payload
+        });
     })(req, res);
 });
 
@@ -357,6 +357,79 @@ app.get('/api/zgloszenia', authenticateToken,
         return res.json(rows);
     }));
 
+// Mapa dozwolonych przejść statusów i ról uprawnionych do ich wykonania:
+// - nowe -> w_realizacji: automatycznie przy przypisaniu (admin, serwisant)
+// - w_realizacji -> do_wysylki: przypisany pracownik, serwisant, admin (tylko z opisem naprawy)
+// - do_wysylki -> zakończone: magazynier, admin
+// - cofanie statusu: tylko admin
+const PRZEJSCIA = {
+    nowe: { w_realizacji: ['admin', 'serwisant'] },
+    w_realizacji: { do_wysylki: ['admin', 'serwisant', 'pracownik'] },
+    do_wysylki: { 'zakończone': ['admin', 'magazynier'] }
+};
+
+const ALLOWED_STATUSES = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
+const STATUS_ORDER = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
+
+/**
+ * Sprawdza, czy użytkownik o danej roli może zmienić status zgłoszenia.
+ * - Niedozwolone przejście w cyklu życia -> 409 Conflict z komunikatem: Nie można zmienić statusu z »${zStatusu}« na »${naStatus}«.
+ * - Brak uprawnień roli do danego przejścia lub cofania statusu -> 403 Forbidden.
+ * @param {string} rola
+ * @param {string} zStatusu
+ * @param {string} naStatus
+ * @returns {{ allowed: boolean, status?: number, error?: string, isRollback?: boolean }}
+ */
+function czyMoznaZmienic(rola, zStatusu, naStatus) {
+    if (zStatusu === naStatus) {
+        return { allowed: true };
+    }
+
+    const currentIndex = STATUS_ORDER.indexOf(zStatusu);
+    const targetIndex = STATUS_ORDER.indexOf(naStatus);
+
+    if (currentIndex === -1 || targetIndex === -1) {
+        return {
+            allowed: false,
+            status: 409,
+            error: `Nie można zmienić statusu z »${zStatusu}« na »${naStatus}«.`
+        };
+    }
+
+    // Cofanie statusu (indeks maleje) - wyłącznie dla admina
+    if (targetIndex < currentIndex) {
+        if (rola !== 'admin') {
+            return {
+                allowed: false,
+                status: 403,
+                error: 'Cofanie statusu zgłoszenia jest dozwolone wyłącznie dla administratora.'
+            };
+        }
+        return { allowed: true, isRollback: true };
+    }
+
+    // Przejście w przód - weryfikacja zdefiniowanego kroku w cyklu życia
+    const dozwoloneRole = PRZEJSCIA[zStatusu]?.[naStatus];
+    if (!dozwoloneRole) {
+        return {
+            allowed: false,
+            status: 409,
+            error: `Nie można zmienić statusu z »${zStatusu}« na »${naStatus}«.`
+        };
+    }
+
+    // Przejście istnieje w procesie, ale sprawdzamy czy rola ma uprawnienia
+    if (!dozwoloneRole.includes(rola)) {
+        return {
+            allowed: false,
+            status: 403,
+            error: `Brak uprawnień do zmiany statusu ze statusu "${zStatusu}" na "${naStatus}".`
+        };
+    }
+
+    return { allowed: true };
+}
+
 // 6. PATCH /api/zgloszenia/:id/przypisz - Przypisanie zlecenia pracownikowi (admin i serwisant)
 app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwisant,
     safe('Błąd podczas przypisywania pracownika:', 'Błąd serwera podczas przypisywania pracownika.', async (req, res) => {
@@ -382,24 +455,36 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
             if (!users || users.length === 0) {
                 return fail(res, 'Nie znaleziono wybranego pracownika.', 404);
             }
+            const candidate = users[0];
+            if (!['pracownik', 'serwisant'].includes(candidate.role)) {
+                return fail(res, 'Zlecenie można przypisać wyłącznie do użytkownika o roli pracownik lub serwisant.', 400);
+            }
             assignedId = parsedPracownikId;
-            assignedUsername = users[0].username;
+            assignedUsername = candidate.username;
         }
 
-        const [result] = await currentPool.query(
-            `UPDATE zgloszenia 
-             SET przypisany_pracownik_id = ?,
-                 status = CASE WHEN status = 'nowe' AND ? IS NOT NULL THEN 'w_realizacji' ELSE status END
-             WHERE id = ?`,
-            [assignedId, assignedId, id]
-        );
-
-        if (result.affectedRows === 0) {
+        const [tickets] = await currentPool.query('SELECT id, status FROM zgloszenia WHERE id = ?', [id]);
+        if (!tickets || tickets.length === 0) {
             return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
         }
+        const ticket = tickets[0];
 
-        const [rows] = await currentPool.query('SELECT status FROM zgloszenia WHERE id = ?', [id]);
-        const currentStatus = rows?.[0]?.status;
+        let targetStatus = ticket.status;
+        if (ticket.status === 'nowe' && assignedId !== null) {
+            targetStatus = 'w_realizacji';
+            const check = czyMoznaZmienic(req.user.role, ticket.status, targetStatus);
+            if (!check.allowed) {
+                return fail(res, check.error, check.status);
+            }
+        }
+
+        await currentPool.query(
+            `UPDATE zgloszenia 
+             SET przypisany_pracownik_id = ?,
+                 status = ?
+             WHERE id = ?`,
+            [assignedId, targetStatus, id]
+        );
 
         return res.json({
             message: assignedId
@@ -408,23 +493,9 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
             id,
             przypisany_pracownik_id: assignedId,
             przypisany_pracownik_username: assignedUsername,
-            status: currentStatus
+            status: targetStatus
         });
     }));
-
-// Mapa dozwolonych przejść statusów i ról uprawnionych do ich wykonania:
-// - nowe -> w_realizacji: automatycznie przy przypisaniu (admin, serwisant)
-// - w_realizacji -> do_wysylki: przypisany pracownik, serwisant, admin (tylko z opisem naprawy)
-// - do_wysylki -> zakończone: magazynier, admin
-// - cofanie statusu: tylko admin
-const PRZEJSCIA = {
-    nowe:         { w_realizacji: ['admin', 'serwisant'] },
-    w_realizacji: { do_wysylki: ['admin', 'serwisant', 'pracownik'] },
-    do_wysylki:   { 'zakończone': ['admin', 'magazynier'] }
-};
-
-const ALLOWED_STATUSES = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
-const STATUS_ORDER = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
 
 // 7. PATCH /api/zgloszenia/:id/naprawione - Opisanie naprawy przez przypisanego pracownika, serwisanta lub admina
 app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
@@ -446,10 +517,10 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
 
         const ticket = rows[0];
 
-        // Zgodnie z PRZEJSCIA: do_wysylki z w_realizacji mogą wykonać admin, serwisant, pracownik
-        const allowedRoles = PRZEJSCIA.w_realizacji.do_wysylki;
-        if (!allowedRoles.includes(req.user.role)) {
-            return fail(res, 'Brak uprawnień do oznaczania zleceń jako naprawione.', 403);
+        // Weryfikacja przejścia statusu (z ticket.status na 'do_wysylki')
+        const check = czyMoznaZmienic(req.user.role, ticket.status, 'do_wysylki');
+        if (!check.allowed) {
+            return fail(res, check.error, check.status);
         }
 
         // Pracownik może oznaczyć jako naprawione tylko zlecenie przypisane do siebie
@@ -476,13 +547,13 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
     if (isNaN(id)) {
         return fail(res, ID_ERR_INT);
     }
-    const { status, opis_naprawy, numer_listu } = req.body || {};
+    const { status, numer_listu } = req.body || {};
 
     if (!status || !ALLOWED_STATUSES.includes(status)) {
         return fail(res, `Nieprawidłowy status. Dozwolone wartości to: ${ALLOWED_STATUSES.join(', ')}.`);
     }
 
-    const [rows] = await currentPool.query('SELECT id, status, przypisany_pracownik_id, opis_naprawy FROM zgloszenia WHERE id = ?', [id]);
+    const [rows] = await currentPool.query('SELECT id, status, przypisany_pracownik_id FROM zgloszenia WHERE id = ?', [id]);
     if (!rows || rows.length === 0) {
         return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
     }
@@ -496,46 +567,20 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
         });
     }
 
-    const currentIndex = STATUS_ORDER.indexOf(ticket.status);
-    const targetIndex = STATUS_ORDER.indexOf(status);
-    const isRollback = targetIndex < currentIndex;
-
-    // Reguła: Cofanie statusu jest dozwolone wyłącznie dla administratora
-    if (isRollback) {
-        if (req.user.role !== 'admin') {
-            return fail(res, 'Cofanie statusu zgłoszenia jest dozwolone wyłącznie dla administratora.', 403);
-        }
-    } else {
-        // Przejście w przód – weryfikacja z mapą PRZEJSCIA
-        const allowedRoles = PRZEJSCIA[ticket.status]?.[status];
-        if (!allowedRoles || !allowedRoles.includes(req.user.role)) {
-            return fail(res, `Brak uprawnień do zmiany statusu ze statusu "${ticket.status}" na "${status}".`, 403);
-        }
-
-        // Pracownik może zmieniać status wyłącznie zlecenia przypisanego do siebie
-        if (req.user.role === 'pracownik' && ticket.przypisany_pracownik_id !== req.user.id) {
-            return fail(res, 'Możesz zmieniać status tylko zlecenia przypisanego do Ciebie.', 403);
-        }
+    // Jedna ścieżka do 'do_wysylki': wyłącznie przez dedykowany endpoint /api/zgloszenia/:id/naprawione
+    if (status === 'do_wysylki') {
+        return fail(res, 'Zmiana statusu na "do_wysylki" jest dozwolona wyłącznie poprzez zatwierdzenie naprawy (endpoint /api/zgloszenia/:id/naprawione).', 400);
     }
 
-    // Jeśli status zmienia się na 'do_wysylki', wymagany jest opis naprawy
-    if (status === 'do_wysylki') {
-        const opis = (opis_naprawy && typeof opis_naprawy === 'string' && opis_naprawy.trim()) || ticket.opis_naprawy;
-        if (!opis) {
-            return fail(res, 'Przed oznaczeniem zlecenia jako naprawione / do wysyłki wymagany jest opis wykonanych prac (np. co zostało zrobione).');
-        }
+    // Weryfikacja przejścia statusu i uprawnień roli
+    const check = czyMoznaZmienic(req.user.role, ticket.status, status);
+    if (!check.allowed) {
+        return fail(res, check.error, check.status);
+    }
 
-        await currentPool.query(
-            'UPDATE zgloszenia SET status = ?, opis_naprawy = ?, opis_naprawy_data = NOW() WHERE id = ?',
-            [status, opis.trim(), id]
-        );
-
-        return res.json({
-            message: 'Status zaktualizowany na "do_wysylki" wraz z opisem naprawy.',
-            id: Number(id),
-            status,
-            opis_naprawy: opis.trim()
-        });
+    // Pracownik może zmieniać status wyłącznie zlecenia przypisanego do siebie
+    if (req.user.role === 'pracownik' && ticket.przypisany_pracownik_id !== req.user.id) {
+        return fail(res, 'Możesz zmieniać status tylko zlecenia przypisanego do Ciebie.', 403);
     }
 
     let updateQuery = 'UPDATE zgloszenia SET status = ? WHERE id = ?';
@@ -629,5 +674,8 @@ app.post('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =
 app.use('/api', (req, res) => {
     res.status(404).json({ error: 'Endpoint API nie został odnaleziony.' });
 });
+
+app.czyMoznaZmienic = czyMoznaZmienic;
+app.PRZEJSCIA = PRZEJSCIA;
 
 module.exports = app;

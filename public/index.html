@@ -1551,7 +1551,9 @@
                                 >
                                     <option value="nowe">nowe</option>
                                     <option value="w_realizacji">w realizacji</option>
-                                    <option value="do_wysylki">do wysyłki</option>
+                                    <option value="do_wysylki" disabled={curStatus !== 'do_wysylki'}>
+                                        {curStatus === 'do_wysylki' ? 'do wysyłki' : 'do wysyłki (użyj: Oznacz jako naprawione)'}
+                                    </option>
                                     <option value="zakończone">zakończone</option>
                                 </select>
                             </div>
