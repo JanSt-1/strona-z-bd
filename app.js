@@ -36,14 +36,16 @@ app.locals.pool = currentPool;
 // --- Middlewares ---
 app.use(cors());
 app.use(express.json());
-// Serwowanie plików statycznych (np. index.html) – bez cache dla .html
-app.use(express.static(path.join(__dirname, 'public'), { etag: false, lastModified: false }));
-app.use((req, res, next) => {
-    if (req.path.endsWith('.html') || req.path === '/') {
-        res.set('Cache-Control', 'no-store');
+// Serwowanie plików statycznych (np. index.html) – całkowicie bez cache dla przeglądarki
+app.use(express.static(path.join(__dirname, 'public'), {
+    etag: false,
+    lastModified: false,
+    setHeaders: (res) => {
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
     }
-    next();
-});
+}));
 
 // --- Pomocniki ---
 
@@ -79,7 +81,7 @@ function authenticateToken(req, res, next) {
 
     jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }, (err, decodedUser) => {
         if (err) {
-            return fail(res, 'Odmowa dostępu: Nieprawidłowy lub wygasły token JWT', 403);
+            return fail(res, 'Odmowa dostępu: Nieprawidłowy lub wygasły token JWT', 401);
         }
         req.user = decodedUser;
         next();

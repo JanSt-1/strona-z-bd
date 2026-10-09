@@ -1300,18 +1300,27 @@
         function RepairModal({ ticket, onClose, onSubmit }) {
             const [opis, setOpis] = useState(ticket?.opis_naprawy || '');
             const [submitting, setSubmitting] = useState(false);
+            const [modalError, setModalError] = useState(null);
+
+            useEffect(() => {
+                setOpis(ticket?.opis_naprawy || '');
+                setModalError(null);
+            }, [ticket]);
 
             if (!ticket) return null;
 
             async function handleSubmit(e) {
                 e.preventDefault();
+                setModalError(null);
                 if (!opis.trim()) {
-                    alert('Podaj opis wykonanych prac naprawczych.');
+                    setModalError('Podaj opis wykonanych prac naprawczych.');
                     return;
                 }
                 setSubmitting(true);
                 try {
                     await onSubmit(ticket.id, opis.trim());
+                } catch (err) {
+                    setModalError(err.message || 'Wystąpił błąd podczas zatwierdzania naprawy.');
                 } finally {
                     setSubmitting(false);
                 }
@@ -1340,6 +1349,12 @@
                                 <strong>Zgłoszona usterka:</strong> {ticket.opis_usterki}
                             </div>
                         </div>
+
+                        {modalError && (
+                            <div className="alert alert-error" style={{ marginBottom: '1rem' }}>
+                                {modalError}
+                            </div>
+                        )}
 
                         <form onSubmit={handleSubmit}>
                             <div className="form-group full" style={{ marginBottom: '1rem' }}>
@@ -1578,7 +1593,7 @@
             }
 
             function handleAuthError(response) {
-                if (response && (response.status === 401 || response.status === 403)) {
+                if (response && response.status === 401) {
                     onLogout();
                     return true;
                 }
@@ -1605,9 +1620,9 @@
                 if (user?.role !== 'admin' && user?.role !== 'serwisant') return;
                 try {
                     const response = await apiFetch('/pracownicy');
-                    if (!response || handleAuthError(response)) return;
+                    if (!response || !response.ok) return;
                     const data = await response.json();
-                    if (response.ok && Array.isArray(data)) {
+                    if (Array.isArray(data)) {
                         setWorkers(data);
                     }
                 } catch (err) {
@@ -1676,6 +1691,8 @@
                     fetchTickets();
                 } catch (err) {
                     showAlert(err.message, 'error');
+                    fetchTickets();
+                    throw err;
                 }
             }
 

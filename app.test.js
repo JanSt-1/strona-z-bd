@@ -156,11 +156,11 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.ok(response.body.error);
         });
 
-        it('GET /api/zgloszenia z niepoprawnym tokenem powinien zwrócić status 403', async () => {
+        it('GET /api/zgloszenia z niepoprawnym tokenem powinien zwrócić status 401', async () => {
             const response = await request(app)
                 .get('/api/zgloszenia')
                 .set('Authorization', 'Bearer nieprawidlowy.token.jwt');
-            assert.strictEqual(response.status, 403);
+            assert.strictEqual(response.status, 401);
             assert.ok(response.body.error);
         });
 

@@ -98,7 +98,9 @@ Format odpowiedzi błędów: `{ error: string }`.
 
 - Czysty **React 18 + Babel Standalone** serwowany statycznie przez Express.
 - Dwa niezależne widoki: formularz publiczny klienta (`PublicTicketForm`) oraz panel pracownika (`Dashboard` z logowaniem `LoginForm`).
-- **Bezpieczeństwo sesji:** token JWT przechowywany w `localStorage` (`serwis_token`). Pomocnik `apiFetch` pobiera token dynamicznie przed każdym żądaniem. Błędy 401/403 (`handleAuthError`) natychmiast czyszczą stan i wylogowują użytkownika.
+- **Bezpieczeństwo sesji i obsługa błędów:** token JWT przechowywany w `localStorage` (`serwis_token`). Pomocnik `apiFetch` pobiera token dynamicznie przed każdym żądaniem.
+  - **401 Unauthorized:** brakujący, nieprawidłowy lub wygasły token JWT. `handleAuthError` natychmiast czyści stan i wylogowuje użytkownika.
+  - **403 Forbidden:** brak uprawnień do danej akcji (reguły ról RBAC, edycja zlecenia przypisanego do kogoś innego itp.). Frontend **nie wylogowuje** użytkownika, lecz wyświetla komunikat błędu z serwera w alercie (`showAlert(err.message, 'error')`).
 - Pomocnik `apiJson(endpoint, options, fallbackError)` obsługuje ujednolicone zapytania API i wyłapuje błędy backendu.
 
 ---
@@ -128,3 +130,6 @@ npm test                  # Uruchomienie 38 testów integracyjnych (node --test 
    - **Zakaz osłabiania walidacji:** Żaden agent nie ma prawa usuwać, omijać ani rozluźniać walidacji wejściowych (NIP, kod, regexy, role RBAC, bcrypt) pod pretekstem testów. Testy muszą spełniać produkcyjne wymagania walidacji.
    - **Algorytm JWT:** Wymuszać jawnie algorytm `HS256` zarówno przy generowaniu (`jwt.sign`), jak i weryfikacji (`jwt.verify({ algorithms: ['HS256'] })`), chroniąc przed podatnościami Algorithm Confusion / `alg: none`.
 3. **Baza danych:** Zawsze stosować zapytania parametryzowane (`?`) w puli `mysql2/promise`. Nie wprowadzać twardo kodowanych poświadczeń do repozytorium.
+4. **Rozdział 401 vs 403:**
+   - Kod **401 Unauthorized**: zarezerwowany dla problemów z uwierzytelnieniem (brakujący, nieprawidłowy lub wygasły token JWT, błędne hasło). Frontend wylogowuje użytkownika wyłącznie przy 401.
+   - Kod **403 Forbidden**: zarezerwowany dla braku uprawnień (rola nie ma dostępu do endpointu, pracownik próbuje modyfikować cudze zlecenie, brak uprawnień do danego przejścia w RBAC). Frontend nie wylogowuje, lecz wyświetla komunikat z serwera.
