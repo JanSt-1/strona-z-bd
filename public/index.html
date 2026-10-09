@@ -509,31 +509,6 @@
             flex-wrap: wrap;
         }
 
-        .btn-status-change {
-            background: rgba(59, 130, 246, 0.2);
-            border: 1px solid rgba(43, 255, 79, 0.4);
-            color: #020202;
-            padding: 0.35rem 0.65rem;
-            border-radius: 6px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            white-space: nowrap;
-        }
-
-        .btn-status-change:hover:not(:disabled) {
-            background: var(--primary);
-            color: #fff;
-            transform: translateY(-1px);
-        }
-
-        .btn-status-change:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
-
         .status-select {
             background: var(--input-bg);
             border: 1px solid var(--input-border);
@@ -949,7 +924,6 @@
             }
 
             const isSnActive = isSerialNumberAllowed(formData.przedmiot_zgloszenia);
-            const selectedCityInfo = NUMERY_KIERUNKOWE_PL.find(item => item.code === formData.telefon_kierunkowy);
 
             return (
                 <main className="card">
@@ -1136,8 +1110,6 @@
                                             />
                                         </div>
                                     </div>
-                                    {/* Podpowiedź: nazwa strefy po wybraniu kierunkowego */}
-
                                 </div>
                             </div>
                         </section>

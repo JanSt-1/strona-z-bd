@@ -11,7 +11,7 @@ strona_z_bd/
 ├── .env / .env.example      # Zmienne: PORT, DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT, JWT_SECRET
 ├── app.js                   # Instancja Express: middleware, RBAC, walidacja, JWT, routing, pula DB (bez app.listen())
 ├── index.js                 # Entrypoint serwera: weryfikacja .env i JWT_SECRET, test DB, app.listen()
-├── app.test.js              # Testy integracyjne API (node:test + supertest, 38 testów, mock DB przez app.setPool())
+├── app.test.js              # Testy integracyjne API (node:test + supertest, 45 testów, mock DB przez app.setPool())
 ├── schemat.sql              # Schemat MySQL (tabele: uzytkownicy, zgloszenia)
 ├── seed.js                  # Inicjalizacja bazy i aplikowanie schemat.sql (`npm run seed`)
 ├── create-user.js           # CLI: tworzenie kont z haszowaniem bcrypt (`node create-user.js <user> <pass> [rola]`)
@@ -81,7 +81,7 @@ Format odpowiedzi błędów: `{ error: string }`.
 
 | Metoda | Endpoint | Dostęp / Rola | Opis i Walidacja |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/api/zgloszenia` | Publiczny | Rejestracja zgłoszenia. Rygorystyczna walidacja: imię/nazwisko (bez cyfr, litery), NIP (10 cyfr), kod (`XX-XXX`), województwo (z listy 16), telefon (`+48` + 9 cyfr), przedmiot (z listy dozwolonych), data zakupu (`RRRR-MM-DD`). `numer_seryjny` obowiązkowy wyłącznie dla monitorów i tablic interaktywnych (bez akcesoriów). Zwraca 201 `{ message, id }`. |
+| `POST` | `/api/zgloszenia` | Publiczny | Rejestracja zgłoszenia. Rygorystyczna walidacja: imię/nazwisko (bez cyfr, litery), NIP (10 cyfr), kod (`XX-XXX`), województwo (z listy 16), telefon (`+48` + 9 cyfr), przedmiot (z listy dozwolonych), data zakupu (`RRRR-MM-DD`, istniejąca w kalendarzu, nie z przyszłości; w przeciwnym razie 400). Limity długości zgodne z kolumnami (np. `numer_seryjny` max 100). `numer_seryjny` obowiązkowy wyłącznie dla monitorów i tablic interaktywnych (bez akcesoriów). Zwraca 201 `{ message, id }`. |
 | `POST` | `/api/login` | Publiczny | Logowanie (`username`, `password`). Rate limit: 10 prób / 15 min z IP (pomijany w `NODE_ENV === 'test'`). Weryfikacja hasła przez bcrypt. Zwraca 200 `{ token, user: { id, username, role } }`. |
 | `GET` | `/api/pracownicy` | JWT (`admin`, `serwisant`) | Pobiera listę pracowników do przypisania (`pracownik`, `serwisant`). |
 | `GET` | `/api/zgloszenia` | JWT (dowolna rola) | Lista zgłoszeń filtrowana wg roli użytkownika (pracownik: przypisane; magazynier: `do_wysylki`, `zakończone`; admin/serwisant: wszystkie). |
@@ -89,7 +89,7 @@ Format odpowiedzi błędów: `{ error: string }`.
 | `PATCH` | `/api/zgloszenia/:id/naprawione` | JWT (`pracownik`, `serwisant`, `admin`) | **Jedyna droga do statusu `do_wysylki`**. Zatwierdzenie naprawy (`{ opis_naprawy }`). Ustawia status `do_wysylki` oraz `opis_naprawy_data = NOW()`. Dla pracownika dotyczy wyłącznie przypisanego zadania. Magazynier otrzymuje 403. |
 | `PATCH/PUT`| `/api/zgloszenia/:id/status` | JWT (zgodnie z RBAC) | Zmiana statusu wg mapy `PRZEJSCIA` z wyłączeniem `do_wysylki` (blokada 400 – wymagane użycie `/naprawione`). Cofanie statusu dozwolone wyłącznie dla `admin`. Walidacja `numer_listu`: max 100 znaków (VARCHAR(100)). Przy `zakończone` magazynier musi podać `numer_listu` (`data_wyslania = NOW()`). Magazynier i admin mogą zaktualizować `numer_listu` również dla zlecenia już zakończonego. |
 | `DELETE`| `/api/zgloszenia/:id` | JWT (`admin`) | Usunięcie zgłoszenia z bazy danych. |
-| `POST` | `/api/admin/users` | JWT (`admin`) | Utworzenie nowego użytkownika (`username`, `password`, `role`). Haszowanie bcrypt (salt 10). |
+| `POST` | `/api/admin/users` | JWT (`admin`) | Utworzenie nowego użytkownika (`username` max 50 znaków, `password`, `role`). Haszowanie bcrypt (salt 10). |
 | `GET` | `/api/health` | Publiczny | Health check bazy MySQL: `{ status: 'ok', database: 'connected' }`. |
 
 ---
@@ -113,7 +113,7 @@ npm run seed              # Wgranie schematu bazy danych (schemat.sql)
 node create-user.js admin Haslo123 admin   # Utworzenie pierwszego konta
 npm start                 # Start serwera (port 3000)
 npm run dev               # Start serwera w trybie watch
-npm test                  # Uruchomienie 42 testów integracyjnych (node --test app.test.js)
+npm test                  # Uruchomienie 45 testów integracyjnych (node --test app.test.js)
 ```
 
 ---
@@ -126,7 +126,7 @@ npm test                  # Uruchomienie 42 testów integracyjnych (node --test 
    - Testy integracyjne importują `app.js` i mockują bazę przez `app.setPool(mockPool)`. Oryginalna pula musi być przywracana w `after()`.
 2. **BEZWZGLĘDNY ZAKAZ TWORZENIA FURTEK I DZIUR W WALIDACJI (SECURITY INTEGRITY):**
    - **Brak domyślnych sekretów:** Nigdy nie dodawać do kodu aplikacji produkcyjnej domyślnych/fallbackowych sekretów (np. `const JWT_SECRET = process.env.JWT_SECRET || 'sekret_testowy'`). W `app.js` brak `process.env.JWT_SECRET` musi natychmiast rzucać błąd `throw new Error(...)`.
-   - **Izolacja testów:** Zmienne testowe wolno konfigurować wyłącznie w plikach testowych (`app.test.js`) przed załadowaniem aplikacji. Nigdy nie obniżać poziomu bezpieczeństwa kodu produkcyjnego na potrzeby testów.
+   - **Izolacja testów:** Zmienne testowe wolno konfigurować wyłącznie w plikach testowych (`app.test.js`) przed załadowaniem aplikacji (jeśli brak `JWT_SECRET`, test generuje losowy klucz przez `crypto.randomBytes(32)` – bez statycznych sekretów w repozytorium). Nigdy nie obniżać poziomu bezpieczeństwa kodu produkcyjnego na potrzeby testów.
    - **Zakaz osłabiania walidacji:** Żaden agent nie ma prawa usuwać, omijać ani rozluźniać walidacji wejściowych (NIP, kod, regexy, role RBAC, bcrypt) pod pretekstem testów. Testy muszą spełniać produkcyjne wymagania walidacji.
    - **Algorytm JWT:** Wymuszać jawnie algorytm `HS256` zarówno przy generowaniu (`jwt.sign`), jak i weryfikacji (`jwt.verify({ algorithms: ['HS256'] })`), chroniąc przed podatnościami Algorithm Confusion / `alg: none`.
 3. **Baza danych:** Zawsze stosować zapytania parametryzowane (`?`) w puli `mysql2/promise`. Nie wprowadzać twardo kodowanych poświadczeń do repozytorium.

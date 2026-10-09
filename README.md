@@ -44,6 +44,10 @@ DB_NAME=serwis_db
 DB_PORT=3306
 JWT_SECRET=twoj_klucz_jtw
 ```
+`JWT_SECRET` jest wymagany (brak domyślnej wartości – serwer się nie uruchomi). Wygeneruj silny klucz:
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
 
 ### Krok 3: Inicjalizacja bazy danych (Seed)
 Uruchom skrypt tworzący bazę `serwis_db` oraz tabele na podstawie schematu `schemat.sql`:
@@ -96,7 +100,7 @@ npm test
 Pokryte przypadki testowe:
 1. `POST /api/zgloszenia` bez wymaganych pól w body -> **400 Bad Request**.
 2. `GET /api/zgloszenia` bez nagłówka Authorization -> **401 Unauthorized**.
-3. `GET /api/zgloszenia` z nieprawidłowym tokenem JWT -> **403 Forbidden**.
+3. `GET /api/zgloszenia` z nieprawidłowym tokenem JWT -> **401 Unauthorized** (403 oznacza wyłącznie brak uprawnień roli).
 4. `POST /api/login` z błędnym hasłem -> **401 Unauthorized**.
 5. `GET /api/pracownicy` bez tokenu -> **401 Unauthorized**.
 6. `PATCH /api/zgloszenia/:id/przypisz` bez tokenu -> **401 Unauthorized**.
@@ -104,6 +108,9 @@ Pokryte przypadki testowe:
 8. `POST /api/zgloszenia` dla monitora interaktywnego bez numeru seryjnego -> **400 Bad Request**.
 9. `POST /api/login` z poprawnymi danymi zwraca token JWT i pozwala na autoryzowany dostęp -> **200 OK**.
 10. `PATCH /api/zgloszenia/1/status` próba cofnięcia statusu przez pracownika -> **403 Forbidden**.
+11. Walidacja `data_zakupu` (nieistniejąca data `2026-02-31`, data z przyszłości) -> **400**.
+12. Limity długości: `numer_listu` (max 100) oraz `username` w `POST /api/admin/users` (max 50) -> **400**.
+13. Pełna macierz reguł ról i przejść statusów (409 dla niedozwolonych skoków, 403 dla braku uprawnień, cofanie tylko admin, pracownik tylko własne zlecenia) – łącznie 45 testów.
 
 ---
 

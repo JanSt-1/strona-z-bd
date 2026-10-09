@@ -28,10 +28,8 @@ let currentPool = mysql.createPool({
 // Udostępnienie metod do pobierania i podmiany puli połączeń (np. w testach jednostkowych/integracyjnych)
 app.setPool = (pool) => {
     currentPool = pool;
-    app.locals.pool = pool;
 };
 app.getPool = () => currentPool;
-app.locals.pool = currentPool;
 
 // --- Middlewares ---
 app.use(cors());
