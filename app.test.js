@@ -4,8 +4,10 @@ const request = require('supertest');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
+const crypto = require('crypto');
+
 if (!process.env.JWT_SECRET) {
-    process.env.JWT_SECRET = 'klucz_jwt_do_izolowanych_testow_1234567890';
+    process.env.JWT_SECRET = crypto.randomBytes(32).toString('hex');
 }
 const app = require('./app');
 
@@ -148,6 +150,52 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
 
             assert.strictEqual(response.status, 400);
             assert.strictEqual(response.body.error, 'Pole "numer_seryjny" jest obowiązkowe dla wybranego przedmiotu zgłoszenia.');
+        });
+
+        it('POST /api/zgloszenia z nieistniejącą datą ("2026-02-31") powinien zwrócić status 400', async () => {
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    wojewodztwo: 'mazowieckie',
+                    numer_telefonu: '+48123456789',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-02-31',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Brak obrazu'
+                });
+
+            assert.strictEqual(response.status, 400);
+            assert.strictEqual(response.body.error, 'Pole "data_zakupu" zawiera nieprawidłową datę (nie istnieje w kalendarzu).');
+        });
+
+        it('POST /api/zgloszenia z datą zakupu z przyszłości ("2099-01-01") powinien zwrócić status 400', async () => {
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    wojewodztwo: 'mazowieckie',
+                    numer_telefonu: '+48123456789',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2099-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Brak obrazu'
+                });
+
+            assert.strictEqual(response.status, 400);
+            assert.strictEqual(response.body.error, 'Pole "data_zakupu" nie może być datą z przyszłości.');
         });
 
         it('GET /api/zgloszenia bez tokenu powinien zwrócić status 401', async () => {
@@ -340,6 +388,55 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             );
         });
 
+        it('Próba podania numer_listu dłuższego niż 100 znaków zwraca błąd 400', async () => {
+            setMockTicket({ status: 'do_wysylki' });
+            const response = await request(app)
+                .patch('/api/zgloszenia/1/status')
+                .set('Authorization', `Bearer ${magazynierToken}`)
+                .send({ status: 'zakończone', numer_listu: 'A'.repeat(101) });
+            assert.strictEqual(response.status, 400);
+            assert.strictEqual(
+                response.body.error,
+                'Pole "numer_listu" przekracza maksymalną dozwoloną długość (100 znaków).'
+            );
+        });
+
+        it('Próba podania numer_listu dłuższego niż 100 znaków przy statusie już "zakończone" zwraca błąd 400', async () => {
+            setMockTicket({ status: 'zakończone' });
+            const response = await request(app)
+                .patch('/api/zgloszenia/1/status')
+                .set('Authorization', `Bearer ${magazynierToken}`)
+                .send({ status: 'zakończone', numer_listu: 'A'.repeat(101) });
+            assert.strictEqual(response.status, 400);
+            assert.strictEqual(
+                response.body.error,
+                'Pole "numer_listu" przekracza maksymalną dozwoloną długość (100 znaków).'
+            );
+        });
+
+        it('Próba podania numer_listu niebędącego stringiem zwraca błąd 400', async () => {
+            setMockTicket({ status: 'do_wysylki' });
+            const response = await request(app)
+                .patch('/api/zgloszenia/1/status')
+                .set('Authorization', `Bearer ${magazynierToken}`)
+                .send({ status: 'zakończone', numer_listu: 1234567 });
+            assert.strictEqual(response.status, 400);
+            assert.strictEqual(
+                response.body.error,
+                'Pole "numer_listu" musi być tekstem.'
+            );
+        });
+
+        it('Magazynier może zaktualizować numer_listu na zgłoszeniu już zakończonym (200)', async () => {
+            setMockTicket({ status: 'zakończone' });
+            const response = await request(app)
+                .patch('/api/zgloszenia/1/status')
+                .set('Authorization', `Bearer ${magazynierToken}`)
+                .send({ status: 'zakończone', numer_listu: 'DPD-NEW-12345' });
+            assert.strictEqual(response.status, 200);
+            assert.strictEqual(response.body.numer_listu, 'DPD-NEW-12345');
+        });
+
         it('Admin może oznaczyć jako zakończone ze statusu do_wysylki (200)', async () => {
             setMockTicket({ status: 'do_wysylki' });
             const response = await request(app)
@@ -511,6 +608,15 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 .set('Authorization', `Bearer ${adminToken}`)
                 .send({ username: 'nowy_pracownik', password: 'Haslo12345!', role: 'pracownik' });
             assert.strictEqual(respAdmin.status, 201);
+        });
+
+        it('POST /api/admin/users z username dłuższym niż 50 znaków zwraca błąd 400', async () => {
+            const resp = await request(app)
+                .post('/api/admin/users')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ username: 'u'.repeat(51), password: 'Haslo12345!', role: 'pracownik' });
+            assert.strictEqual(resp.status, 400);
+            assert.strictEqual(resp.body.error, 'Pole "username" przekracza maksymalną dozwoloną długość (50 znaków).');
         });
 
         it('GET /api/zgloszenia filtruje zapytania zgodnie z rolą', async () => {

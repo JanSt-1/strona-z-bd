@@ -155,6 +155,32 @@ function isSerialNumberAllowed(product) {
     return isMonitor || isTablica;
 }
 
+// Pomocnik walidacji daty zakupu:
+// - Sprawdza format RRRR-MM-DD
+// - Weryfikuje istnienie daty w kalendarzu (zapobiega przelewaniu nieistniejących dni np. 2026-02-31 przez Date.parse)
+// - Blokuje daty z przyszłości
+function validatePurchaseDate(dateStr) {
+    if (typeof dateStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        return 'Pole "data_zakupu" musi mieć poprawny format daty (RRRR-MM-DD).';
+    }
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const parsedDate = new Date(Date.UTC(year, month - 1, day));
+    if (
+        isNaN(parsedDate.getTime()) ||
+        parsedDate.getUTCFullYear() !== year ||
+        (parsedDate.getUTCMonth() + 1) !== month ||
+        parsedDate.getUTCDate() !== day
+    ) {
+        return 'Pole "data_zakupu" zawiera nieprawidłową datę (nie istnieje w kalendarzu).';
+    }
+    const now = new Date();
+    const today = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+    if (parsedDate > today) {
+        return 'Pole "data_zakupu" nie może być datą z przyszłości.';
+    }
+    return null;
+}
+
 // 2. POST /api/zgloszenia - Publiczne dodawanie nowego zgłoszenia serwisowego
 app.post('/api/zgloszenia', async (req, res) => {
     const { nazwa_firmy, numer_seryjny, przedmiot_zgloszenia } = req.body || {};
@@ -207,8 +233,8 @@ app.post('/api/zgloszenia', async (req, res) => {
         // przedmiot zgłoszenia z listy
         [!ALLOWED_PRZEDMIOTY.some(item => item.toLowerCase() === c.przedmiot_zgloszenia.toLowerCase()),
         `Pole "przedmiot_zgloszenia" zawiera nieprawidłową wartość. Dozwolone: ${ALLOWED_PRZEDMIOTY.join(', ')}`],
-        // data zakupu (RRRR-MM-DD)
-        [!/^\d{4}-\d{2}-\d{2}$/.test(c.data_zakupu) || isNaN(Date.parse(c.data_zakupu)), 'Pole "data_zakupu" musi mieć poprawny format daty (RRRR-MM-DD).']
+        // data zakupu (RRRR-MM-DD, prawidłowa w kalendarzu, nie z przyszłości)
+        [Boolean(validatePurchaseDate(c.data_zakupu)), validatePurchaseDate(c.data_zakupu)]
     ];
     const failed = checks.find(([invalid]) => invalid);
     if (failed) return fail(res, failed[1]);
@@ -551,6 +577,16 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
     }
     const { status, numer_listu } = req.body || {};
 
+    // 1. Walidacja pola numer_listu na samym początku żądania (VARCHAR(100) w bazie danych)
+    if (numer_listu !== undefined && numer_listu !== null) {
+        if (typeof numer_listu !== 'string') {
+            return fail(res, 'Pole "numer_listu" musi być tekstem.');
+        }
+        if (numer_listu.trim().length > 100) {
+            return fail(res, 'Pole "numer_listu" przekracza maksymalną dozwoloną długość (100 znaków).');
+        }
+    }
+
     if (!status || !ALLOWED_STATUSES.includes(status)) {
         return fail(res, `Nieprawidłowy status. Dozwolone wartości to: ${ALLOWED_STATUSES.join(', ')}.`);
     }
@@ -561,7 +597,24 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
     }
     const ticket = rows[0];
 
+    // Jeśli status jest ten sam, ale dla 'zakończone' podano numer_listu, umożliwiamy jego aktualizację przez magazyniera lub admina
     if (ticket.status === status) {
+        if (status === 'zakończone' && numer_listu !== undefined) {
+            if (req.user.role !== 'magazynier' && req.user.role !== 'admin') {
+                return fail(res, 'Brak uprawnień do edycji numeru listu przewozowego.', 403);
+            }
+            const listu = numer_listu ? numer_listu.trim() : null;
+            if (req.user.role === 'magazynier' && !listu) {
+                return fail(res, 'Podanie numeru listu przewozowego jest obowiązkowe przy oznaczaniu zlecenia jako wysłane.');
+            }
+            await currentPool.query('UPDATE zgloszenia SET numer_listu = ? WHERE id = ?', [listu, id]);
+            return res.json({
+                message: 'Numer listu przewozowego został zaktualizowany.',
+                id: Number(id),
+                status,
+                numer_listu: listu
+            });
+        }
         return res.json({
             message: 'Status zgłoszenia pozostaje bez zmian.',
             id: Number(id),
@@ -636,10 +689,17 @@ app.delete('/api/zgloszenia/:id', authenticateToken, requireAdmin,
 // 7. POST /api/admin/users - Tworzenie nowego użytkownika (chroniony, tylko admin)
 app.post('/api/admin/users', authenticateToken, requireAdmin, async (req, res) => {
     const { username, password, role = 'pracownik' } = req.body || {};
-    const cleanUsername = (username || '').trim();
+    if (typeof username !== 'string' || typeof password !== 'string') {
+        return fail(res, 'Podaj nazwę użytkownika i hasło.');
+    }
+    const cleanUsername = username.trim();
 
     if (!cleanUsername || !password) {
         return fail(res, 'Podaj nazwę użytkownika i hasło.');
+    }
+
+    if (cleanUsername.length > 50) {
+        return fail(res, 'Pole "username" przekracza maksymalną dozwoloną długość (50 znaków).');
     }
 
     const allowedRoles = ['admin', 'pracownik', 'serwisant', 'magazynier'];

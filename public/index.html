@@ -689,6 +689,28 @@
             return isMonitor || isTablica;
         }
 
+        function validatePurchaseDate(dateStr) {
+            if (!dateStr || typeof dateStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+                return 'Proszę wybrać datę zakupu sprzętu z kalendarza.';
+            }
+            const [year, month, day] = dateStr.split('-').map(Number);
+            const parsedDate = new Date(Date.UTC(year, month - 1, day));
+            if (
+                isNaN(parsedDate.getTime()) ||
+                parsedDate.getUTCFullYear() !== year ||
+                (parsedDate.getUTCMonth() + 1) !== month ||
+                parsedDate.getUTCDate() !== day
+            ) {
+                return 'Pole "Data zakupu" zawiera nieprawidłową datę (nie istnieje w kalendarzu).';
+            }
+            const now = new Date();
+            const today = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+            if (parsedDate > today) {
+                return 'Data zakupu nie może być datą z przyszłości.';
+            }
+            return null;
+        }
+
         // LISTA 49 POLSKICH NUMERÓW KIERUNKOWYCH (STREF NUMERACYJNYCH)
         const NUMERY_KIERUNKOWE_PL = [
             { code: '12', miasto: 'Kraków' },
@@ -875,7 +897,7 @@
                     // numer seryjny (obowiązkowy, jeśli aktywny dla przedmiotu)
                     [isSerialNumberAllowed(formData.przedmiot_zgloszenia) && !formData.numer_seryjny.trim(), 'Pole "Numer seryjny (S/N)" jest obowiązkowe dla wybranego przedmiotu zgłoszenia.'],
                     // data zakupu i numer faktury / paragonu
-                    [!formData.data_zakupu, 'Proszę wybrać datę zakupu sprzętu z kalendarza.'],
+                    [Boolean(validatePurchaseDate(formData.data_zakupu)), validatePurchaseDate(formData.data_zakupu)],
                     [!formData.numer_fv.trim(), 'Pole "Numer faktury / paragonu" jest wymagane.'],
                     // NIP (wymagany, dokładnie 10 cyfr bez myślników)
                     [!/^\d{10}$/.test(formData.nip.trim()), 'Pole "NIP" jest wymagane i musi składać się z dokładnie 10 cyfr (bez myślników).'],
@@ -1295,7 +1317,6 @@
             );
         }
 
-        // Kontroler statusu w wierszu tabeli (badge + przycisk akcji + rozwijana lista)
         // Modal opisu naprawy z automatycznym datowaniem
         function RepairModal({ ticket, onClose, onSubmit }) {
             const [opis, setOpis] = useState(ticket?.opis_naprawy || '');
@@ -1345,7 +1366,7 @@
                         <div style={{ background: 'rgba(255,255,255,0.9)', padding: '0.75rem', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.85rem' }}>
                             <div><strong>Klient:</strong> {ticket.imie} {ticket.nazwisko} {ticket.nazwa_firmy ? `(${ticket.nazwa_firmy})` : ''}</div>
                             <div><strong>Produkt:</strong> {ticket.przedmiot_zgloszenia} {ticket.numer_seryjny ? `| SN: ${ticket.numer_seryjny}` : ''}</div>
-                            <div style={{ marginTop: '0.35rem', color: 'var(--text-muted)' }}>
+                            <div style={{ marginTop: '0.35rem', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', lineHeight: '1.45' }}>
                                 <strong>Zgłoszona usterka:</strong> {ticket.opis_usterki}
                             </div>
                         </div>
@@ -1364,11 +1385,11 @@
                                 <textarea
                                     id="repairDescription"
                                     required
-                                    rows="8"
+                                    rows="6"
                                     placeholder="np. Wymieniono moduł zasilacza, przetestowano ekran dotykowy, wgrano aktualizację firmware..."
                                     value={opis}
                                     onChange={e => setOpis(e.target.value)}
-                                    style={{ width: '100%', resize: 'vertical' }}
+                                    style={{ width: '100%', resize: 'vertical', fontSize: '0.88rem', lineHeight: '1.45', padding: '0.6rem' }}
                                 />
                                 <small style={{ color: '#ffffff', marginTop: '0.4rem', display: 'block', fontSize: '0.78rem' }}>
                                     Wpis zostanie automatycznie opatrzony bieżącą datą i czasem serwera. Po zatwierdzeniu zlecenie natychmiast pojawi się u magazynierów ze statusem "Do wysyłki".
@@ -1406,15 +1427,22 @@
             const [sending, setSending] = React.useState(false);
             const [touched, setTouched] = React.useState(false);
 
-            const isEmpty = !numer.trim();
-            const showError = touched && isEmpty;
+            const trimmed = numer.trim();
+            const isEmpty = !trimmed;
+            const isTooLong = trimmed.length > 100;
+            const showErrorEmpty = touched && isEmpty;
+            const showErrorTooLong = trimmed.length > 100;
+            const hasError = showErrorEmpty || showErrorTooLong;
 
             async function handleShip() {
                 setTouched(true);
-                if (isEmpty) return;
+                if (isEmpty || isTooLong) return;
                 setSending(true);
-                await onUpdateStatus(ticket.id, 'zakończone', { numer_listu: numer.trim() });
-                setSending(false);
+                try {
+                    await onUpdateStatus(ticket.id, 'zakończone', { numer_listu: trimmed });
+                } finally {
+                    setSending(false);
+                }
             }
 
             return (
@@ -1429,26 +1457,37 @@
                             fontSize: '0.78rem',
                             padding: '4px 8px',
                             borderRadius: '6px',
-                            border: showError ? '1px solid #ef4444' : '1px solid var(--border)',
-                            background: showError ? 'rgba(239,68,68,0.07)' : 'var(--input-bg)',
+                            border: hasError ? '1px solid #ef4444' : '1px solid var(--border)',
+                            background: hasError ? 'rgba(239,68,68,0.07)' : 'var(--input-bg)',
                             color: 'var(--text)',
                             width: '100%',
                             minWidth: '0',
                             transition: 'border 0.15s, background 0.15s'
                         }}
-                        maxLength={100}
                     />
-                    {showError && (
-                        <span style={{ fontSize: '0.72rem', color: '#ef4444', fontWeight: 500 }}>
-                            Numer listu przewozowego jest wymagany.
-                        </span>
-                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        {showErrorEmpty && (
+                            <span style={{ fontSize: '0.72rem', color: '#ef4444', fontWeight: 500 }}>
+                                Numer listu przewozowego jest wymagany.
+                            </span>
+                        )}
+                        {showErrorTooLong && (
+                            <span style={{ fontSize: '0.72rem', color: '#ef4444', fontWeight: 500 }}>
+                                Maks. 100 znaków (wpisano: {trimmed.length}).
+                            </span>
+                        )}
+                        {numer.length > 0 && (
+                            <span style={{ fontSize: '0.68rem', color: isTooLong ? '#ef4444' : 'var(--text-muted)', marginLeft: 'auto', fontWeight: isTooLong ? 600 : 400 }}>
+                                {numer.length}/100
+                            </span>
+                        )}
+                    </div>
                     <button
                         type="button"
                         className="btn-ship"
-                        disabled={sending}
+                        disabled={sending || isEmpty || isTooLong}
                         onClick={handleShip}
-                        style={{ opacity: isEmpty ? 0.5 : 1, cursor: isEmpty ? 'default' : 'pointer' }}
+                        style={{ opacity: (isEmpty || isTooLong) ? 0.5 : 1, cursor: (isEmpty || isTooLong) ? 'default' : 'pointer' }}
                         title="Podaj numer listu i oznacz jako wysłane do klienta"
                     >
                         {sending ? 'Zapisywanie...' : 'Oznacz jako wysłane'}
@@ -1756,7 +1795,7 @@
                                 Zalogowano: {user?.username || 'Użytkownik'} (Rola: {user?.role || 'pracownik'})
                             </span>
                         </div>
-                        <div style={{ display: 'flex', gap: '0.75rem' }}>
+                        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
                             <button className="nav-btn" onClick={fetchTickets}>
                                 Odśwież
                             </button>
@@ -1772,16 +1811,16 @@
                         <table>
                             <thead>
                                 <tr>
-                                    <th>ID</th>
-                                    <th>Klient &amp; Kontakt</th>
-                                    <th>Adres</th>
-                                    <th>Przedmiot &amp; Usterka</th>
-                                    <th>Przypisany pracownik</th>
-                                    <th>Raport z naprawy</th>
-                                    <th>Nr FV &amp; NIP</th>
-                                    <th>Status</th>
-                                    <th>Data</th>
-                                    <th>Akcje</th>
+                                    <th style={{ width: '45px' }}>ID</th>
+                                    <th style={{ minWidth: '150px' }}>Klient &amp; Kontakt</th>
+                                    <th style={{ minWidth: '120px' }}>Adres</th>
+                                    <th style={{ minWidth: '220px', maxWidth: '340px' }}>Przedmiot &amp; Usterka</th>
+                                    <th style={{ minWidth: '140px' }}>Przypisany pracownik</th>
+                                    <th style={{ minWidth: '220px', maxWidth: '340px' }}>Raport z naprawy</th>
+                                    <th style={{ minWidth: '110px' }}>Nr FV &amp; NIP</th>
+                                    <th style={{ minWidth: '130px' }}>Status</th>
+                                    <th style={{ minWidth: '130px' }}>Data</th>
+                                    <th style={{ minWidth: '80px' }}>Akcje</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1840,7 +1879,17 @@
                                                         Data Zakupu: {t.data_zakupu}
                                                     </div>
                                                 )}
-                                                <p style={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem' }}>{t.opis_usterki}</p>
+                                                <div style={{
+                                                    whiteSpace: 'pre-wrap',
+                                                    wordBreak: 'break-word',
+                                                    overflowWrap: 'break-word',
+                                                    fontSize: '0.85rem',
+                                                    lineHeight: '1.45',
+                                                    color: 'var(--text-main)',
+                                                    marginTop: '4px'
+                                                }}>
+                                                    {t.opis_usterki}
+                                                </div>
                                             </td>
                                             <td>
                                                 {(user?.role === 'admin' || user?.role === 'serwisant') ? (
@@ -1877,9 +1926,16 @@
                                                         <div style={{ fontWeight: 600, color: ' var(--primary)', marginBottom: '2px' }}>
                                                             Naprawiono:
                                                         </div>
-                                                        <p style={{ margin: 0, fontSize: '0.82rem', whiteSpace: 'pre-wrap' }}>
+                                                        <div style={{
+                                                            whiteSpace: 'pre-wrap',
+                                                            wordBreak: 'break-word',
+                                                            overflowWrap: 'break-word',
+                                                            fontSize: '0.82rem',
+                                                            lineHeight: '1.45',
+                                                            margin: 0
+                                                        }}>
                                                             {t.opis_naprawy}
-                                                        </p>
+                                                        </div>
                                                         {t.opis_naprawy_data && (
                                                             <div className="repair-date">
                                                                 {t.opis_naprawy_data}
@@ -1932,7 +1988,7 @@
                                                 )}
                                                 {t.numer_listu && (
                                                     <div style={{ marginTop: '2px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                                        List: <strong style={{ color: 'var(--text)' }}>{t.numer_listu}</strong>
+                                                        List: <strong style={{ color: 'var(--text)', wordBreak: 'break-all' }}>{t.numer_listu}</strong>
                                                     </div>
                                                 )}
                                             </td>

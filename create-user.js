@@ -24,6 +24,11 @@ if (!username || !password) {
     process.exit(1);
 }
 
+if (username.trim().length > 50) {
+    console.error('❌ Błąd: Nazwa użytkownika nie może przekraczać 50 znaków.');
+    process.exit(1);
+}
+
 const allowedRoles = ['admin', 'pracownik', 'serwisant', 'magazynier'];
 if (!allowedRoles.includes(role)) {
     console.error(`❌ Nieprawidłowa rola: "${role}". Dostępne: admin, pracownik, serwisant, magazynier`);

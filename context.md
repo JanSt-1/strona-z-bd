@@ -87,7 +87,7 @@ Format odpowiedzi błędów: `{ error: string }`.
 | `GET` | `/api/zgloszenia` | JWT (dowolna rola) | Lista zgłoszeń filtrowana wg roli użytkownika (pracownik: przypisane; magazynier: `do_wysylki`, `zakończone`; admin/serwisant: wszystkie). |
 | `PATCH` | `/api/zgloszenia/:id/przypisz` | JWT (`admin`, `serwisant`) | Przypisanie pracownika (`{ pracownik_id }` lub `null`). Wybrany użytkownik musi mieć rolę mogącą naprawiać (`pracownik` lub `serwisant`, błąd 400 dla innych). Jeśli status to `nowe` i przypisywany jest pracownik, status automatycznie przechodzi na `w_realizacji`. |
 | `PATCH` | `/api/zgloszenia/:id/naprawione` | JWT (`pracownik`, `serwisant`, `admin`) | **Jedyna droga do statusu `do_wysylki`**. Zatwierdzenie naprawy (`{ opis_naprawy }`). Ustawia status `do_wysylki` oraz `opis_naprawy_data = NOW()`. Dla pracownika dotyczy wyłącznie przypisanego zadania. Magazynier otrzymuje 403. |
-| `PATCH/PUT`| `/api/zgloszenia/:id/status` | JWT (zgodnie z RBAC) | Zmiana statusu wg mapy `PRZEJSCIA` z wyłączeniem `do_wysylki` (blokada 400 – wymagane użycie `/naprawione`). Cofanie statusu dozwolone wyłącznie dla `admin`. Przy `zakończone` magazynier musi podać `numer_listu` (`data_wyslania = NOW()`). |
+| `PATCH/PUT`| `/api/zgloszenia/:id/status` | JWT (zgodnie z RBAC) | Zmiana statusu wg mapy `PRZEJSCIA` z wyłączeniem `do_wysylki` (blokada 400 – wymagane użycie `/naprawione`). Cofanie statusu dozwolone wyłącznie dla `admin`. Walidacja `numer_listu`: max 100 znaków (VARCHAR(100)). Przy `zakończone` magazynier musi podać `numer_listu` (`data_wyslania = NOW()`). Magazynier i admin mogą zaktualizować `numer_listu` również dla zlecenia już zakończonego. |
 | `DELETE`| `/api/zgloszenia/:id` | JWT (`admin`) | Usunięcie zgłoszenia z bazy danych. |
 | `POST` | `/api/admin/users` | JWT (`admin`) | Utworzenie nowego użytkownika (`username`, `password`, `role`). Haszowanie bcrypt (salt 10). |
 | `GET` | `/api/health` | Publiczny | Health check bazy MySQL: `{ status: 'ok', database: 'connected' }`. |
@@ -113,7 +113,7 @@ npm run seed              # Wgranie schematu bazy danych (schemat.sql)
 node create-user.js admin Haslo123 admin   # Utworzenie pierwszego konta
 npm start                 # Start serwera (port 3000)
 npm run dev               # Start serwera w trybie watch
-npm test                  # Uruchomienie 38 testów integracyjnych (node --test app.test.js)
+npm test                  # Uruchomienie 42 testów integracyjnych (node --test app.test.js)
 ```
 
 ---
@@ -133,3 +133,7 @@ npm test                  # Uruchomienie 38 testów integracyjnych (node --test 
 4. **Rozdział 401 vs 403:**
    - Kod **401 Unauthorized**: zarezerwowany dla problemów z uwierzytelnieniem (brakujący, nieprawidłowy lub wygasły token JWT, błędne hasło). Frontend wylogowuje użytkownika wyłącznie przy 401.
    - Kod **403 Forbidden**: zarezerwowany dla braku uprawnień (rola nie ma dostępu do endpointu, pracownik próbuje modyfikować cudze zlecenie, brak uprawnień do danego przejścia w RBAC). Frontend nie wylogowuje, lecz wyświetla komunikat z serwera.
+5. **Walidacja daty (`data_zakupu`):**
+   - Wymaga formatu `RRRR-MM-DD`.
+   - Bezwzględna weryfikacja kalendarzowa: sprawdzanie czy po sparsowaniu `year`, `month`, `day` zgadzają się dokładnie z wartościami wejściowymi (eliminuje przelewanie np. 31 lutego na 3 marca).
+   - Zakaz dat z przyszłości: data zakupu nie może być późniejsza niż bieżący dzień.
