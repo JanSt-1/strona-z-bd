@@ -10,6 +10,7 @@ Kompleksowy system zgłoszeń serwisowych (SPA + REST API) w technologii **Expre
 strona_z_bd/
 ├── .env / .env.example      # Zmienne: PORT, DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT, JWT_SECRET
 ├── app.js                   # Instancja Express: middleware, RBAC, walidacja, JWT, routing, pula DB (bez app.listen())
+├── db.js                    # Centralna konfiguracja połączenia MySQL (DB_PORT, createPool, createConnection)
 ├── index.js                 # Entrypoint serwera: weryfikacja .env i JWT_SECRET, test DB, app.listen()
 ├── app.test.js              # Testy integracyjne API (node:test + supertest, 72 testy, mock DB przez app.setPool())
 ├── schemat.sql              # Schemat MySQL (tabele: uzytkownicy, zgloszenia)
@@ -22,6 +23,7 @@ strona_z_bd/
 ```
 
 - **Separation of Concerns:** `app.js` eksportuje aplikację Express i udostępnia `app.setPool(pool)` / `app.getPool()`. `index.js` wyłącznie uruchamia serwer HTTP (`app.listen()`).
+- **Moduł bazy danych (`db.js`):** Centralizuje odczyt konfiguracji MySQL z `.env` (`DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_PORT`) i eksportuje pomocniki `createPool()` oraz `createConnection()`, wykorzystywane wspólnie przez `app.js`, `seed.js` i `create-user.js`.
 - **Pula połączeń:** `mysql2/promise` z parametryzowanymi zapytaniami (`?`).
 
 ---

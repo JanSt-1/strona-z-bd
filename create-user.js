@@ -13,8 +13,8 @@
  */
 
 require('dotenv').config();
-const mysql = require('mysql2/promise');
 const bcrypt = require('bcrypt');
+const { createConnection } = require('./db');
 
 const [, , username, password, role = 'pracownik'] = process.argv;
 
@@ -43,12 +43,7 @@ if (!allowedRoles.includes(role)) {
 async function createUser() {
     let conn;
     try {
-        conn = await mysql.createConnection({
-            host: process.env.DB_HOST || 'localhost',
-            user: process.env.DB_USER || 'root',
-            password: process.env.DB_PASSWORD || '',
-            database: process.env.DB_NAME || 'serwis_db',
-        });
+        conn = await createConnection();
 
         // Sprawdź czy username już istnieje
         const [existing] = await conn.query(

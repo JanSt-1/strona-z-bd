@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
+const { createPool } = require('./db');
 
 const app = express();
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -14,16 +15,7 @@ if (!JWT_SECRET) {
 }
 
 // --- Konfiguracja puli połączeń do bazy MySQL ---
-let currentPool = mysql.createPool({
-    host: process.env.DB_HOST || 'localhost',
-    user: process.env.DB_USER || 'root',
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'serwis_db',
-    port: Number(process.env.DB_PORT) || 3306,
-    waitForConnections: true,
-    connectionLimit: 10,
-    queueLimit: 0
-});
+let currentPool = createPool();
 
 // Udostępnienie metod do pobierania i podmiany puli połączeń (np. w testach jednostkowych/integracyjnych)
 app.setPool = (pool) => {

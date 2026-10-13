@@ -1,25 +1,16 @@
 require('dotenv').config();
-const mysql = require('mysql2/promise');
 const fs = require('fs');
 const path = require('path');
+const { createConnection, dbConfig } = require('./db');
 
 async function seed() {
     console.log('--- Rozpoczynanie inicjalizacji i seedowania bazy danych ---');
 
-    const host = process.env.DB_HOST || 'localhost';
-    const user = process.env.DB_USER || 'root';
-    const password = process.env.DB_PASSWORD || '';
-    const database = process.env.DB_NAME || 'serwis_db';
-    const port = Number(process.env.DB_PORT) || 3306;
-
     let connection;
     try {
         // Połączenie bez wybierania bazy, aby upewnić się że baza istnieje
-        connection = await mysql.createConnection({
-            host,
-            user,
-            password,
-            port,
+        connection = await createConnection({
+            database: undefined,
             multipleStatements: true
         });
 
@@ -31,7 +22,7 @@ async function seed() {
             console.log('✅ Schemat bazy danych (schemat.sql) został zaaplikowany.');
         }
 
-        await connection.changeUser({ database });
+        await connection.changeUser({ database: dbConfig.database });
 
         // Inicjalizacja tabeli użytkowników i zgłoszeń (użytkownicy tworzeni są przez create-user.js)
         console.log('ℹ️ Tabele bazy danych są gotowe. Użytkowników twórz za pomocą: node create-user.js');
