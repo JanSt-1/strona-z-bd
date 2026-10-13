@@ -89,7 +89,7 @@ Po uruchomieniu aplikacja dostępna jest pod adresem:
 
 ## Testy integracyjne
 
-Projekt posiada zestaw testów integracyjnych weryfikujących poprawność działania kluczowych endpointów API (walidacja, autoryzacja, mechanizm logowania, uprawnienia tras).
+Projekt posiada rozbudowany zestaw testów integracyjnych weryfikujących poprawność działania kluczowych endpointów API (walidacja pól, autoryzacja JWT, mechanizm logowania, uprawnienia tras RBAC, blokowanie kont, ochrona ról admina oraz zarządzanie hasłami).
 
 Uruchomienie testów:
 ```bash
@@ -97,30 +97,39 @@ npm test
 ```
 *Skrypt wykonuje polecenie `node --test` z użyciem `supertest`. Dzięki wbudowanemu mockowaniu puli bazy danych w `app.test.js`, testy wykonują się błyskawicznie i nie wymagają aktywnego serwera MySQL.*
 
-Pokryte przypadki testowe:
-1. `POST /api/zgloszenia` bez wymaganych pól w body -> **400 Bad Request**.
-2. `GET /api/zgloszenia` bez nagłówka Authorization -> **401 Unauthorized**.
-3. `GET /api/zgloszenia` z nieprawidłowym tokenem JWT -> **401 Unauthorized** (403 oznacza wyłącznie brak uprawnień roli).
-4. `POST /api/login` z błędnym hasłem -> **401 Unauthorized**.
-5. `GET /api/pracownicy` bez tokenu -> **401 Unauthorized**.
-6. `PATCH /api/zgloszenia/:id/przypisz` bez tokenu -> **401 Unauthorized**.
-7. `PATCH /api/zgloszenia/:id/naprawione` bez tokenu -> **401 Unauthorized**.
-8. `POST /api/zgloszenia` dla monitora interaktywnego bez numeru seryjnego -> **400 Bad Request**.
-9. `POST /api/login` z poprawnymi danymi zwraca token JWT i pozwala na autoryzowany dostęp -> **200 OK**.
-10. `PATCH /api/zgloszenia/1/status` próba cofnięcia statusu przez pracownika -> **403 Forbidden**.
-11. Walidacja `data_zakupu` (nieistniejąca data `2026-02-31`, data z przyszłości) -> **400**.
-12. Limity długości: `numer_listu` (max 100) oraz `username` w `POST /api/admin/users` (max 50) -> **400**.
-13. Pełna macierz reguł ról i przejść statusów (409 dla niedozwolonych skoków, 403 dla braku uprawnień, cofanie tylko admin, pracownik tylko własne zlecenia) – łącznie 45 testów.
+Główne grupy przypadków testowych (łącznie **72 testy** w 11 suitach):
+1. **Uwierzytelnianie, logowanie i walidacja zgłoszeń**: walidacja pól obowiązkowych, brak tokenu (401), błędne dane logowania (401), poprawny token JWT (200), blokada nieprawidłowych formatów i dat z przyszłości (400).
+2. **Przejście `nowe` → `w_realizacji`**: automatyczne przypisanie zlecenia, uprawnienia serwisanta i admina (200), blokada pracownika i magazyniera (403).
+3. **Przejście `w_realizacji` → `do_wysylki`**: wyłączność dedykowanego endpointu `/naprawione`, wymóg opisu prac, uprawnienia przypisanego pracownika/serwisanta/admina (200), blokada magazyniera (403) oraz blokada przejścia ze statusu `nowe` (409 Conflict).
+4. **Przejście `do_wysylki` → `zakończone`**: uprawnienia magazyniera i admina, wymóg numeru listu przewozowego (`numer_listu`), walidacja długości (max 100 znaków), możliwość aktualizacji numeru listu na zakończonym zleceniu.
+5. **Cofanie statusu (Rollback)**: wyłączne prawo administratora do cofania statusu wstecz (200); blokada dla pozostałych ról (403).
+6. **Niedozwolone skoki w przód**: blokowanie pomijania kroków w procesie (409 Conflict) nawet dla administratora.
+7. **Uprawnienia do dedykowanych endpointów (RBAC)**: `/przypisz`, `/pracownicy`, `DELETE /api/zgloszenia/:id`, filtrowanie listy zgłoszeń zgodnie z rolą.
+8. **Jednostkowa weryfikacja funkcji `czyMoznaZmienic`**: precyzyjna kontrola macierzy przejść i kodów błędów 409 vs 403.
+9. **Panel administratora – zarządzanie użytkownikami**:
+   - `GET /api/admin/users`: lista kont bez pola `password_hash` (403 dla nie-admina, 200 dla admina).
+   - `POST /api/admin/users`: tworzenie kont przez admina (wymóg hasła min. 8 znaków, login max 50 znaków).
+   - `PATCH /api/admin/users/:id`: zmiana roli (zabezpieczenie: admin nie może odebrać roli admina samemu sobie – 400).
+   - `PATCH /api/admin/users/:id/haslo`: ustawienie nowego hasła przez admina (wymóg min. 8 znaków).
+   - `PATCH /api/admin/users/:id/status` (oraz `/aktywny`): przełączanie blokady konta (zabezpieczenie: admin nie może zablokować samego siebie – 400).
+   - Blokada logowania dla nieaktywnych kont (`aktywny = FALSE` -> 403).
+   - `authenticateToken`: pobieranie aktualnej roli z bazy danych (unieważnia spreparowaną rolę w tokenie) oraz odrzucanie nieistniejących lub zablokowanych użytkowników (401).
+10. **Zmiana własnego hasła użytkownika (`PATCH /api/profil/haslo`)**:
+    - Dostępne dla każdego zalogowanego użytkownika.
+    - Wymaga podania dotychczasowego hasła (weryfikacja `bcrypt`) oraz nowego hasła o długości min. 8 znaków.
+    - Zwraca 400 przy błędnym haśle lub zbyt krótkim nowym haśle; 200 po udanej zmianie.
 
 ---
 
 ## Role użytkowników i przejścia statusów
 
 W systemie zaimplementowano role oraz ścisłą mapę przejść statusów (`PRZEJSCIA`):
-- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie zadań, zmiana statusów, wyłączne uprawnienie do cofania statusów wstecz, usuwanie zgłoszeń, tworzenie użytkowników przez API.
+- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie zadań, zmiana statusów, wyłączne uprawnienie do cofania statusów wstecz, usuwanie zgłoszeń (`DELETE`), zakładka **„Użytkownicy”** do pełnego zarządzania kontami (tworzenie, zmiana roli, zmiana hasła, blokowanie/odblokowywanie kont).
 - **`serwisant`**: Przegląd wszystkich zleceń i przypisywanie ich pracownikom (przypisanie zlecenia o statusie "nowe" automatycznie zmienia status na "w realizacji"). Może również oznaczyć zlecenie jako naprawione ("w realizacji" -> "do wysyłki") z opisem naprawy.
 - **`pracownik`**: Domyślnie widzi wyłącznie zlecenia przypisane do siebie. Może oznaczyć zlecenie jako naprawione ("w realizacji" -> "do wysyłki") ze sporządzeniem wymaganego opisu prac.
 - **`magazynier`**: Widzi zlecenia gotowe do wysyłki ("do wysyłki") oraz zakończone. Może oznaczyć zlecenie jako wysłane ("do wysyłki" -> "zakończone") podając numer listu przewozowego (`numer_listu`).
+
+Każdy zalogowany użytkownik ma dodatkowo możliwość zmiany swojego hasła w nagłówku panelu po podaniu dotychczasowego hasła.
 
 ---
 
@@ -133,6 +142,7 @@ W projekcie dostępny jest skrypt `create-user.js`, który bezpiecznie haszuje h
 node create-user.js <nazwa_uzytkownika> <haslo> [rola]
 ```
 - Dostępne role: `admin`, `serwisant`, `pracownik`, `magazynier` (domyślnie: `pracownik`).
+- **Wymagania dla hasła**: minimum 8 znaków (hasła krótsze zostaną odrzucone).
 - Przykłady:
   ```bash
   node create-user.js admin HasloAdmina123 admin
@@ -142,3 +152,4 @@ node create-user.js <nazwa_uzytkownika> <haslo> [rola]
   ```
   
 Po utworzeniu konta przejdź w przeglądarce do zakładki **„Panel pracownika”** i zaloguj się podaną nazwą użytkownika oraz hasłem.
+Administrator po zalogowaniu może tworzyć kolejne konta bezpośrednio z poziomu interfejsu webowego (zakładka „Użytkownicy”).

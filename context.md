@@ -11,7 +11,7 @@ strona_z_bd/
 ├── .env / .env.example      # Zmienne: PORT, DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT, JWT_SECRET
 ├── app.js                   # Instancja Express: middleware, RBAC, walidacja, JWT, routing, pula DB (bez app.listen())
 ├── index.js                 # Entrypoint serwera: weryfikacja .env i JWT_SECRET, test DB, app.listen()
-├── app.test.js              # Testy integracyjne API (node:test + supertest, 45 testów, mock DB przez app.setPool())
+├── app.test.js              # Testy integracyjne API (node:test + supertest, 72 testy, mock DB przez app.setPool())
 ├── schemat.sql              # Schemat MySQL (tabele: uzytkownicy, zgloszenia)
 ├── seed.js                  # Inicjalizacja bazy i aplikowanie schemat.sql (`npm run seed`)
 ├── create-user.js           # CLI: tworzenie kont z haszowaniem bcrypt (`node create-user.js <user> <pass> [rola]`)
@@ -29,8 +29,9 @@ strona_z_bd/
 ## 2. Baza Danych MySQL (`schemat.sql`, baza: `serwis_db`)
 
 ### Tabela `uzytkownicy`
-- `id` (INT PK AI), `username` (VARCHAR(50) UNIQUE NOT NULL), `password_hash` (VARCHAR(255) NOT NULL), `role` (VARCHAR(20) DEFAULT 'pracownik'), `created_at` (TIMESTAMP).
+- `id` (INT PK AI), `username` (VARCHAR(50) UNIQUE NOT NULL), `password_hash` (VARCHAR(255) NOT NULL), `role` (VARCHAR(20) DEFAULT 'pracownik'), `aktywny` (BOOLEAN NOT NULL DEFAULT TRUE), `created_at` (TIMESTAMP).
 - **Dozwolone role:** `admin`, `serwisant`, `pracownik`, `magazynier`.
+- **Blokowanie kont:** Użytkownicy z `aktywny = FALSE` nie mogą się zalogować (403 Forbidden). Zamiast usuwać powiązane z historią zgłoszeń konta, administrator zarządza flagą aktywności. Administrator nie może zablokować ani odebrać roli samemu sobie.
 
 ### Tabela `zgloszenia`
 - `id` (INT PK AI), `imie` (VARCHAR(50)), `nazwisko` (VARCHAR(50)), `nazwa_firmy` (VARCHAR(100) NULL), `adres` (TEXT), `kod_pocztowy` (VARCHAR(6)), `miasto` (VARCHAR(100)), `wojewodztwo` (VARCHAR(50)), `numer_telefonu` (VARCHAR(20)), `email` (VARCHAR(100)), `opis_usterki` (TEXT), `numer_fv` (VARCHAR(50)), `nip` (VARCHAR(10)), `przedmiot_zgloszenia` (VARCHAR(100)), `numer_seryjny` (VARCHAR(100) NULL), `data_zakupu` (DATE), `status` (ENUM('nowe', 'w_realizacji', 'do_wysylki', 'zakończone') DEFAULT 'nowe'), `created_at` (TIMESTAMP).
@@ -68,7 +69,7 @@ Wszystkie endpointy modyfikujące status zgłoszenia (`PATCH/PUT /api/zgloszenia
 ### Widoczność i uprawnienia ról:
 | Rola | Widoczność zgłoszeń | Przypisywanie pracownika | Zmiana statusu / Naprawa | Inne uprawnienia |
 | :--- | :--- | :--- | :--- | :--- |
-| **`admin`** | Wszystkie | Tak | Pełne przejścia w przód oraz **wyłączne prawo do cofania statusów** | Usuwanie (`DELETE`), tworzenie kont (`POST /api/admin/users`) |
+| **`admin`** | Wszystkie | Tak | Pełne przejścia w przód oraz **wyłączne prawo do cofania statusów** | Usuwanie (`DELETE`), pełne zarządzanie kontami (`/api/admin/users*` - lista bez hashy, role, hasła, blokady; bez możliwości blokady/odebrania roli sobie) |
 | **`serwisant`** | Wszystkie | Tak (auto: `nowe` → `w_realizacji`) | Może oznaczyć `w_realizacji` → `do_wysylki` (przez `/naprawione`) | — |
 | **`pracownik`** | **Tylko przypisane do siebie** | Nie | Może oznaczyć `w_realizacji` → `do_wysylki` (przez `/naprawione` dla własnych zadań) | — |
 | **`magazynier`** | **Tylko `do_wysylki` i `zakończone`** | Nie | Wyłącznie `do_wysylki` → `zakończone` (wymagany `numer_listu`) | — |
@@ -82,14 +83,19 @@ Format odpowiedzi błędów: `{ error: string }`.
 | Metoda | Endpoint | Dostęp / Rola | Opis i Walidacja |
 | :--- | :--- | :--- | :--- |
 | `POST` | `/api/zgloszenia` | Publiczny | Rejestracja zgłoszenia. Rygorystyczna walidacja: imię/nazwisko (bez cyfr, litery), NIP (10 cyfr), kod (`XX-XXX`), województwo (z listy 16), telefon (`+48` + 9 cyfr), przedmiot (z listy dozwolonych), data zakupu (`RRRR-MM-DD`, istniejąca w kalendarzu, nie z przyszłości; w przeciwnym razie 400). Limity długości zgodne z kolumnami (np. `numer_seryjny` max 100). `numer_seryjny` obowiązkowy wyłącznie dla monitorów i tablic interaktywnych (bez akcesoriów). Zwraca 201 `{ message, id }`. |
-| `POST` | `/api/login` | Publiczny | Logowanie (`username`, `password`). Rate limit: 10 prób / 15 min z IP (pomijany w `NODE_ENV === 'test'`). Weryfikacja hasła przez bcrypt. Zwraca 200 `{ token, user: { id, username, role } }`. |
-| `GET` | `/api/pracownicy` | JWT (`admin`, `serwisant`) | Pobiera listę pracowników do przypisania (`pracownik`, `serwisant`). |
+| `POST` | `/api/login` | Publiczny | Logowanie (`username`, `password`). Rate limit: 10 prób / 15 min z IP (pomijany w `NODE_ENV === 'test'`). Weryfikacja hasła przez bcrypt. Blokada logowania dla kont z `aktywny = FALSE` (403). Zwraca 200 `{ token, user: { id, username, role } }`. |
+| `GET` | `/api/pracownicy` | JWT (`admin`, `serwisant`) | Pobiera listę aktywnych pracowników do przypisania (`pracownik`, `serwisant`). |
 | `GET` | `/api/zgloszenia` | JWT (dowolna rola) | Lista zgłoszeń filtrowana wg roli użytkownika (pracownik: przypisane; magazynier: `do_wysylki`, `zakończone`; admin/serwisant: wszystkie). |
-| `PATCH` | `/api/zgloszenia/:id/przypisz` | JWT (`admin`, `serwisant`) | Przypisanie pracownika (`{ pracownik_id }` lub `null`). Wybrany użytkownik musi mieć rolę mogącą naprawiać (`pracownik` lub `serwisant`, błąd 400 dla innych). Jeśli status to `nowe` i przypisywany jest pracownik, status automatycznie przechodzi na `w_realizacji`. |
+| `PATCH` | `/api/zgloszenia/:id/przypisz` | JWT (`admin`, `serwisant`) | Przypisanie pracownika (`{ pracownik_id }` lub `null`). Wybrany użytkownik musi mieć rolę mogącą naprawiać (`pracownik` lub `serwisant`, błąd 400 dla innych) oraz być aktywny. Jeśli status to `nowe` i przypisywany jest pracownik, status automatycznie przechodzi na `w_realizacji`. |
 | `PATCH` | `/api/zgloszenia/:id/naprawione` | JWT (`pracownik`, `serwisant`, `admin`) | **Jedyna droga do statusu `do_wysylki`**. Zatwierdzenie naprawy (`{ opis_naprawy }`). Ustawia status `do_wysylki` oraz `opis_naprawy_data = NOW()`. Dla pracownika dotyczy wyłącznie przypisanego zadania. Magazynier otrzymuje 403. |
 | `PATCH/PUT`| `/api/zgloszenia/:id/status` | JWT (zgodnie z RBAC) | Zmiana statusu wg mapy `PRZEJSCIA` z wyłączeniem `do_wysylki` (blokada 400 – wymagane użycie `/naprawione`). Cofanie statusu dozwolone wyłącznie dla `admin`. Walidacja `numer_listu`: max 100 znaków (VARCHAR(100)). Przy `zakończone` magazynier musi podać `numer_listu` (`data_wyslania = NOW()`). Magazynier i admin mogą zaktualizować `numer_listu` również dla zlecenia już zakończonego. |
 | `DELETE`| `/api/zgloszenia/:id` | JWT (`admin`) | Usunięcie zgłoszenia z bazy danych. |
-| `POST` | `/api/admin/users` | JWT (`admin`) | Utworzenie nowego użytkownika (`username` max 50 znaków, `password`, `role`). Haszowanie bcrypt (salt 10). |
+| `GET` | `/api/admin/users` | JWT (`admin`) | Pobranie listy wszystkich kont użytkowników (`id, username, role, aktywny, created_at`) **bez pola `password_hash`!** |
+| `POST` | `/api/admin/users` | JWT (`admin`) | Utworzenie nowego użytkownika (`username` max 50 znaków, `password` min. 8 znaków, `role`). Haszowanie bcrypt (salt 10). |
+| `PATCH` | `/api/admin/users/:id` | JWT (`admin`) | Zmiana roli użytkownika (`{ role }`). Zabezpieczenie: admin nie może odebrać roli admina samemu sobie (400). |
+| `PATCH` | `/api/admin/users/:id/haslo` | JWT (`admin`) | Ustawienie nowego hasła dla użytkownika (`{ password }` min. 8 znaków). Haszowanie bcrypt. |
+| `PATCH` | `/api/admin/users/:id/status` | JWT (`admin`) | Zmiana/przełączenie statusu blokady konta (`{ aktywny }` lub toggle). Zabezpieczenie: admin nie może zablokować samego siebie (400). |
+| `PATCH` | `/api/profil/haslo` | JWT (każdy zalogowany) | Zmiana własnego hasła użytkownika (`{ currentPassword, newPassword }`). Weryfikuje stare hasło przez bcrypt, nowe hasło min. 8 znaków (400 przy błędzie). |
 | `GET` | `/api/health` | Publiczny | Health check bazy MySQL: `{ status: 'ok', database: 'connected' }`. |
 
 ---
@@ -102,6 +108,9 @@ Format odpowiedzi błędów: `{ error: string }`.
   - **401 Unauthorized:** brakujący, nieprawidłowy lub wygasły token JWT. `handleAuthError` natychmiast czyści stan i wylogowuje użytkownika.
   - **403 Forbidden:** brak uprawnień do danej akcji (reguły ról RBAC, edycja zlecenia przypisanego do kogoś innego itp.). Frontend **nie wylogowuje** użytkownika, lecz wyświetla komunikat błędu z serwera w alercie (`showAlert(err.message, 'error')`).
 - Pomocnik `apiJson(endpoint, options, fallbackError)` obsługuje ujednolicone zapytania API i wyłapuje błędy backendu.
+- **Zarządzanie hasłami:**
+  - Administrator ma dedykowaną zakładkę „Użytkownicy” z tabelą kont, zmianą roli, blokowaniem/odblokowywaniem, dodawaniem użytkowników oraz modalem „Zmień hasło” dla każdego konta.
+  - Każdy zalogowany użytkownik (niezależnie od roli) ma w nagłówku panelu przycisk „Zmień hasło” otwierający modal weryfikujący dotychczasowe hasło i wymuszający min. 8 znaków dla nowego hasła.
 
 ---
 
@@ -110,10 +119,10 @@ Format odpowiedzi błędów: `{ error: string }`.
 ```bash
 npm install               # Instalacja zależności
 npm run seed              # Wgranie schematu bazy danych (schemat.sql)
-node create-user.js admin Haslo123 admin   # Utworzenie pierwszego konta
+node create-user.js admin Haslo123 admin   # Utworzenie pierwszego konta (hasło min. 8 znaków)
 npm start                 # Start serwera (port 3000)
 npm run dev               # Start serwera w trybie watch
-npm test                  # Uruchomienie 45 testów integracyjnych (node --test app.test.js)
+npm test                  # Uruchomienie 72 testów integracyjnych (node --test app.test.js)
 ```
 
 ---
@@ -128,11 +137,13 @@ npm test                  # Uruchomienie 45 testów integracyjnych (node --test 
    - **Brak domyślnych sekretów:** Nigdy nie dodawać do kodu aplikacji produkcyjnej domyślnych/fallbackowych sekretów (np. `const JWT_SECRET = process.env.JWT_SECRET || 'sekret_testowy'`). W `app.js` brak `process.env.JWT_SECRET` musi natychmiast rzucać błąd `throw new Error(...)`.
    - **Izolacja testów:** Zmienne testowe wolno konfigurować wyłącznie w plikach testowych (`app.test.js`) przed załadowaniem aplikacji (jeśli brak `JWT_SECRET`, test generuje losowy klucz przez `crypto.randomBytes(32)` – bez statycznych sekretów w repozytorium). Nigdy nie obniżać poziomu bezpieczeństwa kodu produkcyjnego na potrzeby testów.
    - **Zakaz osłabiania walidacji:** Żaden agent nie ma prawa usuwać, omijać ani rozluźniać walidacji wejściowych (NIP, kod, regexy, role RBAC, bcrypt) pod pretekstem testów. Testy muszą spełniać produkcyjne wymagania walidacji.
+   - **Polityka haseł:** Wymóg minimum 8 znaków dla hasła przy tworzeniu użytkownika (`POST /api/admin/users`, `create-user.js`) oraz przy zmianie hasła (`PATCH /api/admin/users/:id/haslo`). Hasło krótsze niż 8 znaków zwraca błąd 400 (`Hasło musi mieć co najmniej 8 znaków.`).
    - **Algorytm JWT:** Wymuszać jawnie algorytm `HS256` zarówno przy generowaniu (`jwt.sign`), jak i weryfikacji (`jwt.verify({ algorithms: ['HS256'] })`), chroniąc przed podatnościami Algorithm Confusion / `alg: none`.
+   - **Weryfikacja tożsamości i roli w bazie (`authenticateToken`):** Po sprawdzeniu podpisu JWT middleware `authenticateToken` każdorazowo odpytuje bazę danych o aktualny rekord użytkownika (`SELECT id, username, role, aktywny FROM uzytkownicy WHERE id = ?`). Jeśli użytkownik nie istnieje lub jest nieaktywny (`aktywny = FALSE`), żądanie jest natychmiast odrzucane z kodem `401 Unauthorized`. Rola użytkownika (`req.user.role`) jest pobierana bezpośrednio z bazy danych, a nie z payloadu tokenu, co uniemożliwia eskalację uprawnień poprzez sfałszowanie roli w tokenie.
 3. **Baza danych:** Zawsze stosować zapytania parametryzowane (`?`) w puli `mysql2/promise`. Nie wprowadzać twardo kodowanych poświadczeń do repozytorium.
 4. **Rozdział 401 vs 403:**
-   - Kod **401 Unauthorized**: zarezerwowany dla problemów z uwierzytelnieniem (brakujący, nieprawidłowy lub wygasły token JWT, błędne hasło). Frontend wylogowuje użytkownika wyłącznie przy 401.
-   - Kod **403 Forbidden**: zarezerwowany dla braku uprawnień (rola nie ma dostępu do endpointu, pracownik próbuje modyfikować cudze zlecenie, brak uprawnień do danego przejścia w RBAC). Frontend nie wylogowuje, lecz wyświetla komunikat z serwera.
+   - Kod **401 Unauthorized**: zarezerwowany dla problemów z uwierzytelnieniem (brakujący, nieprawidłowy lub wygasły token JWT, błędne hasło, brak użytkownika w bazie lub zablokowane konto w `authenticateToken`). Frontend wylogowuje użytkownika wyłącznie przy 401.
+   - Kod **403 Forbidden**: zarezerwowany dla braku uprawnień (rola nie ma dostępu do endpointu, pracownik próbuje modyfikować cudze zlecenie, brak uprawnień do danego przejścia w RBAC, logowanie zablokowanego konta). Frontend nie wylogowuje, lecz wyświetla komunikat z serwera.
 5. **Walidacja daty (`data_zakupu`):**
    - Wymaga formatu `RRRR-MM-DD`.
    - Bezwzględna weryfikacja kalendarzowa: sprawdzanie czy po sparsowaniu `year`, `month`, `day` zgadzają się dokładnie z wartościami wejściowymi (eliminuje przelewanie np. 31 lutego na 3 marca).

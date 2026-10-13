@@ -29,6 +29,11 @@ if (username.trim().length > 50) {
     process.exit(1);
 }
 
+if (password.length < 8) {
+    console.error('❌ Błąd: Hasło musi mieć co najmniej 8 znaków.');
+    process.exit(1);
+}
+
 const allowedRoles = ['admin', 'pracownik', 'serwisant', 'magazynier'];
 if (!allowedRoles.includes(role)) {
     console.error(`❌ Nieprawidłowa rola: "${role}". Dostępne: admin, pracownik, serwisant, magazynier`);

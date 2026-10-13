@@ -63,21 +63,33 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                     if (sql.includes('uzytkownicy')) {
                         const param = Array.isArray(values) ? values[0] : null;
                         if (param === 'user_testowy' || param === 1) {
-                            return [[{ id: 1, username: 'user_testowy', password_hash: testPasswordHash, role: 'pracownik' }]];
+                            return [[{ id: 1, username: 'user_testowy', password_hash: testPasswordHash, role: 'pracownik', aktywny: 1 }]];
                         }
                         if (param === 'serwisant_testowy' || param === 50) {
-                            return [[{ id: 50, username: 'serwisant_testowy', password_hash: testPasswordHash, role: 'serwisant' }]];
+                            return [[{ id: 50, username: 'serwisant_testowy', password_hash: testPasswordHash, role: 'serwisant', aktywny: 1 }]];
                         }
                         if (param === 'admin_testowy' || param === 99) {
-                            return [[{ id: 99, username: 'admin_testowy', password_hash: testPasswordHash, role: 'admin' }]];
+                            return [[{ id: 99, username: 'admin_testowy', password_hash: testPasswordHash, role: 'admin', aktywny: 1 }]];
                         }
                         if (param === 2 || param === 'magazynier_testowy') {
-                            return [[{ id: 2, username: 'magazynier_testowy', password_hash: testPasswordHash, role: 'magazynier' }]];
+                            return [[{ id: 2, username: 'magazynier_testowy', password_hash: testPasswordHash, role: 'magazynier', aktywny: 1 }]];
+                        }
+                        if (param === 20 || param === 'inny_pracownik') {
+                            return [[{ id: 20, username: 'inny_pracownik', password_hash: testPasswordHash, role: 'pracownik', aktywny: 1 }]];
+                        }
+                        if (param === 'zablokowany_user' || param === 77) {
+                            return [[{ id: 77, username: 'zablokowany_user', password_hash: testPasswordHash, role: 'pracownik', aktywny: 0 }]];
                         }
                         if (sql.includes("role IN ('pracownik', 'serwisant')")) {
                             return [[
-                                { id: 1, username: 'user_testowy', role: 'pracownik' },
-                                { id: 50, username: 'serwisant_testowy', role: 'serwisant' }
+                                { id: 1, username: 'user_testowy', role: 'pracownik', aktywny: 1 },
+                                { id: 50, username: 'serwisant_testowy', role: 'serwisant', aktywny: 1 }
+                            ]];
+                        }
+                        if (sql.includes('SELECT id, username, role, aktywny, created_at FROM uzytkownicy')) {
+                            return [[
+                                { id: 1, username: 'user_testowy', role: 'pracownik', aktywny: 1, created_at: '2026-01-01' },
+                                { id: 99, username: 'admin_testowy', role: 'admin', aktywny: 1, created_at: '2026-01-01' }
                             ]];
                         }
                         if (sql.includes('SELECT id FROM uzytkownicy WHERE username = ?')) {
@@ -85,6 +97,9 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                         }
                         if (sql.includes('INSERT INTO uzytkownicy')) {
                             return [{ insertId: 101, affectedRows: 1 }];
+                        }
+                        if (sql.includes('UPDATE uzytkownicy')) {
+                            return [{ affectedRows: 1 }];
                         }
                         return [[]];
                     }
@@ -619,6 +634,15 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(resp.body.error, 'Pole "username" przekracza maksymalną dozwoloną długość (50 znaków).');
         });
 
+        it('POST /api/admin/users z hasłem krótszym niż 8 znaków zwraca błąd 400', async () => {
+            const resp = await request(app)
+                .post('/api/admin/users')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ username: 'nowy_krotkie_haslo', password: '1234567', role: 'pracownik' });
+            assert.strictEqual(resp.status, 400);
+            assert.strictEqual(resp.body.error, 'Hasło musi mieć co najmniej 8 znaków.');
+        });
+
         it('GET /api/zgloszenia filtruje zapytania zgodnie z rolą', async () => {
             // Pracownik: filtruje po przypisanym pracowniku
             await request(app).get('/api/zgloszenia').set('Authorization', `Bearer ${pracownikToken}`);
@@ -673,6 +697,236 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(czyMoznaZmienic('pracownik', 'w_realizacji', 'do_wysylki').allowed, true);
             assert.strictEqual(czyMoznaZmienic('magazynier', 'do_wysylki', 'zakończone').allowed, true);
             assert.strictEqual(czyMoznaZmienic('admin', 'do_wysylki', 'zakończone').allowed, true);
+        });
+    });
+
+    describe('9. Panel administratora - zarządzanie użytkownikami (RBAC i bezpieczeństwo)', () => {
+        it('GET /api/admin/users bez tokenu zwraca 401', async () => {
+            const res = await request(app).get('/api/admin/users');
+            assert.strictEqual(res.status, 401);
+        });
+
+        it('GET /api/admin/users dla nie-admina (pracownik, serwisant, magazynier) zwraca 403', async () => {
+            const resP = await request(app).get('/api/admin/users').set('Authorization', `Bearer ${pracownikToken}`);
+            assert.strictEqual(resP.status, 403);
+
+            const resS = await request(app).get('/api/admin/users').set('Authorization', `Bearer ${serwisantToken}`);
+            assert.strictEqual(resS.status, 403);
+
+            const resM = await request(app).get('/api/admin/users').set('Authorization', `Bearer ${magazynierToken}`);
+            assert.strictEqual(resM.status, 403);
+        });
+
+        it('GET /api/admin/users dla admina zwraca listę kont BEZ pola password_hash', async () => {
+            const res = await request(app).get('/api/admin/users').set('Authorization', `Bearer ${adminToken}`);
+            assert.strictEqual(res.status, 200);
+            assert.ok(Array.isArray(res.body));
+            assert.ok(res.body.length > 0);
+            for (const u of res.body) {
+                assert.strictEqual(u.password_hash, undefined, 'password_hash nie może być zwracane!');
+                assert.ok('id' in u);
+                assert.ok('username' in u);
+                assert.ok('role' in u);
+                assert.ok('aktywny' in u);
+            }
+        });
+
+        it('PATCH /api/admin/users/:id zmiana roli: 403 dla nie-admina', async () => {
+            const res = await request(app)
+                .patch('/api/admin/users/1')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ role: 'admin' });
+            assert.strictEqual(res.status, 403);
+        });
+
+        it('PATCH /api/admin/users/:id zmiana roli: 400 przy niepoprawnej roli', async () => {
+            const res = await request(app)
+                .patch('/api/admin/users/1')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ role: 'hacker' });
+            assert.strictEqual(res.status, 400);
+        });
+
+        it('PATCH /api/admin/users/:id zmiana roli: 400 gdy admin próbuje odebrać rolę admina samemu sobie', async () => {
+            const res = await request(app)
+                .patch('/api/admin/users/99')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ role: 'pracownik' });
+            assert.strictEqual(res.status, 400);
+            assert.ok(res.body.error.includes('samemu sobie'));
+        });
+
+        it('PATCH /api/admin/users/:id zmiana roli: 404 dla nieistniejącego użytkownika', async () => {
+            const res = await request(app)
+                .patch('/api/admin/users/999')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ role: 'serwisant' });
+            assert.strictEqual(res.status, 404);
+        });
+
+        it('PATCH /api/admin/users/:id zmiana roli: 200 dla poprawnej zmiany roli innego użytkownika', async () => {
+            const res = await request(app)
+                .patch('/api/admin/users/1')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ role: 'serwisant' });
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual(res.body.role, 'serwisant');
+        });
+
+        it('PATCH /api/admin/users/:id/haslo: 403 dla nie-admina', async () => {
+            const res = await request(app)
+                .patch('/api/admin/users/1/haslo')
+                .set('Authorization', `Bearer ${pracownikToken}`)
+                .send({ password: 'NoweHaslo123' });
+            assert.strictEqual(res.status, 403);
+        });
+
+        it('PATCH /api/admin/users/:id/haslo: 400 przy braku hasła', async () => {
+            const res = await request(app)
+                .patch('/api/admin/users/1/haslo')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ password: '   ' });
+            assert.strictEqual(res.status, 400);
+        });
+
+        it('PATCH /api/admin/users/:id/haslo: 400 przy haśle krótszym niż 8 znaków', async () => {
+            const res = await request(app)
+                .patch('/api/admin/users/1/haslo')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ password: 'short' });
+            assert.strictEqual(res.status, 400);
+            assert.strictEqual(res.body.error, 'Hasło musi mieć co najmniej 8 znaków.');
+        });
+
+        it('PATCH /api/admin/users/:id/haslo: 404 dla nieistniejącego użytkownika', async () => {
+            const res = await request(app)
+                .patch('/api/admin/users/999/haslo')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ password: 'NoweHaslo123' });
+            assert.strictEqual(res.status, 404);
+        });
+
+        it('PATCH /api/admin/users/:id/haslo: 200 gdy admin ustawia nowe hasło', async () => {
+            const res = await request(app)
+                .patch('/api/admin/users/1/haslo')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ password: 'NoweBezpieczneHaslo123' });
+            assert.strictEqual(res.status, 200);
+            assert.ok(res.body.message.includes('zostało pomyślnie zmienione'));
+        });
+
+        it('PATCH /api/admin/users/:id/status: 403 dla nie-admina', async () => {
+            const res = await request(app)
+                .patch('/api/admin/users/1/status')
+                .set('Authorization', `Bearer ${magazynierToken}`);
+            assert.strictEqual(res.status, 403);
+        });
+
+        it('PATCH /api/admin/users/:id/status: 400 gdy admin próbuje zablokować samego siebie', async () => {
+            const res = await request(app)
+                .patch('/api/admin/users/99/status')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ aktywny: false });
+            assert.strictEqual(res.status, 400);
+            assert.ok(res.body.error.includes('samemu sobie') || res.body.error.includes('własnego konta'));
+        });
+
+        it('PATCH /api/admin/users/:id/status: 404 dla nieistniejącego użytkownika', async () => {
+            const res = await request(app)
+                .patch('/api/admin/users/999/status')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ aktywny: false });
+            assert.strictEqual(res.status, 404);
+        });
+
+        it('PATCH /api/admin/users/:id/status: 200 przy przełączaniu blokady innego użytkownika', async () => {
+            const res = await request(app)
+                .patch('/api/admin/users/1/status')
+                .set('Authorization', `Bearer ${adminToken}`);
+            assert.strictEqual(res.status, 200);
+            assert.ok('aktywny' in res.body);
+        });
+
+        it('POST /api/login: zablokowany użytkownik otrzymuje status 403', async () => {
+            const res = await request(app)
+                .post('/api/login')
+                .send({ username: 'zablokowany_user', password: 'prawidloweHaslo123' });
+            assert.strictEqual(res.status, 403);
+            assert.ok(res.body.error.includes('zablokowane'));
+        });
+
+        it('authenticateToken: token nieistniejącego użytkownika w bazie zwraca 401', async () => {
+            const tokenNieistniejacy = makeToken('admin', 9999, 'nieznany_user');
+            const res = await request(app)
+                .get('/api/admin/users')
+                .set('Authorization', `Bearer ${tokenNieistniejacy}`);
+            assert.strictEqual(res.status, 401);
+            assert.ok(res.body.error.includes('nie istnieje') || res.body.error.includes('zablokowane'));
+        });
+
+        it('authenticateToken: token zablokowanego użytkownika (aktywny = 0) zwraca 401', async () => {
+            const tokenZablokowany = makeToken('pracownik', 77, 'zablokowany_user');
+            const res = await request(app)
+                .get('/api/zgloszenia')
+                .set('Authorization', `Bearer ${tokenZablokowany}`);
+            assert.strictEqual(res.status, 401);
+            assert.ok(res.body.error.includes('zablokowane') || res.body.error.includes('nie istnieje'));
+        });
+
+        it('authenticateToken: pobiera rolę z bazy, unieważniając spreparowaną rolę w payloadzie tokenu (403)', async () => {
+            // Użytkownik o ID 1 ma w bazie rolę 'pracownik'.
+            // Jeśli ktoś wygeneruje token z rolą 'admin', authenticateToken i tak pobierze 'pracownik' z bazy.
+            const s偽sToken = makeToken('admin', 1, 'user_testowy');
+            const res = await request(app)
+                .delete('/api/zgloszenia/1')
+                .set('Authorization', `Bearer ${s偽sToken}`);
+            // Endpoint usunięcia zgłoszenia wymaga roli admin. Skoro w bazie ma pracownik -> 403 Forbidden!
+            assert.strictEqual(res.status, 403);
+        });
+    });
+
+    describe('10. Zmiana własnego hasła użytkownika (PATCH /api/profil/haslo)', () => {
+        it('PATCH /api/profil/haslo: brak tokenu zwraca 401', async () => {
+            const res = await request(app)
+                .patch('/api/profil/haslo')
+                .send({ currentPassword: 'stare', newPassword: 'NoweHaslo123' });
+            assert.strictEqual(res.status, 401);
+        });
+
+        it('PATCH /api/profil/haslo: brak wymaganych pól hasła zwraca 400', async () => {
+            const res = await request(app)
+                .patch('/api/profil/haslo')
+                .set('Authorization', `Bearer ${pracownikToken}`)
+                .send({ currentPassword: '', newPassword: '' });
+            assert.strictEqual(res.status, 400);
+            assert.ok(res.body.error.includes('Podaj'));
+        });
+
+        it('PATCH /api/profil/haslo: nowe hasło krótsze niż 8 znaków zwraca 400', async () => {
+            const res = await request(app)
+                .patch('/api/profil/haslo')
+                .set('Authorization', `Bearer ${pracownikToken}`)
+                .send({ currentPassword: 'prawidloweHaslo123', newPassword: 'krotkie' });
+            assert.strictEqual(res.status, 400);
+            assert.strictEqual(res.body.error, 'Nowe hasło musi mieć co najmniej 8 znaków.');
+        });
+
+        it('PATCH /api/profil/haslo: niepoprawne aktualne hasło zwraca 400', async () => {
+            const res = await request(app)
+                .patch('/api/profil/haslo')
+                .set('Authorization', `Bearer ${pracownikToken}`)
+                .send({ currentPassword: 'zleHaslo123', newPassword: 'NoweSuperHaslo123' });
+            assert.strictEqual(res.status, 400);
+            assert.strictEqual(res.body.error, 'Aktualne hasło jest nieprawidłowe.');
+        });
+
+        it('PATCH /api/profil/haslo: poprawne aktualne i nowe hasło zwraca 200', async () => {
+            const res = await request(app)
+                .patch('/api/profil/haslo')
+                .set('Authorization', `Bearer ${pracownikToken}`)
+                .send({ currentPassword: 'prawidloweHaslo123', newPassword: 'NoweSuperHaslo123' });
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual(res.body.message, 'Twoje hasło zostało pomyślnie zmienione.');
         });
     });
 });

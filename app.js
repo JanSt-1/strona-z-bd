@@ -64,7 +64,7 @@ const ID_ERR = 'Nieprawidłowe ID zgłoszenia.';
 const ID_ERR_INT = 'Nieprawidłowe ID zgłoszenia. Wymagana jest liczba całkowita.';
 
 // --- Middleware autoryzacji JWT ---
-function authenticateToken(req, res, next) {
+async function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     if (!authHeader) {
         return fail(res, 'Brak autoryzacji: Wymagany nagłówek Authorization (np. Bearer <token>)', 401);
@@ -77,13 +77,36 @@ function authenticateToken(req, res, next) {
         return fail(res, 'Brak tokenu JWT w nagłówku Authorization', 401);
     }
 
-    jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] }, (err, decodedUser) => {
-        if (err) {
-            return fail(res, 'Odmowa dostępu: Nieprawidłowy lub wygasły token JWT', 401);
+    let decodedUser;
+    try {
+        decodedUser = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+    } catch (err) {
+        return fail(res, 'Odmowa dostępu: Nieprawidłowy lub wygasły token JWT', 401);
+    }
+
+    try {
+        const [rows] = await currentPool.query(
+            'SELECT id, username, role, aktywny FROM uzytkownicy WHERE id = ?',
+            [decodedUser.id]
+        );
+
+        const dbUser = rows?.[0];
+        // Użytkownik nieistniejący lub nieaktywny w bazie -> 401
+        if (!dbUser || dbUser.aktywny === 0 || dbUser.aktywny === false || dbUser.aktywny === '0') {
+            return fail(res, 'Odmowa dostępu: Konto użytkownika nie istnieje lub zostało zablokowane.', 401);
         }
-        req.user = decodedUser;
+
+        // Rola pobierana wyłącznie z bazy danych, a nie z tokenu
+        req.user = {
+            id: dbUser.id,
+            username: dbUser.username,
+            role: dbUser.role
+        };
         next();
-    });
+    } catch (err) {
+        console.error('Błąd podczas weryfikacji użytkownika w authenticateToken:', err);
+        return fail(res, 'Błąd serwera podczas autoryzacji użytkownika.', 500);
+    }
 }
 
 // --- Middleware autoryzacji ról (np. requireRoles('admin') lub requireRoles('admin', 'serwisant')) ---
@@ -308,7 +331,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
 
     return safe('Błąd podczas logowania:', 'Błąd serwera podczas procesu logowania.', async () => {
         const [rows] = await currentPool.query(
-            'SELECT id, username, password_hash, role FROM uzytkownicy WHERE username = ?',
+            'SELECT id, username, password_hash, role, aktywny FROM uzytkownicy WHERE username = ?',
             [loginUsername]
         );
 
@@ -320,6 +343,10 @@ app.post('/api/login', loginLimiter, async (req, res) => {
 
         if (!isPasswordValid) {
             return fail(res, 'Nieprawidłowa nazwa użytkownika lub hasło.', 401);
+        }
+
+        if (user.aktywny === 0 || user.aktywny === false) {
+            return fail(res, 'Konto użytkownika zostało zablokowane. Skontaktuj się z administratorem.', 403);
         }
 
         const payload = { id: user.id, username: user.username, role: user.role };
@@ -339,7 +366,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
 app.get('/api/pracownicy', authenticateToken, requireAdminOrSerwisant,
     safe('Błąd podczas pobierania listy pracowników:', 'Błąd serwera podczas pobierania listy pracowników.', async (req, res) => {
         const [rows] = await currentPool.query(
-            "SELECT id, username, role FROM uzytkownicy WHERE role IN ('pracownik', 'serwisant') ORDER BY username ASC"
+            "SELECT id, username, role FROM uzytkownicy WHERE role IN ('pracownik', 'serwisant') AND (aktywny IS NULL OR aktywny = 1) ORDER BY username ASC"
         );
         return res.json(rows);
     }));
@@ -475,7 +502,7 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
                 return fail(res, 'Nieprawidłowe ID pracownika.');
             }
             const [users] = await currentPool.query(
-                'SELECT id, username, role FROM uzytkownicy WHERE id = ?',
+                'SELECT id, username, role, aktywny FROM uzytkownicy WHERE id = ?',
                 [parsedPracownikId]
             );
             if (!users || users.length === 0) {
@@ -484,6 +511,9 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
             const candidate = users[0];
             if (!['pracownik', 'serwisant'].includes(candidate.role)) {
                 return fail(res, 'Zlecenie można przypisać wyłącznie do użytkownika o roli pracownik lub serwisant.', 400);
+            }
+            if (candidate.aktywny === 0 || candidate.aktywny === false) {
+                return fail(res, 'Nie można przypisać zlecenia do zablokowanego pracownika.', 400);
             }
             assignedId = parsedPracownikId;
             assignedUsername = candidate.username;
@@ -700,6 +730,10 @@ app.post('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =
         return fail(res, 'Pole "username" przekracza maksymalną dozwoloną długość (50 znaków).');
     }
 
+    if (password.length < 8) {
+        return fail(res, 'Hasło musi mieć co najmniej 8 znaków.');
+    }
+
     const allowedRoles = ['admin', 'pracownik', 'serwisant', 'magazynier'];
     if (!allowedRoles.includes(role)) {
         return fail(res, `Nieprawidłowa rola. Dozwolone: ${allowedRoles.join(', ')}`);
@@ -724,10 +758,176 @@ app.post('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =
             message: 'Użytkownik został pomyślnie utworzony.',
             id: result.insertId,
             username: cleanUsername,
-            role
+            role,
+            aktywny: true
         });
     })(req, res);
 });
+
+// 8. GET /api/admin/users - Pobieranie listy kont użytkowników (chroniony, tylko admin, BEZ password_hash!)
+app.get('/api/admin/users', authenticateToken, requireAdmin,
+    safe('Błąd podczas pobierania listy użytkowników:', 'Błąd serwera podczas pobierania listy użytkowników.', async (req, res) => {
+        const [rows] = await currentPool.query(
+            'SELECT id, username, role, aktywny, created_at FROM uzytkownicy ORDER BY id ASC'
+        );
+        const users = rows.map(u => ({
+            id: u.id,
+            username: u.username,
+            role: u.role,
+            aktywny: !(u.aktywny === 0 || u.aktywny === false || u.aktywny === '0'),
+            created_at: u.created_at
+        }));
+        return res.json(users);
+    }));
+
+// 9. PATCH /api/admin/users/:id - Zmiana roli użytkownika (chroniony, tylko admin)
+app.patch('/api/admin/users/:id', authenticateToken, requireAdmin,
+    safe('Błąd podczas zmiany roli użytkownika:', 'Błąd serwera podczas zmiany roli użytkownika.', async (req, res) => {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id) || id <= 0) {
+            return fail(res, 'Nieprawidłowe ID użytkownika. Wymagana jest liczba całkowita.');
+        }
+
+        const { role } = req.body || {};
+        const allowedRoles = ['admin', 'pracownik', 'serwisant', 'magazynier'];
+        if (!role || !allowedRoles.includes(role)) {
+            return fail(res, `Nieprawidłowa rola. Dozwolone: ${allowedRoles.join(', ')}`);
+        }
+
+        // Zabezpieczenie: admin nie może odebrać roli admina samemu sobie
+        if (req.user.id === id && role !== 'admin') {
+            return fail(res, 'Nie możesz odebrać uprawnień administratora samemu sobie.', 400);
+        }
+
+        const [users] = await currentPool.query('SELECT id, username, role FROM uzytkownicy WHERE id = ?', [id]);
+        if (!users || users.length === 0) {
+            return fail(res, `Nie znaleziono użytkownika o ID ${id}.`, 404);
+        }
+
+        await currentPool.query('UPDATE uzytkownicy SET role = ? WHERE id = ?', [role, id]);
+
+        return res.json({
+            message: `Rola użytkownika ${users[0].username} została zmieniona na "${role}".`,
+            id,
+            role
+        });
+    }));
+
+// 10. PATCH /api/admin/users/:id/haslo - Administrator ustawia nowe hasło dla konta (chroniony, tylko admin)
+app.patch('/api/admin/users/:id/haslo', authenticateToken, requireAdmin,
+    safe('Błąd podczas zmiany hasła użytkownika:', 'Błąd serwera podczas zmiany hasła użytkownika.', async (req, res) => {
+        const id = parseInt(req.params.id, 10);
+        if (isNaN(id) || id <= 0) {
+            return fail(res, 'Nieprawidłowe ID użytkownika. Wymagana jest liczba całkowita.');
+        }
+
+        const password = (req.body?.password ?? req.body?.haslo ?? '');
+        if (typeof password !== 'string' || password.trim().length === 0) {
+            return fail(res, 'Podaj nowe hasło dla użytkownika.');
+        }
+
+        const cleanPassword = password.trim();
+        if (cleanPassword.length < 8) {
+            return fail(res, 'Hasło musi mieć co najmniej 8 znaków.');
+        }
+
+        const [users] = await currentPool.query('SELECT id, username FROM uzytkownicy WHERE id = ?', [id]);
+        if (!users || users.length === 0) {
+            return fail(res, `Nie znaleziono użytkownika o ID ${id}.`, 404);
+        }
+
+        const hashedPassword = await bcrypt.hash(cleanPassword, 10);
+        await currentPool.query('UPDATE uzytkownicy SET password_hash = ? WHERE id = ?', [hashedPassword, id]);
+
+        return res.json({
+            message: `Hasło dla użytkownika ${users[0].username} zostało pomyślnie zmienione.`,
+            id
+        });
+    }));
+
+// 11. PATCH /api/admin/users/:id/status (oraz alias /aktywny) - Blokowanie / odblokowywanie użytkownika
+const handleToggleUserStatus = safe('Błąd podczas zmiany statusu konta:', 'Błąd serwera podczas zmiany statusu konta użytkownika.', async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id) || id <= 0) {
+        return fail(res, 'Nieprawidłowe ID użytkownika. Wymagana jest liczba całkowita.');
+    }
+
+    const [users] = await currentPool.query('SELECT id, username, role, aktywny FROM uzytkownicy WHERE id = ?', [id]);
+    if (!users || users.length === 0) {
+        return fail(res, `Nie znaleziono użytkownika o ID ${id}.`, 404);
+    }
+
+    const target = users[0];
+    const currentActive = !(target.aktywny === 0 || target.aktywny === false || target.aktywny === '0');
+
+    let nextActive;
+    if (req.body && req.body.aktywny !== undefined) {
+        nextActive = Boolean(req.body.aktywny);
+    } else {
+        nextActive = !currentActive;
+    }
+
+    // Zabezpieczenie: admin nie może zablokować samego siebie
+    if (req.user.id === id && !nextActive) {
+        return fail(res, 'Nie możesz zablokować własnego konta administratora.', 400);
+    }
+
+    await currentPool.query('UPDATE uzytkownicy SET aktywny = ? WHERE id = ?', [nextActive ? 1 : 0, id]);
+
+    return res.json({
+        message: nextActive
+            ? `Konto użytkownika ${target.username} zostało odblokowane.`
+            : `Konto użytkownika ${target.username} zostało zablokowane.`,
+        id,
+        aktywny: nextActive
+    });
+});
+
+app.patch('/api/admin/users/:id/status', authenticateToken, requireAdmin, handleToggleUserStatus);
+app.patch('/api/admin/users/:id/aktywny', authenticateToken, requireAdmin, handleToggleUserStatus);
+
+// 12. PATCH /api/profil/haslo - Każdy zalogowany użytkownik może zmienić własne hasło (wymaga podania starego hasła)
+app.patch('/api/profil/haslo', authenticateToken,
+    safe('Błąd podczas zmiany własnego hasła:', 'Błąd serwera podczas zmiany hasła.', async (req, res) => {
+        const { currentPassword, newPassword } = req.body || {};
+        const oldPass = (currentPassword ?? req.body?.stare_haslo ?? '');
+        const newPass = (newPassword ?? req.body?.nowe_haslo ?? '');
+
+        if (typeof oldPass !== 'string' || oldPass.trim().length === 0 ||
+            typeof newPass !== 'string' || newPass.trim().length === 0) {
+            return fail(res, 'Podaj aktualne oraz nowe hasło.');
+        }
+
+        const cleanNewPass = newPass.trim();
+        if (cleanNewPass.length < 8) {
+            return fail(res, 'Nowe hasło musi mieć co najmniej 8 znaków.');
+        }
+
+        const [rows] = await currentPool.query(
+            'SELECT id, username, password_hash, aktywny FROM uzytkownicy WHERE id = ?',
+            [req.user.id]
+        );
+
+        if (!rows || rows.length === 0) {
+            return fail(res, 'Nie znaleziono konta użytkownika.', 404);
+        }
+
+        const user = rows[0];
+        const isPasswordValid = typeof user.password_hash === 'string' &&
+            /^\$2[aby]\$/.test(user.password_hash) &&
+            await bcrypt.compare(oldPass, user.password_hash);
+
+        if (!isPasswordValid) {
+            return fail(res, 'Aktualne hasło jest nieprawidłowe.', 400);
+        }
+
+        const hashedPassword = await bcrypt.hash(cleanNewPass, 10);
+        await currentPool.query('UPDATE uzytkownicy SET password_hash = ? WHERE id = ?', [hashedPassword, user.id]);
+
+        return res.json({
+            message: 'Twoje hasło zostało pomyślnie zmienione.'
+        });
+    }));
 
 
 // Obsługa błędów 404 dla nieistniejących tras API
