@@ -12,8 +12,8 @@ strona_z_bd/
 ├── app.js                   # Instancja Express: middleware, RBAC, walidacja, JWT, routing, pula DB (bez app.listen())
 ├── db.js                    # Centralna konfiguracja połączenia MySQL (DB_PORT, createPool, createConnection)
 ├── index.js                 # Entrypoint serwera: weryfikacja .env i JWT_SECRET, test DB, app.listen()
-├── app.test.js              # Testy integracyjne API (node:test + supertest, 72 testy, mock DB przez app.setPool())
-├── schemat.sql              # Schemat MySQL (tabele: uzytkownicy, zgloszenia)
+├── app.test.js              # Testy integracyjne API (node:test + supertest, 82 testy, mock DB przez app.setPool())
+├── schemat.sql              # Schemat MySQL (tabele: uzytkownicy, zgloszenia, historia_zgloszen)
 ├── seed.js                  # Inicjalizacja bazy i aplikowanie schemat.sql (`npm run seed`)
 ├── create-user.js           # CLI: tworzenie kont z haszowaniem bcrypt (`node create-user.js <user> <pass> [rola]`)
 ├── public/
@@ -36,11 +36,17 @@ strona_z_bd/
 - **Blokowanie kont:** Użytkownicy z `aktywny = FALSE` nie mogą się zalogować (403 Forbidden). Zamiast usuwać powiązane z historią zgłoszeń konta, administrator zarządza flagą aktywności. Administrator nie może zablokować ani odebrać roli samemu sobie.
 
 ### Tabela `zgloszenia`
-- `id` (INT PK AI), `imie` (VARCHAR(50)), `nazwisko` (VARCHAR(50)), `nazwa_firmy` (VARCHAR(100) NULL), `adres` (TEXT), `kod_pocztowy` (VARCHAR(6)), `miasto` (VARCHAR(100)), `wojewodztwo` (VARCHAR(50)), `numer_telefonu` (VARCHAR(20)), `email` (VARCHAR(100)), `opis_usterki` (TEXT), `numer_fv` (VARCHAR(50)), `nip` (VARCHAR(10)), `przedmiot_zgloszenia` (VARCHAR(100)), `numer_seryjny` (VARCHAR(100) NULL), `data_zakupu` (DATE), `status` (ENUM('nowe', 'w_realizacji', 'do_wysylki', 'zakończone') DEFAULT 'nowe'), `created_at` (TIMESTAMP).
+- `id` (INT PK AI), `imie` (VARCHAR(50)), `nazwisko` (VARCHAR(50)), `nazwa_firmy` (VARCHAR(100) NULL), `adres` (TEXT), `kod_pocztowy` (VARCHAR(6)), `miasto` (VARCHAR(100)), `numer_telefonu` (VARCHAR(20)), `email` (VARCHAR(100)), `opis_usterki` (TEXT), `numer_fv` (VARCHAR(50)), `nip` (VARCHAR(10)), `przedmiot_zgloszenia` (VARCHAR(100)), `numer_seryjny` (VARCHAR(100) NULL), `data_zakupu` (DATE), `status` (ENUM('nowe', 'w_realizacji', 'do_wysylki', 'zakończone') DEFAULT 'nowe'), `created_at` (TIMESTAMP).
 - **Pola przepływu serwisowego:**
   - `przypisany_pracownik_id` (INT NULL FK do `uzytkownicy.id` ON DELETE SET NULL)
   - `opis_naprawy` (TEXT NULL), `opis_naprawy_data` (DATETIME NULL)
   - `data_wyslania` (DATETIME NULL), `numer_listu` (VARCHAR(100) NULL)
+
+### Tabela `historia_zgloszen`
+- `id` (INT PK AI), `zgloszenie_id` (INT NOT NULL), `uzytkownik_id` (INT NULL FK do `uzytkownicy.id` ON DELETE SET NULL), `akcja` (VARCHAR(100) NOT NULL), `z_statusu` (VARCHAR(50) NULL), `na_status` (VARCHAR(50) NULL), `szczegoly` (TEXT NULL), `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP).
+- **Cel i zasada trwałości:** Zapisuje audyt każdej zmiany w zgłoszeniu: utworzenie (`utworzenie`), przypisanie lub odpięcie pracownika (`przypisanie`), zatwierdzenie naprawy (`naprawa`), zmiana statusu (`zmiana_statusu`), aktualizacja numeru listu (`zmiana_numeru_listu`), wysyłka (`wysyłka`) oraz usunięcie (`usunięcie`).
+- **Zachowanie historii przy usuwaniu zgłoszenia:** Kolumna `zgloszenie_id` **celowo nie posiada klucza obcego z `ON DELETE CASCADE`** do tabeli `zgloszenia`. Dzięki temu, gdy administrator usunie zgłoszenie (`DELETE /api/zgloszenia/:id`), cała dotychczasowa historia pozostaje w bazie, a przed usunięciem zgłoszenia rejestrowany jest wpis o usunięciu (np. `Wpis usunięty przez admin`).
+- **Funkcja pomocnicza:** `dodajWpisHistorii(zgloszenieId, uzytkownikId, akcja, zStatusu, naStatus, szczegoly)` wywoływana asynchronicznie z każdego endpointu modyfikującego zgłoszenie.
 
 ---
 
@@ -65,7 +71,7 @@ Wszystkie endpointy modyfikujące status zgłoszenia (`PATCH/PUT /api/zgloszenia
 | `nowe` → `w_realizacji` | automatycznie przy przypisaniu (`admin`, `serwisant`) | W `PATCH /api/zgloszenia/:id/przypisz` przypisanie pracownika automatycznie zmienia status z `nowe` na `w_realizacji`. Dostępne także przez endpoint statusu. |
 | `w_realizacji` → `do_wysylki` | przypisany pracownik, serwisant, admin | **Wyłącznie przez `PATCH /api/zgloszenia/:id/naprawione`** (z wymaganym `opis_naprawy`). Automatycznie zapisuje `opis_naprawy_data = NOW()`. W `/status` zmiana na `do_wysylki` jest zablokowana (400). |
 | `do_wysylki` → `zakończone` | magazynier, admin | Oznaczenie jako wysłane. Magazynier ma obowiązek podać `numer_listu` (zapisywane `data_wyslania = NOW()`). |
-| **Cofanie statusu** | **tylko admin** | Zmiana statusu wstecz wg kolejności `['nowe', 'w_realizacji', 'do_wysylki', 'zakończone']` jest dozwolona wyłącznie dla `admin` (dla pozostałych ról: 403 Forbidden). |
+| **Cofanie statusu** | **tylko admin** | Zmiana statusu wstecz wg kolejności `['nowe', 'w_realizacji', 'do_wysylki', 'zakończone']` jest dozwolona wyłącznie dla `admin` (dla pozostałych ról: 403 Forbidden). **Czyszczenie danych późniejszych etapów:** cofnięcie przed `zakończone` czyści `data_wyslania` i `numer_listu` na `NULL`; cofnięcie przed `do_wysylki` czyści `opis_naprawy` i `opis_naprawy_data` na `NULL`, przenosząc treść opisu naprawy do wpisu w `historia_zgloszen`. |
 | **Niedozwolony skok** | **nikt** | Przejścia niezdefiniowane w `PRZEJSCIA` (np. `nowe` → `zakończone`) zwracają **409 Conflict**. |
 
 ### Widoczność i uprawnienia ról:
@@ -84,14 +90,16 @@ Format odpowiedzi błędów: `{ error: string }`.
 
 | Metoda | Endpoint | Dostęp / Rola | Opis i Walidacja |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/api/zgloszenia` | Publiczny | Rejestracja zgłoszenia. Rygorystyczna walidacja: imię/nazwisko (bez cyfr, litery), NIP (10 cyfr), kod (`XX-XXX`), województwo (z listy 16), telefon (`+48` + 9 cyfr), przedmiot (z listy dozwolonych), data zakupu (`RRRR-MM-DD`, istniejąca w kalendarzu, nie z przyszłości; w przeciwnym razie 400). Limity długości zgodne z kolumnami (np. `numer_seryjny` max 100). `numer_seryjny` obowiązkowy wyłącznie dla monitorów i tablic interaktywnych (bez akcesoriów). Zwraca 201 `{ message, id }`. |
+| `POST` | `/api/zgloszenia` | Publiczny | Rejestracja zgłoszenia. Rygorystyczna walidacja: imię/nazwisko (bez cyfr, litery), NIP (10 cyfr), kod (`XX-XXX`), telefon (`+48` + 9 cyfr), przedmiot (z listy dozwolonych), data zakupu (`RRRR-MM-DD`, istniejąca w kalendarzu, nie z przyszłości; w przeciwnym razie 400). Limity długości zgodne z kolumnami (np. `numer_seryjny` max 100). `numer_seryjny` obowiązkowy wyłącznie dla monitorów i tablic interaktywnych (bez akcesoriów). Zwraca 201 `{ message, id }`. |
 | `POST` | `/api/login` | Publiczny | Logowanie (`username`, `password`). Rate limit: 10 prób / 15 min z IP (pomijany w `NODE_ENV === 'test'`). Weryfikacja hasła przez bcrypt. Blokada logowania dla kont z `aktywny = FALSE` (403). Zwraca 200 `{ token, user: { id, username, role } }`. |
-| `GET` | `/api/pracownicy` | JWT (`admin`, `serwisant`) | Pobiera listę aktywnych pracowników do przypisania (`pracownik`, `serwisant`). |
-| `GET` | `/api/zgloszenia` | JWT (dowolna rola) | Lista zgłoszeń filtrowana wg roli użytkownika (pracownik: przypisane; magazynier: `do_wysylki`, `zakończone`; admin/serwisant: wszystkie). |
-| `PATCH` | `/api/zgloszenia/:id/przypisz` | JWT (`admin`, `serwisant`) | Przypisanie pracownika (`{ pracownik_id }` lub `null`). Wybrany użytkownik musi mieć rolę mogącą naprawiać (`pracownik` lub `serwisant`, błąd 400 dla innych) oraz być aktywny. Jeśli status to `nowe` i przypisywany jest pracownik, status automatycznie przechodzi na `w_realizacji`. |
+| `GET` | `/api/pracownicy` | JWT (`admin`, `serwisant`) | Pobiera listę aktywnych pracowników do przypisania (`pracownik`, `serwisant`, `magazynier`). |
+| `GET` | `/api/zgloszenia` | JWT (dowolna rola) | Lista zgłoszeń z obsługą paginacji, filtrów i wyszukiwania. Parametry query: `?szukaj=` (wyszukiwanie tekstowe LIKE we wszystkich polach, wyłącznie przez placeholdery `?`), `?status=` (filtr statusu), `?pracownik=` (filtr ID pracownika lub `nieprzypisane`), `?strona=` (numer strony, domyślnie 1, limit 25), `?limit=` (wielkość strony, max 100), `?sort=` (`asc` lub `desc` po dacie `created_at`). Zwraca obiekt `{ total, page, limit, totalPages, data, zgloszenia }`. Reguły ról RBAC (`pracownik` widzi tylko swoje, `magazynier` tylko `do_wysylki` i `zakończone`) są ściśle łączone (`AND`) z filtrami użytkownika. |
+| `GET` | `/api/zgloszenia/:id` | JWT (dowolna rola) | Pobranie pełnych szczegółów pojedynczego zgłoszenia wraz z historią zdarzeń (`historia: Array`). Ochrona RBAC: `pracownik` może podejrzeć tylko własne, `magazynier` tylko `do_wysylki` i `zakończone`, `admin` i `serwisant` dowolne (403 przy braku uprawnień, 404 dla nieistniejącego ID). Zwraca `{ ...ticket, historia, zgloszenie }`. |
+| `PATCH` | `/api/zgloszenia/:id/przypisz` | JWT (`admin`, `serwisant`) | Przypisanie pracownika (`{ pracownik_id }` lub `null`). Serwisant może przypisać pracownika, serwisanta lub magazyniera; administrator może przypisać dowolnego aktywnego użytkownika (w tym magazyniera po naprawie). Jeśli status to `nowe` i przypisywany jest pracownik/serwisant, status automatycznie przechodzi na `w_realizacji`. |
 | `PATCH` | `/api/zgloszenia/:id/naprawione` | JWT (`pracownik`, `serwisant`, `admin`) | **Jedyna droga do statusu `do_wysylki`**. Zatwierdzenie naprawy (`{ opis_naprawy }`). Ustawia status `do_wysylki` oraz `opis_naprawy_data = NOW()`. Dla pracownika dotyczy wyłącznie przypisanego zadania. Magazynier otrzymuje 403. |
-| `PATCH/PUT`| `/api/zgloszenia/:id/status` | JWT (zgodnie z RBAC) | Zmiana statusu wg mapy `PRZEJSCIA` z wyłączeniem `do_wysylki` (blokada 400 – wymagane użycie `/naprawione`). Cofanie statusu dozwolone wyłącznie dla `admin`. Walidacja `numer_listu`: max 100 znaków (VARCHAR(100)). Przy `zakończone` magazynier musi podać `numer_listu` (`data_wyslania = NOW()`). Magazynier i admin mogą zaktualizować `numer_listu` również dla zlecenia już zakończonego. |
-| `DELETE`| `/api/zgloszenia/:id` | JWT (`admin`) | Usunięcie zgłoszenia z bazy danych. |
+| `PATCH/PUT`| `/api/zgloszenia/:id/status` | JWT (zgodnie z RBAC) | Zmiana statusu wg mapy `PRZEJSCIA` z wyłączeniem `do_wysylki` w przód (blokada 400 – wymagane użycie `/naprawione`). Cofanie statusu dozwolone wyłącznie dla `admin`. **Czyszczenie etapów przy cofaniu:** cofnięcie przed `zakończone` resetuje `data_wyslania` i `numer_listu` na `NULL`; cofnięcie przed `do_wysylki` resetuje `opis_naprawy` i `opis_naprawy_data` na `NULL` oraz przenosi wycofany opis do wpisu historii (`szczegoly`). Walidacja `numer_listu`: max 100 znaków (VARCHAR(100)). Przy `zakończone` magazynier musi podać `numer_listu` (`data_wyslania = NOW()`). Magazynier może zaktualizować `numer_listu` dla zlecenia zakończonego, a **administrator może dodać lub zaktualizować `numer_listu` na dowolnym statusie zlecenia w dowolnym momencie**. |
+| `DELETE`| `/api/zgloszenia/:id` | JWT (`admin`) | Usunięcie zgłoszenia z bazy danych. Przed usunięciem w `historia_zgloszen` zapisywany jest wpis o akcji `usunięcie` z informacją o administratorze usuwającym rekord (historia powiązana z `zgloszenie_id` pozostaje trwale w bazie). |
+| `GET` | `/api/zgloszenia/:id/historia` | JWT (dowolna rola) | Pobranie chronologicznej historii zmian wybranego zgłoszenia (`id, zgloszenie_id, uzytkownik_id, username, akcja, z_statusu, na_status, szczegoly, created_at`). |
 | `GET` | `/api/admin/users` | JWT (`admin`) | Pobranie listy wszystkich kont użytkowników (`id, username, role, aktywny, created_at`) **bez pola `password_hash`!** |
 | `POST` | `/api/admin/users` | JWT (`admin`) | Utworzenie nowego użytkownika (`username` max 50 znaków, `password` min. 8 znaków, `role`). Haszowanie bcrypt (salt 10). |
 | `PATCH` | `/api/admin/users/:id` | JWT (`admin`) | Zmiana roli użytkownika (`{ role }`). Zabezpieczenie: admin nie może odebrać roli admina samemu sobie (400). |
@@ -110,6 +118,9 @@ Format odpowiedzi błędów: `{ error: string }`.
   - **401 Unauthorized:** brakujący, nieprawidłowy lub wygasły token JWT. `handleAuthError` natychmiast czyści stan i wylogowuje użytkownika.
   - **403 Forbidden:** brak uprawnień do danej akcji (reguły ról RBAC, edycja zlecenia przypisanego do kogoś innego itp.). Frontend **nie wylogowuje** użytkownika, lecz wyświetla komunikat błędu z serwera w alercie (`showAlert(err.message, 'error')`).
 - Pomocnik `apiJson(endpoint, options, fallbackError)` obsługuje ujednolicone zapytania API i wyłapuje błędy backendu.
+- **Paginacja, wyszukiwanie i filtry listy zgłoszeń:**
+  - Pasek wyszukiwania tekstowego, filtry statusu, przypisanego pracownika oraz sortowania po dacie utworzenia.
+  - Paginacja (poprzednia/następna strona, informacja o łącznej liczbie wyników i stron).
 - **Zarządzanie hasłami:**
   - Administrator ma dedykowaną zakładkę „Użytkownicy” z tabelą kont, zmianą roli, blokowaniem/odblokowywaniem, dodawaniem użytkowników oraz modalem „Zmień hasło” dla każdego konta.
   - Każdy zalogowany użytkownik (niezależnie od roli) ma w nagłówku panelu przycisk „Zmień hasło” otwierający modal weryfikujący dotychczasowe hasło i wymuszający min. 8 znaków dla nowego hasła.
@@ -121,10 +132,11 @@ Format odpowiedzi błędów: `{ error: string }`.
 ```bash
 npm install               # Instalacja zależności
 npm run seed              # Wgranie schematu bazy danych (schemat.sql)
+npm run seed:zgloszenia   # Wygenerowanie 200 realistycznych zgłoszeń z historią zdarzeń
 node create-user.js admin Haslo123 admin   # Utworzenie pierwszego konta (hasło min. 8 znaków)
 npm start                 # Start serwera (port 3000)
 npm run dev               # Start serwera w trybie watch
-npm test                  # Uruchomienie 72 testów integracyjnych (node --test app.test.js)
+npm test                  # Uruchomienie 93 testów integracyjnych (node --test app.test.js)
 ```
 
 ---

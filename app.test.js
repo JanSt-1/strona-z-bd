@@ -1,4 +1,4 @@
-const { describe, it, before, after } = require('node:test');
+const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert');
 const request = require('supertest');
 const bcrypt = require('bcrypt');
@@ -28,8 +28,13 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
 
     let lastExecutedQuery = null;
     let lastExecutedParams = null;
+    let allExecutedQueries = [];
 
     const setMockTicket = (overrides) => {
+        if (overrides === null) {
+            currentMockTicket = null;
+            return;
+        }
         currentMockTicket = {
             id: 1,
             status: 'w_realizacji',
@@ -57,8 +62,32 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             query: async (sql, values) => {
                 lastExecutedQuery = sql;
                 lastExecutedParams = values;
+                allExecutedQueries.push({ sql, values });
 
                 if (typeof sql === 'string') {
+                    // Tabela historia_zgloszen - pobieranie historii
+                    if (sql.includes('historia_zgloszen') && sql.includes('SELECT')) {
+                        return [[
+                            { id: 1, zgloszenie_id: 1, uzytkownik_id: null, username: null, akcja: 'utworzenie', z_statusu: null, na_status: 'nowe', szczegoly: 'Utworzono zgłoszenie serwisowe.', created_at: '2026-01-01 12:00:00' },
+                            { id: 2, zgloszenie_id: 1, uzytkownik_id: 99, username: 'admin_testowy', akcja: 'przypisanie', z_statusu: 'nowe', na_status: 'w_realizacji', szczegoly: 'Przypisano pracownika: user_testowy', created_at: '2026-01-01 12:05:00' }
+                        ]];
+                    }
+
+                    // Tabela zgloszenia - zliczanie COUNT(*) dla paginacji
+                    if (sql.includes('SELECT COUNT(*)') && sql.includes('FROM zgloszenia')) {
+                        return [[{ total: 1 }]];
+                    }
+
+                    // Tabela zgloszenia - pobranie po ID
+                    if (sql.includes('FROM zgloszenia') && (sql.includes('WHERE id = ?') || sql.includes('WHERE z.id = ?'))) {
+                        return currentMockTicket ? [[currentMockTicket]] : [[]];
+                    }
+
+                    // Tabela zgloszenia - pobranie listy (w tym z LEFT JOIN uzytkownicy)
+                    if (sql.includes('FROM zgloszenia')) {
+                        return currentMockTicket ? [[currentMockTicket]] : [[]];
+                    }
+
                     // Tabela uzytkownicy
                     if (sql.includes('uzytkownicy')) {
                         const param = Array.isArray(values) ? values[0] : null;
@@ -80,9 +109,10 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                         if (param === 'zablokowany_user' || param === 77) {
                             return [[{ id: 77, username: 'zablokowany_user', password_hash: testPasswordHash, role: 'pracownik', aktywny: 0 }]];
                         }
-                        if (sql.includes("role IN ('pracownik', 'serwisant')")) {
+                        if (sql.includes("role IN ('pracownik', 'serwisant', 'magazynier')") || sql.includes("role IN ('pracownik', 'serwisant')")) {
                             return [[
                                 { id: 1, username: 'user_testowy', role: 'pracownik', aktywny: 1 },
+                                { id: 2, username: 'magazynier_testowy', role: 'magazynier', aktywny: 1 },
                                 { id: 50, username: 'serwisant_testowy', role: 'serwisant', aktywny: 1 }
                             ]];
                         }
@@ -104,14 +134,9 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                         return [[]];
                     }
 
-                    // Tabela zgloszenia - pobranie po ID
-                    if (sql.includes('zgloszenia') && sql.includes('WHERE id = ?')) {
-                        return [[currentMockTicket]];
-                    }
-
-                    // Tabela zgloszenia - pobranie listy
-                    if (sql.includes('FROM zgloszenia')) {
-                        return [[currentMockTicket]];
+                    // Tabela zgloszenia - pobranie po ID gdy brak FROM (np. inne klauzule)
+                    if (sql.includes('zgloszenia') && (sql.includes('WHERE id = ?') || sql.includes('WHERE z.id = ?'))) {
+                        return currentMockTicket ? [[currentMockTicket]] : [[]];
                     }
 
                     // Modyfikacje UPDATE / DELETE / INSERT
@@ -152,7 +177,6 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                     adres: 'ul. Testowa 1',
                     kod_pocztowy: '00-001',
                     miasto: 'Warszawa',
-                    wojewodztwo: 'mazowieckie',
                     numer_telefonu: '+48123456789',
                     email: 'jan@example.com',
                     przedmiot_zgloszenia: 'Monitor interaktywny myBoard Titan (Android 15)',
@@ -176,7 +200,6 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                     adres: 'ul. Testowa 1',
                     kod_pocztowy: '00-001',
                     miasto: 'Warszawa',
-                    wojewodztwo: 'mazowieckie',
                     numer_telefonu: '+48123456789',
                     email: 'jan@example.com',
                     przedmiot_zgloszenia: 'Projektory',
@@ -199,7 +222,6 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                     adres: 'ul. Testowa 1',
                     kod_pocztowy: '00-001',
                     miasto: 'Warszawa',
-                    wojewodztwo: 'mazowieckie',
                     numer_telefonu: '+48123456789',
                     email: 'jan@example.com',
                     przedmiot_zgloszenia: 'Projektory',
@@ -560,17 +582,25 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(respMagazynier.status, 403);
         });
 
-        it('Próba przypisania użytkownika o roli magazynier w /przypisz zwraca 400', async () => {
-            setMockTicket({ status: 'nowe' });
+        it('Admin może przypisać zlecenie do użytkownika o roli magazynier w /przypisz (200)', async () => {
+            setMockTicket({ status: 'do_wysylki' });
             const response = await request(app)
                 .patch('/api/zgloszenia/1/przypisz')
                 .set('Authorization', `Bearer ${adminToken}`)
                 .send({ pracownik_id: 2 }); // ID 2 to magazynier
+            assert.strictEqual(response.status, 200);
+            assert.strictEqual(response.body.przypisany_pracownik_id, 2);
+            assert.strictEqual(response.body.przypisany_pracownik_username, 'magazynier_testowy');
+        });
+
+        it('Próba przypisania zablokowanego użytkownika w /przypisz zwraca 400', async () => {
+            setMockTicket({ status: 'nowe' });
+            const response = await request(app)
+                .patch('/api/zgloszenia/1/przypisz')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ pracownik_id: 77 }); // ID 77 to zablokowany użytkownik
             assert.strictEqual(response.status, 400);
-            assert.strictEqual(
-                response.body.error,
-                'Zlecenie można przypisać wyłącznie do użytkownika o roli pracownik lub serwisant.'
-            );
+            assert.strictEqual(response.body.error, 'Nie można przypisać zlecenia do zablokowanego pracownika.');
         });
 
         it('Serwisant może przypisać pracownika w /przypisz (200)', async () => {
@@ -645,18 +675,65 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
 
         it('GET /api/zgloszenia filtruje zapytania zgodnie z rolą', async () => {
             // Pracownik: filtruje po przypisanym pracowniku
-            await request(app).get('/api/zgloszenia').set('Authorization', `Bearer ${pracownikToken}`);
+            const resP = await request(app).get('/api/zgloszenia').set('Authorization', `Bearer ${pracownikToken}`);
+            assert.strictEqual(resP.status, 200);
             assert.ok(lastExecutedQuery.includes('WHERE z.przypisany_pracownik_id = ?'));
-            assert.deepStrictEqual(lastExecutedParams, [1]);
+            assert.deepStrictEqual(lastExecutedParams, [1, 25, 0]);
+            assert.strictEqual(resP.body.total, 1);
+            assert.strictEqual(resP.body.page, 1);
+            assert.strictEqual(resP.body.limit, 25);
+            assert.ok(Array.isArray(resP.body.data));
 
             // Magazynier: filtruje po do_wysylki i zakończone
-            await request(app).get('/api/zgloszenia').set('Authorization', `Bearer ${magazynierToken}`);
+            const resM = await request(app).get('/api/zgloszenia').set('Authorization', `Bearer ${magazynierToken}`);
+            assert.strictEqual(resM.status, 200);
             assert.ok(lastExecutedQuery.includes("WHERE z.status IN ('do_wysylki', 'zakończone')"));
+            assert.deepStrictEqual(lastExecutedParams, [25, 0]);
 
             // Admin: pobiera wszystkie bez klauzuli WHERE dla ról
-            await request(app).get('/api/zgloszenia').set('Authorization', `Bearer ${adminToken}`);
+            const resA = await request(app).get('/api/zgloszenia').set('Authorization', `Bearer ${adminToken}`);
+            assert.strictEqual(resA.status, 200);
             assert.ok(!lastExecutedQuery.includes('WHERE z.przypisany_pracownik_id'));
             assert.ok(!lastExecutedQuery.includes("WHERE z.status IN ('do_wysylki', 'zakończone')"));
+            assert.deepStrictEqual(lastExecutedParams, [25, 0]);
+        });
+
+        it('GET /api/zgloszenia obsługuje parametry filtrowania (?status, ?pracownik, ?szukaj) oraz paginację i sortowanie', async () => {
+            // Filtr statusu i pracownika
+            await request(app)
+                .get('/api/zgloszenia?status=w_realizacji&pracownik=50&strona=2&limit=10&sort=asc')
+                .set('Authorization', `Bearer ${adminToken}`);
+            assert.ok(lastExecutedQuery.includes('z.status = ?'));
+            assert.ok(lastExecutedQuery.includes('z.przypisany_pracownik_id = ?'));
+            assert.ok(lastExecutedQuery.includes('ORDER BY z.created_at ASC'));
+            assert.ok(lastExecutedQuery.includes('LIMIT ? OFFSET ?'));
+            assert.deepStrictEqual(lastExecutedParams, ['w_realizacji', 50, 10, 10]);
+
+            // Filtr pracownik=nieprzypisane
+            await request(app)
+                .get('/api/zgloszenia?pracownik=nieprzypisane')
+                .set('Authorization', `Bearer ${adminToken}`);
+            assert.ok(lastExecutedQuery.includes('z.przypisany_pracownik_id IS NULL'));
+
+            // Filtr wyszukiwania (?szukaj=) - wyłącznie przez placeholdery ?
+            await request(app)
+                .get('/api/zgloszenia?szukaj=Warszawa')
+                .set('Authorization', `Bearer ${adminToken}`);
+            assert.ok(lastExecutedQuery.includes('LIKE ?'));
+            // Upewniamy się, że ciąg 'Warszawa' NIE został wklejony do zapytania SQL
+            assert.ok(!lastExecutedQuery.includes('Warszawa'));
+            // I że znajduje się wyłącznie w parametrach jako '%Warszawa%'
+            assert.strictEqual(lastExecutedParams.filter(p => p === '%Warszawa%').length, 13);
+
+            // Łączenie reguły roli pracownika z filtrem statusu i szukaj
+            await request(app)
+                .get('/api/zgloszenia?status=nowe&szukaj=myBoard')
+                .set('Authorization', `Bearer ${pracownikToken}`);
+            assert.ok(lastExecutedQuery.includes('z.przypisany_pracownik_id = ?'));
+            assert.ok(lastExecutedQuery.includes('z.status = ?'));
+            assert.ok(lastExecutedQuery.includes('LIKE ?'));
+            assert.strictEqual(lastExecutedParams[0], 1); // ID zalogowanego pracownika
+            assert.strictEqual(lastExecutedParams[1], 'nowe'); // status
         });
     });
 
@@ -927,6 +1004,328 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 .send({ currentPassword: 'prawidloweHaslo123', newPassword: 'NoweSuperHaslo123' });
             assert.strictEqual(res.status, 200);
             assert.strictEqual(res.body.message, 'Twoje hasło zostało pomyślnie zmienione.');
+        });
+    });
+
+    describe('11. Historia zgłoszeń (tabela historia_zgloszen i funkcja pomocnicza)', () => {
+        beforeEach(() => {
+            allExecutedQueries = [];
+        });
+
+        it('Utworzenie zgłoszenia przez POST /api/zgloszenia zapisuje wpis w historia_zgloszen', async () => {
+            const resp = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 10',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/999/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Nie wyświetla obrazu'
+                });
+
+            assert.strictEqual(resp.status, 201);
+            const historyInsert = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.ok(historyInsert, 'Powinien zostać wykonany INSERT do historia_zgloszen');
+            // Parametry: [zgloszenieId, uzytkownikId, akcja, zStatusu, naStatus, szczegoly]
+            assert.strictEqual(historyInsert.values[2], 'utworzenie');
+            assert.strictEqual(historyInsert.values[4], 'nowe');
+        });
+
+        it('Przypisanie pracownika przez PATCH /api/zgloszenia/:id/przypisz zapisuje wpis w historia_zgloszen', async () => {
+            setMockTicket({ status: 'nowe', przypisany_pracownik_id: null });
+            const resp = await request(app)
+                .patch('/api/zgloszenia/1/przypisz')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ pracownik_id: 1 });
+
+            assert.strictEqual(resp.status, 200);
+            const historyInsert = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.ok(historyInsert, 'Powinien zostać wykonany INSERT do historia_zgloszen');
+            assert.strictEqual(historyInsert.values[0], 1);
+            assert.strictEqual(historyInsert.values[1], 99); // admin_testowy id
+            assert.strictEqual(historyInsert.values[2], 'przypisanie');
+            assert.strictEqual(historyInsert.values[3], 'nowe');
+            assert.strictEqual(historyInsert.values[4], 'w_realizacji');
+            assert.strictEqual(historyInsert.values[5], 'Przypisano pracownika: user_testowy');
+        });
+
+        it('Opisanie i zatwierdzenie naprawy przez PATCH /api/zgloszenia/:id/naprawione zapisuje wpis "naprawa"', async () => {
+            setMockTicket({ status: 'w_realizacji', przypisany_pracownik_id: 1 });
+            const resp = await request(app)
+                .patch('/api/zgloszenia/1/naprawione')
+                .set('Authorization', `Bearer ${pracownikToken}`)
+                .send({ opis_naprawy: 'Wymieniono płytę główną zasilacza' });
+
+            assert.strictEqual(resp.status, 200);
+            const historyInsert = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.ok(historyInsert, 'Powinien zostać wykonany INSERT do historia_zgloszen');
+            assert.strictEqual(historyInsert.values[1], 1); // user_testowy id
+            assert.strictEqual(historyInsert.values[2], 'naprawa');
+            assert.strictEqual(historyInsert.values[3], 'w_realizacji');
+            assert.strictEqual(historyInsert.values[4], 'do_wysylki');
+            assert.strictEqual(historyInsert.values[5], 'Opis naprawy: Wymieniono płytę główną zasilacza');
+        });
+
+        it('Wysyłka i zakończenie zlecenia przez PATCH /api/zgloszenia/:id/status zapisuje wpis "wysyłka"', async () => {
+            setMockTicket({ status: 'do_wysylki' });
+            const resp = await request(app)
+                .patch('/api/zgloszenia/1/status')
+                .set('Authorization', `Bearer ${magazynierToken}`)
+                .send({ status: 'zakończone', numer_listu: 'DPD-123456789' });
+
+            assert.strictEqual(resp.status, 200);
+            const historyInsert = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.ok(historyInsert, 'Powinien zostać wykonany INSERT do historia_zgloszen');
+            assert.strictEqual(historyInsert.values[1], 2); // magazynier_testowy id
+            assert.strictEqual(historyInsert.values[2], 'wysyłka');
+            assert.strictEqual(historyInsert.values[3], 'do_wysylki');
+            assert.strictEqual(historyInsert.values[4], 'zakończone');
+            assert.ok(historyInsert.values[5].includes('DPD-123456789'));
+        });
+
+        it('Aktualizacja samego numeru listu na statusie "zakończone" zapisuje wpis "zmiana_numeru_listu"', async () => {
+            setMockTicket({ status: 'zakończone', numer_listu: 'DPD-OLD' });
+            const resp = await request(app)
+                .patch('/api/zgloszenia/1/status')
+                .set('Authorization', `Bearer ${magazynierToken}`)
+                .send({ status: 'zakończone', numer_listu: 'DPD-NEW-999' });
+
+            assert.strictEqual(resp.status, 200);
+            const historyInsert = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.ok(historyInsert, 'Powinien zostać wykonany INSERT do historia_zgloszen');
+            assert.strictEqual(historyInsert.values[2], 'zmiana_numeru_listu');
+            assert.strictEqual(historyInsert.values[3], 'zakończone');
+            assert.strictEqual(historyInsert.values[4], 'zakończone');
+            assert.ok(historyInsert.values[5].includes('DPD-NEW-999'));
+        });
+
+        it('Cofnięcie statusu przez admina zapisuje wpis "zmiana_statusu"', async () => {
+            setMockTicket({ status: 'w_realizacji' });
+            const resp = await request(app)
+                .patch('/api/zgloszenia/1/status')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ status: 'nowe' });
+
+            assert.strictEqual(resp.status, 200);
+            const historyInsert = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.ok(historyInsert, 'Powinien zostać wykonany INSERT do historia_zgloszen');
+            assert.strictEqual(historyInsert.values[2], 'zmiana_statusu');
+            assert.strictEqual(historyInsert.values[3], 'w_realizacji');
+            assert.strictEqual(historyInsert.values[4], 'nowe');
+        });
+
+        it('Usunięcie zgłoszenia przez DELETE /api/zgloszenia/:id zapisuje wpis "usunięcie" ze szczegółem usunięcia przez X', async () => {
+            setMockTicket({ status: 'nowe' });
+            const resp = await request(app)
+                .delete('/api/zgloszenia/1')
+                .set('Authorization', `Bearer ${adminToken}`);
+
+            assert.strictEqual(resp.status, 200);
+            const historyInsert = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.ok(historyInsert, 'Powinien zostać wykonany INSERT do historia_zgloszen przed usunięciem');
+            assert.strictEqual(historyInsert.values[0], 1);
+            assert.strictEqual(historyInsert.values[1], 99);
+            assert.strictEqual(historyInsert.values[2], 'usunięcie');
+            assert.strictEqual(historyInsert.values[3], 'nowe');
+            assert.strictEqual(historyInsert.values[4], null);
+            assert.strictEqual(historyInsert.values[5], 'Wpis usunięty przez admin_testowy');
+
+            const deleteQuery = allExecutedQueries.find(q => q.sql.includes('DELETE FROM zgloszenia'));
+            assert.ok(deleteQuery, 'Powinien nastąpić DELETE zgloszenia');
+        });
+
+        it('GET /api/zgloszenia/:id/historia zwraca listę wpisów historii zgłoszenia', async () => {
+            const resp = await request(app)
+                .get('/api/zgloszenia/1/historia')
+                .set('Authorization', `Bearer ${pracownikToken}`);
+
+            assert.strictEqual(resp.status, 200);
+            assert.ok(Array.isArray(resp.body));
+            assert.strictEqual(resp.body.length, 2);
+            assert.strictEqual(resp.body[0].akcja, 'utworzenie');
+            assert.strictEqual(resp.body[1].akcja, 'przypisanie');
+            assert.strictEqual(resp.body[1].username, 'admin_testowy');
+        });
+    });
+
+    describe('12. Endpoint GET /api/zgloszenia/:id oraz czyszczenie danych etapów przy rollbacku', () => {
+        beforeEach(() => {
+            allExecutedQueries = [];
+        });
+
+        it('GET /api/zgloszenia/:id bez tokenu zwraca 401', async () => {
+            const resp = await request(app).get('/api/zgloszenia/1');
+            assert.strictEqual(resp.status, 401);
+        });
+
+        it('GET /api/zgloszenia/:id z niepoprawnym ID zwraca 400', async () => {
+            const resp = await request(app)
+                .get('/api/zgloszenia/abc')
+                .set('Authorization', `Bearer ${adminToken}`);
+            assert.strictEqual(resp.status, 400);
+            assert.strictEqual(resp.body.error, 'Nieprawidłowe ID zgłoszenia. Wymagana jest liczba całkowita.');
+        });
+
+        it('GET /api/zgloszenia/:id dla nieistniejącego zgłoszenia zwraca 404', async () => {
+            setMockTicket(null);
+            const resp = await request(app)
+                .get('/api/zgloszenia/999')
+                .set('Authorization', `Bearer ${adminToken}`);
+            assert.strictEqual(resp.status, 404);
+            assert.strictEqual(resp.body.error, 'Nie znaleziono zgłoszenia o ID 999.');
+        });
+
+        it('GET /api/zgloszenia/:id zwraca szczegóły zgłoszenia oraz tablicę historia dla admina', async () => {
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1, opis_usterki: 'Uszkodzona matryca' });
+            const resp = await request(app)
+                .get('/api/zgloszenia/1')
+                .set('Authorization', `Bearer ${adminToken}`);
+
+            assert.strictEqual(resp.status, 200);
+            assert.strictEqual(resp.body.id, 1);
+            assert.strictEqual(resp.body.status, 'w_realizacji');
+            assert.strictEqual(resp.body.opis_usterki, 'Uszkodzona matryca');
+            assert.ok(Array.isArray(resp.body.historia));
+            assert.strictEqual(resp.body.historia.length, 2);
+            assert.strictEqual(resp.body.historia[0].akcja, 'utworzenie');
+        });
+
+        it('GET /api/zgloszenia/:id pracownik NIE może podejrzeć zlecenia przypisanego do innego pracownika (403)', async () => {
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 20 });
+            const resp = await request(app)
+                .get('/api/zgloszenia/1')
+                .set('Authorization', `Bearer ${pracownikToken}`);
+
+            assert.strictEqual(resp.status, 403);
+            assert.strictEqual(resp.body.error, 'Brak uprawnień do przeglądania tego zgłoszenia.');
+        });
+
+        it('GET /api/zgloszenia/:id pracownik może podejrzeć zlecenie przypisane do siebie (200)', async () => {
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
+            const resp = await request(app)
+                .get('/api/zgloszenia/1')
+                .set('Authorization', `Bearer ${pracownikToken}`);
+
+            assert.strictEqual(resp.status, 200);
+            assert.strictEqual(resp.body.id, 1);
+            assert.ok(Array.isArray(resp.body.historia));
+        });
+
+        it('GET /api/zgloszenia/:id magazynier NIE może podejrzeć zlecenia w statusie "nowe" lub "w_realizacji" (403)', async () => {
+            setMockTicket({ id: 1, status: 'nowe' });
+            const resp = await request(app)
+                .get('/api/zgloszenia/1')
+                .set('Authorization', `Bearer ${magazynierToken}`);
+
+            assert.strictEqual(resp.status, 403);
+            assert.strictEqual(resp.body.error, 'Brak uprawnień do przeglądania tego zgłoszenia.');
+        });
+
+        it('GET /api/zgloszenia/:id magazynier może podejrzeć zlecenie w statusie "do_wysylki" lub "zakończone" (200)', async () => {
+            setMockTicket({ id: 1, status: 'do_wysylki' });
+            const resp = await request(app)
+                .get('/api/zgloszenia/1')
+                .set('Authorization', `Bearer ${magazynierToken}`);
+
+            assert.strictEqual(resp.status, 200);
+            assert.strictEqual(resp.body.id, 1);
+            assert.strictEqual(resp.body.status, 'do_wysylki');
+            assert.ok(Array.isArray(resp.body.historia));
+        });
+
+        it('Cofnięcie ze statusu "zakończone" do "do_wysylki" czyści data_wyslania i numer_listu na NULL, zachowując opis naprawy', async () => {
+            setMockTicket({
+                id: 1,
+                status: 'zakończone',
+                numer_listu: 'DPD-123',
+                data_wyslania: '2026-01-01',
+                opis_naprawy: 'Wymieniono bezpiecznik'
+            });
+
+            const resp = await request(app)
+                .patch('/api/zgloszenia/1/status')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ status: 'do_wysylki' });
+
+            assert.strictEqual(resp.status, 200);
+
+            // Weryfikacja zapytania UPDATE:
+            const updateQuery = allExecutedQueries.find(q => q.sql.includes('UPDATE zgloszenia'));
+            assert.ok(updateQuery, 'Powinien zostać wykonany UPDATE zgloszenia');
+            assert.ok(updateQuery.sql.includes('data_wyslania = NULL'));
+            assert.ok(updateQuery.sql.includes('numer_listu = NULL'));
+            assert.ok(!updateQuery.sql.includes('opis_naprawy = NULL'), 'Nie powinien czyścić opisu naprawy');
+
+            // Weryfikacja wpisu w historii
+            const historyInsert = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.ok(historyInsert);
+            assert.strictEqual(historyInsert.values[2], 'zmiana_statusu');
+            assert.strictEqual(historyInsert.values[3], 'zakończone');
+            assert.strictEqual(historyInsert.values[4], 'do_wysylki');
+        });
+
+        it('Cofnięcie ze statusu "do_wysylki" do "w_realizacji" czyści opis_naprawy na NULL i zapisuje go w historii', async () => {
+            setMockTicket({
+                id: 1,
+                status: 'do_wysylki',
+                opis_naprawy: 'Wymieniono matrycę 65 cali'
+            });
+
+            const resp = await request(app)
+                .patch('/api/zgloszenia/1/status')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ status: 'w_realizacji' });
+
+            assert.strictEqual(resp.status, 200);
+
+            // Weryfikacja zapytania UPDATE:
+            const updateQuery = allExecutedQueries.find(q => q.sql.includes('UPDATE zgloszenia'));
+            assert.ok(updateQuery);
+            assert.ok(updateQuery.sql.includes('opis_naprawy = NULL'));
+            assert.ok(updateQuery.sql.includes('opis_naprawy_data = NULL'));
+
+            // Weryfikacja historii:
+            const historyInsert = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.ok(historyInsert);
+            assert.strictEqual(historyInsert.values[2], 'zmiana_statusu');
+            assert.strictEqual(historyInsert.values[3], 'do_wysylki');
+            assert.strictEqual(historyInsert.values[4], 'w_realizacji');
+            assert.ok(historyInsert.values[5].includes('Wymieniono matrycę 65 cali'), 'Szczegóły historii powinny zawierać wycofany opis naprawy');
+        });
+
+        it('Cofnięcie ze statusu "zakończone" do "w_realizacji" czyści zarówno wysyłkę jak i naprawę, przenosząc opis do historii', async () => {
+            setMockTicket({
+                id: 1,
+                status: 'zakończone',
+                numer_listu: 'DPD-999',
+                data_wyslania: '2026-01-01',
+                opis_naprawy: 'Naprawa portu HDMI'
+            });
+
+            const resp = await request(app)
+                .patch('/api/zgloszenia/1/status')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ status: 'w_realizacji' });
+
+            assert.strictEqual(resp.status, 200);
+
+            const updateQuery = allExecutedQueries.find(q => q.sql.includes('UPDATE zgloszenia'));
+            assert.ok(updateQuery);
+            assert.ok(updateQuery.sql.includes('data_wyslania = NULL'));
+            assert.ok(updateQuery.sql.includes('numer_listu = NULL'));
+            assert.ok(updateQuery.sql.includes('opis_naprawy = NULL'));
+            assert.ok(updateQuery.sql.includes('opis_naprawy_data = NULL'));
+
+            const historyInsert = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.ok(historyInsert);
+            assert.ok(historyInsert.values[5].includes('Naprawa portu HDMI'));
         });
     });
 });

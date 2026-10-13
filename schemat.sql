@@ -21,7 +21,6 @@ CREATE TABLE IF NOT EXISTS zgloszenia (
     adres TEXT NOT NULL,
     kod_pocztowy VARCHAR(6) NOT NULL,
     miasto VARCHAR(100) NOT NULL,
-    wojewodztwo VARCHAR(50) NOT NULL,
     numer_telefonu VARCHAR(20) NOT NULL,
     email VARCHAR(100) NOT NULL,
     opis_usterki TEXT NOT NULL,
@@ -43,4 +42,16 @@ CREATE TABLE IF NOT EXISTS zgloszenia (
     ) DEFAULT 'nowe',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (przypisany_pracownik_id) REFERENCES uzytkownicy (id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS historia_zgloszen (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    zgloszenie_id INT NOT NULL,
+    uzytkownik_id INT NULL,
+    akcja VARCHAR(100) NOT NULL,
+    z_statusu VARCHAR(50) NULL,
+    na_status VARCHAR(50) NULL,
+    szczegoly TEXT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (uzytkownik_id) REFERENCES uzytkownicy (id) ON DELETE SET NULL
 );

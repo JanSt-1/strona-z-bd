@@ -325,7 +325,7 @@
         .btn-logout {
             background: rgba(239, 68, 68, 0.15);
             border: 1px solid rgba(239, 68, 68, 0.3);
-            color: #ff0000;
+            color: #960018;
             padding: 0.45rem 0.9rem;
             border-radius: 6px;
             cursor: pointer;
@@ -527,7 +527,7 @@
         .btn-delete {
             background: rgba(239, 68, 68, 0.12);
             border: 1px solid rgba(239, 68, 68, 0.4);
-            color: #ef4444;
+            color: #7c0a02;
             padding: 0.35rem 0.65rem;
             border-radius: 6px;
             font-size: 0.78rem;
@@ -556,6 +556,135 @@
         .login-box {
             max-width: 420px;
             margin: 2rem auto;
+        }
+
+        /* --- Filtry i paginacja listy zgłoszeń --- */
+        .tickets-controls-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+            background: rgba(255, 255, 255, 0.45);
+            padding: 0.8rem 1rem;
+            border-radius: 10px;
+            border: 1px solid var(--card-border);
+            backdrop-filter: blur(8px);
+        }
+
+        .tickets-filters-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.6rem;
+            align-items: center;
+            flex: 1;
+        }
+
+        .filter-search-form {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            flex: 1;
+            min-width: 240px;
+            max-width: 380px;
+        }
+
+        .filter-input-search {
+            flex: 1;
+            padding: 0.45rem 0.75rem;
+            font-size: 0.85rem;
+            border-radius: 6px;
+            border: 1px solid var(--input-border);
+            background: var(--input-bg);
+            color: var(--text-main);
+        }
+
+        .filter-input-search:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .filter-select {
+            padding: 0.45rem 0.65rem;
+            font-size: 0.82rem;
+            border-radius: 6px;
+            border: 1px solid var(--input-border);
+            background: var(--input-bg);
+            color: var(--text-main);
+            cursor: pointer;
+        }
+
+        .filter-select:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+
+        .btn-filter-action {
+            background: var(--surface);
+            border: 1px solid var(--card-border);
+            color: var(--text-main);
+            padding: 0.45rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.82rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            white-space: nowrap;
+        }
+
+        .btn-filter-action:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+
+        .pagination-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.8rem;
+            margin-top: 1rem;
+            padding: 0.75rem 1rem;
+            background: rgba(255, 255, 255, 0.4);
+            border-radius: 8px;
+            border: 1px solid var(--card-border);
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .pagination-buttons {
+            display: flex;
+            gap: 0.4rem;
+            align-items: center;
+        }
+
+        .btn-page {
+            background: var(--surface);
+            color: var(--text-main);
+            border: 1px solid var(--card-border);
+            padding: 0.35rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.82rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .btn-page:hover:not(:disabled) {
+            border-color: var(--primary);
+            color: var(--primary);
+            transform: translateY(-1px);
+        }
+
+        .btn-page:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none;
         }
 
         @media (max-width: 768px) {
@@ -643,7 +772,7 @@
         .badge-status-blocked {
             background: rgba(239, 68, 68, 0.2);
             border: 1px solid rgba(239, 68, 68, 0.5);
-            color: #b91c1c;
+            color: #7c0a02;
             padding: 3px 8px;
             border-radius: 12px;
             font-size: 0.78rem;
@@ -651,6 +780,14 @@
             display: inline-flex;
             align-items: center;
             gap: 4px;
+        }
+
+        .user-row-blocked {
+            background-color: rgba(239, 68, 68, 0.05);
+        }
+
+        .user-row-blocked td:not(:last-child) {
+            opacity: 0.75;
         }
 
         .btn-action-small {
@@ -675,29 +812,29 @@
         .btn-block {
             background: rgba(239, 68, 68, 0.12);
             border-color: rgba(239, 68, 68, 0.35);
-            color: #dc2626;
+            color: #7c0a02;
         }
 
         .btn-block:hover:not(:disabled) {
-            background: #dc2626;
+            background: #7c0a02;
             color: #ffffff;
         }
 
         .btn-unblock {
-            background: rgba(16, 185, 129, 0.12);
+            background: rgba(30, 153, 77, 0.63);
             border-color: rgba(16, 185, 129, 0.35);
-            color: #059669;
+            color: #123524;
         }
 
         .btn-unblock:hover:not(:disabled) {
-            background: #059669;
+            background: #106e157a;
             color: #ffffff;
         }
 
         .btn-password {
             background: rgba(59, 130, 246, 0.12);
             border-color: rgba(59, 130, 246, 0.35);
-            color: #2563eb;
+            color: #003399;
         }
 
         .btn-password:hover:not(:disabled) {
@@ -894,14 +1031,6 @@
             { code: '95', miasto: 'Gorzów Wielkopolski' }
         ];
 
-        // Lista województw (etykieta w <option> to wartość z wielką literą)
-        const WOJEWODZTWA = [
-            'dolnośląskie', 'kujawsko-pomorskie', 'lubelskie', 'lubuskie',
-            'łódzkie', 'małopolskie', 'mazowieckie', 'opolskie',
-            'podkarpackie', 'podlaskie', 'pomorskie', 'śląskie',
-            'świętokrzyskie', 'warmińsko-mazurskie', 'wielkopolskie', 'zachodniopomorskie'
-        ];
-
         // Pusty stan formularza zgłoszenia
         const EMPTY_FORM = {
             imie: '',
@@ -912,7 +1041,6 @@
             adres: '',
             kod_pocztowy: '',
             miasto: '',
-            wojewodztwo: '',
             nip: '',
             telefon_kierunkowy: '',
             telefon_firmowy_7: '',
@@ -1021,8 +1149,7 @@
                     [cleanDigits.length < 9, 'Proszę podać pełny, 9-cyfrowy numer telefonu po prefiksie +48.'],
                     // kod pocztowy (XX-XXX)
                     [!/^\d{2}-\d{3}$/.test(formData.kod_pocztowy.trim()), 'Kod pocztowy musi mieć format XX-XXX (np. 00-001).'],
-                    // województwo i przedmiot zgłoszenia
-                    [!formData.wojewodztwo, 'Proszę wybrać województwo z listy.'],
+                    // przedmiot zgłoszenia
                     [!formData.przedmiot_zgloszenia, 'Proszę wybrać przedmiot zgłoszenia z listy.'],
                     // numer seryjny (obowiązkowy, jeśli aktywny dla przedmiotu)
                     [isSerialNumberAllowed(formData.przedmiot_zgloszenia) && !formData.numer_seryjny.trim(), 'Pole "Numer seryjny (S/N)" jest obowiązkowe dla wybranego przedmiotu zgłoszenia.'],
@@ -1054,7 +1181,6 @@
                             adres: formData.adres,
                             kod_pocztowy: formData.kod_pocztowy.trim(),
                             miasto: formData.miasto.trim(),
-                            wojewodztwo: formData.wojewodztwo,
                             przedmiot_zgloszenia: formData.przedmiot_zgloszenia,
                             numer_seryjny: isSerialNumberAllowed(formData.przedmiot_zgloszenia) && formData.numer_seryjny ? formData.numer_seryjny.trim() : null,
                             data_zakupu: formData.data_zakupu,
@@ -1204,20 +1330,7 @@
                                         onChange={e => setFormData({ ...formData, miasto: e.target.value })}
                                     />
                                 </div>
-                                <div className="form-group">
-                                    <label htmlFor="wojewodztwo">Województwo *</label>
-                                    <select
-                                        id="wojewodztwo"
-                                        required
-                                        value={formData.wojewodztwo}
-                                        onChange={e => setFormData({ ...formData, wojewodztwo: e.target.value })}
-                                    >
-                                        <option value="">-- Wybierz województwo --</option>
-                                        {WOJEWODZTWA.map(w => (
-                                            <option key={w} value={w}>{w.charAt(0).toUpperCase() + w.slice(1)}</option>
-                                        ))}
-                                    </select>
-                                </div>
+
                                 <div className="form-group">
                                     <label htmlFor="nip">NIP * (10 cyfr, bez myślników)</label>
                                     <input
@@ -1623,8 +1736,97 @@
             );
         }
 
+        // Modal edycji / wprowadzania numeru listu przewozowego (dla administratora i magazyniera)
+        function TrackingNumberModal({ ticket, onClose, onSave }) {
+            const [numer, setNumer] = useState(ticket?.numer_listu || '');
+            const [saving, setSaving] = useState(false);
+            const [error, setError] = useState(null);
+
+            if (!ticket) return null;
+
+            async function handleSubmit(e) {
+                e.preventDefault();
+                setError(null);
+                const trimmed = numer.trim();
+                if (trimmed.length > 100) {
+                    setError('Numer listu nie może być dłuższy niż 100 znaków.');
+                    return;
+                }
+                setSaving(true);
+                try {
+                    await onSave(ticket.id, trimmed);
+                    onClose();
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setSaving(false);
+                }
+            }
+
+            return (
+                <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+                    <div className="modal-card" style={{ maxWidth: '440px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
+                            <h3 style={{ margin: 0, fontSize: '1.15rem', color: '#ffffff' }}>
+                                📦 Numer listu przewozowego — Zgłoszenie #{ticket.id}
+                            </h3>
+                            <button
+                                type="button"
+                                onClick={onClose}
+                                style={{ background: 'transparent', border: 'none', color: '#ff0000', fontSize: '1.25rem', cursor: 'pointer' }}
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        {error && (
+                            <div className="alert alert-error" style={{ marginBottom: '1rem' }}>
+                                {error}
+                            </div>
+                        )}
+
+                        <form onSubmit={handleSubmit}>
+                            <div style={{ marginBottom: '1.25rem' }}>
+                                <label style={{ color: '#ffffff', fontWeight: 600, display: 'block', marginBottom: '0.4rem' }}>
+                                    Numer listu przewozowego / przesyłki (maks. 100 znaków)
+                                </label>
+                                <input
+                                    type="text"
+                                    placeholder="Wpisz np. DPD0123456789, 00000123..."
+                                    maxLength="100"
+                                    value={numer}
+                                    onChange={e => setNumer(e.target.value)}
+                                    autoFocus
+                                    style={{
+                                        width: '100%',
+                                        padding: '8px 12px',
+                                        borderRadius: '6px',
+                                        border: '1px solid var(--border)',
+                                        background: 'var(--input-bg)',
+                                        color: 'var(--text)'
+                                    }}
+                                />
+                                <div style={{ textAlign: 'right', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                    {numer.length}/100
+                                </div>
+                            </div>
+
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                                <button type="button" className="btn-reset" onClick={onClose} disabled={saving}>
+                                    Anuluj
+                                </button>
+                                <button type="submit" className="btn-submit" disabled={saving}>
+                                    {saving ? 'Zapisywanie...' : 'Zapisz numer listu'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        }
+
         // Kontroler statusu w wierszu tabeli dopasowany do ról
-        function StatusControl({ ticket, user, onUpdateStatus, onOpenRepairModal }) {
+        function StatusControl({ ticket, user, onUpdateStatus, onOpenRepairModal, onOpenTrackingModal }) {
             const role = user?.role || 'pracownik';
             const curStatus = ticket.status || 'nowe';
 
@@ -1723,6 +1925,11 @@
                                     >
                                         Oznacz jako naprawione
                                     </button>
+                                )}
+                                {curStatus === 'do_wysylki' && (
+                                    <div style={{ marginTop: '0.2rem', marginBottom: '0.2rem' }}>
+                                        <ShipControl ticket={ticket} onUpdateStatus={onUpdateStatus} />
+                                    </div>
                                 )}
                                 <select
                                     className="status-select"
@@ -2261,7 +2468,7 @@
                                         const isSelf = u.id === currentUser?.id;
                                         const isBusy = actionInProgressId === u.id;
                                         return (
-                                            <tr key={u.id} style={{ opacity: u.aktywny ? 1 : 0.65 }}>
+                                            <tr key={u.id} className={u.aktywny ? '' : 'user-row-blocked'}>
                                                 <td><strong>#{u.id}</strong></td>
                                                 <td>
                                                     <span style={{ fontWeight: 600, fontSize: '0.92rem' }}>{u.username}</span>
@@ -2374,8 +2581,18 @@
             const [deletingId, setDeletingId] = useState(null);
             const [alert, setAlert] = useState(null);
             const [repairModalTicket, setRepairModalTicket] = useState(null);
+            const [trackingModalTicket, setTrackingModalTicket] = useState(null);
             const [dashboardTab, setDashboardTab] = useState('tickets'); // 'tickets' | 'users'
             const [showOwnPasswordModal, setShowOwnPasswordModal] = useState(false);
+
+            // Stan paginacji i parametrów filtrowania listy zgłoszeń
+            const [page, setPage] = useState(1);
+            const [total, setTotal] = useState(0);
+            const [totalPages, setTotalPages] = useState(1);
+            const [searchQuery, setSearchQuery] = useState('');
+            const [statusFilter, setStatusFilter] = useState('');
+            const [workerFilter, setWorkerFilter] = useState('');
+            const [sortOrder, setSortOrder] = useState('desc');
 
             function showAlert(message, type = 'success') {
                 setAlert({ message, type });
@@ -2432,13 +2649,37 @@
                 return data;
             }
 
-            async function fetchTickets() {
+            async function fetchTickets(overrides = {}) {
                 setLoading(true);
                 try {
-                    const data = await apiJson('/zgloszenia', {}, 'Błąd podczas pobierania zgłoszeń.');
+                    const currentPage = overrides.page !== undefined ? overrides.page : page;
+                    const currentSearch = overrides.search !== undefined ? overrides.search : searchQuery;
+                    const currentStatus = overrides.status !== undefined ? overrides.status : statusFilter;
+                    const currentWorker = overrides.worker !== undefined ? overrides.worker : workerFilter;
+                    const currentSort = overrides.sort !== undefined ? overrides.sort : sortOrder;
+
+                    const q = new URLSearchParams();
+                    if (currentPage) q.set('strona', currentPage);
+                    q.set('limit', '25');
+                    if (currentSearch && currentSearch.trim()) q.set('szukaj', currentSearch.trim());
+                    if (currentStatus) q.set('status', currentStatus);
+                    if (currentWorker) q.set('pracownik', currentWorker);
+                    if (currentSort) q.set('sort', currentSort);
+
+                    const data = await apiJson(`/zgloszenia?${q.toString()}`, {}, 'Błąd podczas pobierania zgłoszeń.');
                     if (!data) return;
 
-                    setTickets(Array.isArray(data) ? data : []);
+                    const list = Array.isArray(data) ? data : (data.data || data.zgloszenia || []);
+                    setTickets(list);
+
+                    if (data && typeof data === 'object' && !Array.isArray(data)) {
+                        setTotal(typeof data.total === 'number' ? data.total : list.length);
+                        setPage(data.page || currentPage || 1);
+                        setTotalPages(data.totalPages || 1);
+                    } else {
+                        setTotal(list.length);
+                        setTotalPages(1);
+                    }
                 } catch (err) {
                     showAlert(err.message, 'error');
                 } finally {
@@ -2449,7 +2690,7 @@
             useEffect(() => {
                 fetchTickets();
                 fetchWorkers();
-            }, [token]);
+            }, [token, page, statusFilter, workerFilter, sortOrder]);
 
             async function handleAssignWorker(ticketId, pracownikId) {
                 try {
@@ -2501,6 +2742,21 @@
                 } catch (err) {
                     showAlert(err.message, 'error');
                 }
+            }
+
+            async function handleSaveTrackingNumber(id, numerListu) {
+                const targetTicket = tickets.find(t => t.id === id);
+                const currentStatus = targetTicket?.status || 'zakończone';
+                const body = { status: currentStatus, numer_listu: numerListu };
+                const data = await apiJson(`/zgloszenia/${id}/status`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                }, 'Nie udało się zapisać numeru listu przewozowego.');
+                if (!data) return;
+
+                showAlert(`Zgłoszenie #${id}: numer listu przewozowego został pomyślnie zapisany.`, 'success');
+                fetchTickets();
             }
 
             async function handleDeleteTicket(id) {
@@ -2564,7 +2820,7 @@
                                 </svg>
                                 Zmień hasło
                             </button>
-                            <button className="nav-btn" onClick={currentTab === 'users' ? () => {} : fetchTickets}>
+                            <button className="nav-btn" onClick={currentTab === 'users' ? () => { } : fetchTickets}>
                                 Odśwież
                             </button>
                             <button className="btn-logout" onClick={onLogout}>
@@ -2588,7 +2844,7 @@
                                     <line x1="16" y1="17" x2="8" y2="17"></line>
                                     <polyline points="10 9 9 9 8 9"></polyline>
                                 </svg>
-                                Zgłoszenia serwisowe ({tickets.length})
+                                Zgłoszenia serwisowe ({total !== undefined ? total : tickets.length})
                             </button>
                             <button
                                 type="button"
@@ -2617,230 +2873,383 @@
                     ) : (
                         <>
 
-                    <div className="tickets-table-wrapper">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th style={{ width: '45px' }}>ID</th>
-                                    <th style={{ minWidth: '150px' }}>Klient &amp; Kontakt</th>
-                                    <th style={{ minWidth: '120px' }}>Adres</th>
-                                    <th style={{ minWidth: '220px', maxWidth: '340px' }}>Przedmiot &amp; Usterka</th>
-                                    <th style={{ minWidth: '140px' }}>Przypisany pracownik</th>
-                                    <th style={{ minWidth: '220px', maxWidth: '340px' }}>Raport z naprawy</th>
-                                    <th style={{ minWidth: '110px' }}>Nr FV &amp; NIP</th>
-                                    <th style={{ minWidth: '130px' }}>Status</th>
-                                    <th style={{ minWidth: '130px' }}>Data</th>
-                                    <th style={{ minWidth: '80px' }}>Akcje</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {loading ? (
-                                    <tr>
-                                        <td colSpan="10" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
-                                            Ładowanie danych z bazy MySQL...
-                                        </td>
-                                    </tr>
-                                ) : tickets.length === 0 ? (
-                                    <tr>
-                                        <td colSpan="10" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem 1rem' }}>
-                                            {getEmptyMessage()}
-                                        </td>
-                                    </tr>
-                                ) : (
-                                    tickets.map(t => (
-                                        <tr key={t.id}>
-                                            <td><strong>#{t.id}</strong></td>
-                                            <td>
-                                                <div><strong>{t.imie} {t.nazwisko}</strong></div>
-                                                {t.nazwa_firmy && (
-                                                    <div style={{ fontSize: '0.8rem', color: 'var(--primary)', fontWeight: 600 }}>
-                                                        Nazwa firmy: {t.nazwa_firmy}
-                                                    </div>
-                                                )}
-                                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t.email}</div>
-                                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t.numer_telefonu}</div>
-                                            </td>
-                                            <td>
-                                                <div><small>{t.adres}</small></div>
-                                                {(t.kod_pocztowy || t.miasto) && (
-                                                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                                                        {t.kod_pocztowy} {t.miasto}
-                                                    </div>
-                                                )}
-                                                {t.wojewodztwo && (
-                                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'capitalize' }}>
-                                                        woj. {t.wojewodztwo}
-                                                    </div>
-                                                )}
-                                            </td>
-                                            <td>
-                                                {t.przedmiot_zgloszenia && (
-                                                    <div style={{ fontWeight: 600, color: 'var(--primary)', marginBottom: '3px' }}>
-                                                        Produkt: {t.przedmiot_zgloszenia}
-                                                    </div>
-                                                )}
-                                                {t.numer_seryjny && (
-                                                    <div style={{ fontSize: '0.78rem', color: '#1f2937', fontWeight: 600, marginBottom: '2px' }}>
-                                                        SN: {t.numer_seryjny}
-                                                    </div>
-                                                )}
-                                                {t.data_zakupu && (
-                                                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-                                                        Data Zakupu: {t.data_zakupu}
-                                                    </div>
-                                                )}
-                                                <div style={{
-                                                    whiteSpace: 'pre-wrap',
-                                                    wordBreak: 'break-word',
-                                                    overflowWrap: 'break-word',
-                                                    fontSize: '0.85rem',
-                                                    lineHeight: '1.45',
-                                                    color: 'var(--text-main)',
-                                                    marginTop: '4px'
-                                                }}>
-                                                    {t.opis_usterki}
-                                                </div>
-                                            </td>
-                                            <td>
-                                                {(user?.role === 'admin' || user?.role === 'serwisant') ? (
-                                                    <select
-                                                        className="assign-select"
-                                                        value={t.przypisany_pracownik_id || ''}
-                                                        onChange={e => handleAssignWorker(t.id, e.target.value)}
-                                                        title="Przypisz to zlecenie pracownikowi"
-                                                    >
-                                                        <option value="">— Nieprzypisane —</option>
-                                                        {workers.map(w => (
-                                                            <option key={w.id} value={w.id}>
-                                                                {w.username} ({w.role})
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                ) : (
-                                                    <div>
-                                                        {t.przypisany_pracownik_username ? (
-                                                            <span style={{ fontWeight: 600, color: 'var(--primary)', fontSize: '0.85rem' }}>
-                                                                👤 {t.przypisany_pracownik_username}
-                                                            </span>
-                                                        ) : (
-                                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                                                                Nieprzypisane
-                                                            </span>
+                            {/* Pasek filtrów, wyszukiwania i sortowania zgłoszeń */}
+                            <div className="tickets-controls-bar">
+                                <div className="tickets-filters-group">
+                                    <form
+                                        className="filter-search-form"
+                                        onSubmit={(e) => {
+                                            e.preventDefault();
+                                            setPage(1);
+                                            fetchTickets({ page: 1, search: searchQuery });
+                                        }}
+                                    >
+                                        <input
+                                            type="text"
+                                            className="filter-input-search"
+                                            placeholder="Szukaj w zgłoszeniach..."
+                                            value={searchQuery}
+                                            onChange={(e) => setSearchQuery(e.target.value)}
+                                        />
+                                        <button type="submit" className="btn-filter-action" title="Szukaj">
+                                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                                                <circle cx="11" cy="11" r="8"></circle>
+                                                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                                            </svg>
+                                            Szukaj
+                                        </button>
+                                    </form>
+
+                                    {/* Filtr statusu */}
+                                    <select
+                                        className="filter-select"
+                                        value={statusFilter}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setStatusFilter(val);
+                                            setPage(1);
+                                            fetchTickets({ page: 1, status: val });
+                                        }}
+                                    >
+                                        <option value="">Wszystkie statusy</option>
+                                        {user?.role !== 'magazynier' && <option value="nowe">Nowe</option>}
+                                        {user?.role !== 'magazynier' && <option value="w_realizacji">W realizacji</option>}
+                                        <option value="do_wysylki">Do wysyłki</option>
+                                        <option value="zakończone">Zakończone</option>
+                                    </select>
+
+                                    {/* Filtr pracownika (dla ról admin i serwisant) */}
+                                    {(user?.role === 'admin' || user?.role === 'serwisant') && (
+                                        <select
+                                            className="filter-select"
+                                            value={workerFilter}
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                setWorkerFilter(val);
+                                                setPage(1);
+                                                fetchTickets({ page: 1, worker: val });
+                                            }}
+                                        >
+                                            <option value="">Wszyscy pracownicy</option>
+                                            <option value="nieprzypisane">Nieprzypisane</option>
+                                            {workers.map(w => (
+                                                <option key={w.id} value={w.id}>{w.username} ({w.role})</option>
+                                            ))}
+                                        </select>
+                                    )}
+
+                                    {/* Sortowanie po dacie */}
+                                    <select
+                                        className="filter-select"
+                                        value={sortOrder}
+                                        onChange={(e) => {
+                                            const val = e.target.value;
+                                            setSortOrder(val);
+                                            setPage(1);
+                                            fetchTickets({ page: 1, sort: val });
+                                        }}
+                                    >
+                                        <option value="desc">Data: od najnowszych</option>
+                                        <option value="asc">Data: od najstarszych</option>
+                                    </select>
+
+                                    {(searchQuery || statusFilter || workerFilter || sortOrder !== 'desc') && (
+                                        <button
+                                            type="button"
+                                            className="btn-filter-action"
+                                            onClick={() => {
+                                                setSearchQuery('');
+                                                setStatusFilter('');
+                                                setWorkerFilter('');
+                                                setSortOrder('desc');
+                                                setPage(1);
+                                                fetchTickets({ page: 1, search: '', status: '', worker: '', sort: 'desc' });
+                                            }}
+                                            title="Zresetuj wszystkie filtry"
+                                        >
+                                            Wyczyść filtry
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="tickets-table-wrapper">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th style={{ width: '45px' }}>ID</th>
+                                            <th style={{ minWidth: '150px' }}>Klient &amp; Kontakt</th>
+                                            <th style={{ minWidth: '120px' }}>Adres</th>
+                                            <th style={{ minWidth: '220px', maxWidth: '340px' }}>Przedmiot &amp; Usterka</th>
+                                            <th style={{ minWidth: '140px' }}>Przypisany pracownik</th>
+                                            <th style={{ minWidth: '220px', maxWidth: '340px' }}>Raport z naprawy</th>
+                                            <th style={{ minWidth: '110px' }}>Nr FV &amp; NIP</th>
+                                            <th style={{ minWidth: '130px' }}>Status</th>
+                                            <th style={{ minWidth: '130px' }}>Data</th>
+                                            <th style={{ minWidth: '80px' }}>Akcje</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {loading ? (
+                                            <tr>
+                                                <td colSpan="10" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                                                    Ładowanie danych z bazy MySQL...
+                                                </td>
+                                            </tr>
+                                        ) : tickets.length === 0 ? (
+                                            <tr>
+                                                <td colSpan="10" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem 1rem' }}>
+                                                    {getEmptyMessage()}
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            tickets.map(t => (
+                                                <tr key={t.id}>
+                                                    <td><strong>#{t.id}</strong></td>
+                                                    <td>
+                                                        <div><strong>{t.imie} {t.nazwisko}</strong></div>
+                                                        {t.nazwa_firmy && (
+                                                            <div style={{ fontSize: '0.8rem', color: 'var(--primary)', fontWeight: 600 }}>
+                                                                Nazwa firmy: {t.nazwa_firmy}
+                                                            </div>
                                                         )}
-                                                    </div>
-                                                )}
-                                            </td>
-                                            <td>
-                                                {t.opis_naprawy ? (
-                                                    <div className="repair-box">
-                                                        <div style={{ fontWeight: 600, color: ' var(--primary)', marginBottom: '2px' }}>
-                                                            Naprawiono:
-                                                        </div>
+                                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t.email}</div>
+                                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{t.numer_telefonu}</div>
+                                                    </td>
+                                                    <td>
+                                                        <div><small>{t.adres}</small></div>
+                                                        {(t.kod_pocztowy || t.miasto) && (
+                                                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                                                                {t.kod_pocztowy} {t.miasto}
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                    <td>
+                                                        {t.przedmiot_zgloszenia && (
+                                                            <div style={{ fontWeight: 600, color: 'var(--primary)', marginBottom: '3px' }}>
+                                                                Produkt: {t.przedmiot_zgloszenia}
+                                                            </div>
+                                                        )}
+                                                        {t.numer_seryjny && (
+                                                            <div style={{ fontSize: '0.78rem', color: '#1f2937', fontWeight: 600, marginBottom: '2px' }}>
+                                                                SN: {t.numer_seryjny}
+                                                            </div>
+                                                        )}
+                                                        {t.data_zakupu && (
+                                                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
+                                                                Data Zakupu: {t.data_zakupu}
+                                                            </div>
+                                                        )}
                                                         <div style={{
                                                             whiteSpace: 'pre-wrap',
                                                             wordBreak: 'break-word',
                                                             overflowWrap: 'break-word',
-                                                            fontSize: '0.82rem',
+                                                            fontSize: '0.85rem',
                                                             lineHeight: '1.45',
-                                                            margin: 0
+                                                            color: 'var(--text-main)',
+                                                            marginTop: '4px'
                                                         }}>
-                                                            {t.opis_naprawy}
+                                                            {t.opis_usterki}
                                                         </div>
-                                                        {t.opis_naprawy_data && (
-                                                            <div className="repair-date">
-                                                                {t.opis_naprawy_data}
+                                                    </td>
+                                                    <td>
+                                                        {(user?.role === 'admin' || user?.role === 'serwisant') ? (
+                                                            <select
+                                                                className="assign-select"
+                                                                value={t.przypisany_pracownik_id || ''}
+                                                                onChange={e => handleAssignWorker(t.id, e.target.value)}
+                                                                title="Przypisz to zlecenie pracownikowi"
+                                                            >
+                                                                <option value="">— Nieprzypisane —</option>
+                                                                {workers.map(w => (
+                                                                    <option key={w.id} value={w.id}>
+                                                                        {w.username} ({w.role})
+                                                                    </option>
+                                                                ))}
+                                                            </select>
+                                                        ) : (
+                                                            <div>
+                                                                {t.przypisany_pracownik_username ? (
+                                                                    <span style={{ fontWeight: 600, color: 'var(--primary)', fontSize: '0.85rem' }}>
+                                                                        👤 {t.przypisany_pracownik_username}
+                                                                    </span>
+                                                                ) : (
+                                                                    <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                                                                        Nieprzypisane
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                         )}
-                                                    </div>
-                                                ) : (
-                                                    <div>
-                                                        {((user?.role === 'pracownik' && t.status === 'w_realizacji') || user?.role === 'admin') && t.status !== 'zakończone' ? (
+                                                    </td>
+                                                    <td>
+                                                        {t.opis_naprawy ? (
+                                                            <div className="repair-box">
+                                                                <div style={{ fontWeight: 600, color: ' var(--primary)', marginBottom: '2px' }}>
+                                                                    Naprawiono:
+                                                                </div>
+                                                                <div style={{
+                                                                    whiteSpace: 'pre-wrap',
+                                                                    wordBreak: 'break-word',
+                                                                    overflowWrap: 'break-word',
+                                                                    fontSize: '0.82rem',
+                                                                    lineHeight: '1.45',
+                                                                    margin: 0
+                                                                }}>
+                                                                    {t.opis_naprawy}
+                                                                </div>
+                                                                {t.opis_naprawy_data && (
+                                                                    <div className="repair-date">
+                                                                        {t.opis_naprawy_data}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ) : (
+                                                            <div>
+                                                                {((user?.role === 'pracownik' && t.status === 'w_realizacji') || user?.role === 'admin') && t.status !== 'zakończone' ? (
+                                                                    <button
+                                                                        type="button"
+                                                                        className="btn-repair"
+                                                                        onClick={() => setRepairModalTicket(t)}
+                                                                        title="Wpisz co zostało zrobione i przekaż do wysyłki"
+                                                                    >
+                                                                        Opisz naprawę
+                                                                    </button>
+                                                                ) : (
+                                                                    <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                                                                        {user?.role === 'pracownik' && t.status === 'nowe' ? 'Wymaga rozpoczęcia' : 'Oczekuje na opis'}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                    <td>
+                                                        <div><strong>{t.numer_fv}</strong></div>
+                                                        {t.nip && (
+                                                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                                                                NIP: {t.nip}
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                    <td>
+                                                        <StatusControl
+                                                            ticket={t}
+                                                            user={user}
+                                                            onUpdateStatus={handleUpdateStatus}
+                                                            onOpenRepairModal={ticketToRepair => setRepairModalTicket(ticketToRepair)}
+                                                            onOpenTrackingModal={ticketToTrack => setTrackingModalTicket(ticketToTrack)}
+                                                        />
+                                                    </td>
+                                                    <td>
+                                                        <small>
+                                                            {t.created_at ? new Date(t.created_at).toLocaleString('pl-PL') : '-'}
+                                                        </small>
+                                                        {t.data_wyslania && (
+                                                            <div style={{ marginTop: '4px', fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 600 }}>
+                                                                Wysłano: {t.data_wyslania}
+                                                            </div>
+                                                        )}
+                                                        {t.numer_listu && (
+                                                            <div style={{ marginTop: '2px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                                                List: <strong style={{ color: 'var(--text)', wordBreak: 'break-all' }}>{t.numer_listu}</strong>
+                                                            </div>
+                                                        )}
+                                                        {user?.role === 'admin' && (
+                                                            <div style={{ marginTop: '5px' }}>
+                                                                <button
+                                                                    type="button"
+                                                                    className="btn-filter-action"
+                                                                    style={{ fontSize: '0.72rem', padding: '2px 6px', background: 'transparent', border: '1px solid var(--border)', color: 'var(--text)' }}
+                                                                    onClick={() => setTrackingModalTicket(t)}
+                                                                    title="Wpisz lub zmień numer listu przewozowego"
+                                                                >
+                                                                    ✏ {t.numer_listu ? 'Zmień nr listu' : '+ Nr listu'}
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </td>
+                                                    <td>
+                                                        {user?.role === 'admin' ? (
                                                             <button
-                                                                type="button"
-                                                                className="btn-repair"
-                                                                onClick={() => setRepairModalTicket(t)}
-                                                                title="Wpisz co zostało zrobione i przekaż do wysyłki"
+                                                                className="btn-delete"
+                                                                disabled={deletingId === t.id}
+                                                                onClick={() => handleDeleteTicket(t.id)}
+                                                                title={`Usuń zgłoszenie #${t.id}`}
                                                             >
-                                                                Opisz naprawę
+                                                                {deletingId === t.id ? (
+                                                                    'Usuwanie...'
+                                                                ) : (
+                                                                    <>
+                                                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle', marginRight: '3px' }}>
+                                                                            <polyline points="3 6 5 6 21 6"></polyline>
+                                                                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                                                                            <line x1="10" y1="11" x2="10" y2="17"></line>
+                                                                            <line x1="14" y1="11" x2="14" y2="17"></line>
+                                                                        </svg>
+                                                                        Usuń
+                                                                    </>
+                                                                )}
                                                             </button>
                                                         ) : (
-                                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                                                                {user?.role === 'pracownik' && t.status === 'nowe' ? 'Wymaga rozpoczęcia' : 'Oczekuje na opis'}
-                                                            </span>
+                                                            <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>—</span>
                                                         )}
-                                                    </div>
-                                                )}
-                                            </td>
-                                            <td>
-                                                <div><strong>{t.numer_fv}</strong></div>
-                                                {t.nip && (
-                                                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                                                        NIP: {t.nip}
-                                                    </div>
-                                                )}
-                                            </td>
-                                            <td>
-                                                <StatusControl
-                                                    ticket={t}
-                                                    user={user}
-                                                    onUpdateStatus={handleUpdateStatus}
-                                                    onOpenRepairModal={ticketToRepair => setRepairModalTicket(ticketToRepair)}
-                                                />
-                                            </td>
-                                            <td>
-                                                <small>
-                                                    {t.created_at ? new Date(t.created_at).toLocaleString('pl-PL') : '-'}
-                                                </small>
-                                                {t.data_wyslania && (
-                                                    <div style={{ marginTop: '4px', fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 600 }}>
-                                                        Wysłano: {t.data_wyslania}
-                                                    </div>
-                                                )}
-                                                {t.numer_listu && (
-                                                    <div style={{ marginTop: '2px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                                        List: <strong style={{ color: 'var(--text)', wordBreak: 'break-all' }}>{t.numer_listu}</strong>
-                                                    </div>
-                                                )}
-                                            </td>
-                                            <td>
-                                                {user?.role === 'admin' ? (
-                                                    <button
-                                                        className="btn-delete"
-                                                        disabled={deletingId === t.id}
-                                                        onClick={() => handleDeleteTicket(t.id)}
-                                                        title={`Usuń zgłoszenie #${t.id}`}
-                                                    >
-                                                        {deletingId === t.id ? (
-                                                            'Usuwanie...'
-                                                        ) : (
-                                                            <>
-                                                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ verticalAlign: 'middle', marginRight: '3px' }}>
-                                                                    <polyline points="3 6 5 6 21 6"></polyline>
-                                                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                                                                    <line x1="10" y1="11" x2="10" y2="17"></line>
-                                                                    <line x1="14" y1="11" x2="14" y2="17"></line>
-                                                                </svg>
-                                                                Usuń
-                                                            </>
-                                                        )}
-                                                    </button>
-                                                ) : (
-                                                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>—</span>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
 
-                    <RepairModal
-                        ticket={repairModalTicket}
-                        onClose={() => setRepairModalTicket(null)}
-                        onSubmit={handleRepairSubmit}
-                    />
-                    </>
+                            {/* Pasek paginacji */}
+                            <div className="pagination-container">
+                                <div>
+                                    <span>Strona <strong>{page}</strong> z <strong>{totalPages || 1}</strong></span>
+                                    <span style={{ marginLeft: '1rem', color: 'var(--text-muted)' }}>
+                                        (Łącznie wyników: <strong>{total}</strong>)
+                                    </span>
+                                </div>
+                                <div className="pagination-buttons">
+                                    <button
+                                        type="button"
+                                        className="btn-page"
+                                        disabled={page <= 1 || loading}
+                                        onClick={() => {
+                                            const prev = Math.max(1, page - 1);
+                                            setPage(prev);
+                                            fetchTickets({ page: prev });
+                                        }}
+                                    >
+                                        &laquo; Poprzednia
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="btn-page"
+                                        disabled={page >= totalPages || loading}
+                                        onClick={() => {
+                                            const next = page + 1;
+                                            setPage(next);
+                                            fetchTickets({ page: next });
+                                        }}
+                                    >
+                                        Następna &raquo;
+                                    </button>
+                                </div>
+                            </div>
+
+                            <RepairModal
+                                ticket={repairModalTicket}
+                                onClose={() => setRepairModalTicket(null)}
+                                onSubmit={handleRepairSubmit}
+                            />
+
+                            {trackingModalTicket && (
+                                <TrackingNumberModal
+                                    ticket={trackingModalTicket}
+                                    onClose={() => setTrackingModalTicket(null)}
+                                    onSave={handleSaveTrackingNumber}
+                                />
+                            )}
+                        </>
                     )}
 
                     {/* Modal zmiany własnego hasła (dostępny dla każdego zalogowanego) */}

@@ -55,7 +55,19 @@ Uruchom skrypt tworzący bazę `serwis_db` oraz tabele na podstawie schematu `sc
 ```bash
 npm run seed
 ```
-*(Skrypt ten aplikuje pełną strukturę tabel `uzytkownicy` i `zgloszenia` z pliku `schemat.sql`, w tym pola `numer_listu`, `data_wyslania`, `opis_naprawy` itp.).*
+*(Skrypt ten aplikuje pełną strukturę tabel `uzytkownicy`, `zgloszenia` oraz `historia_zgloszen` z pliku `schemat.sql`, w tym pola `numer_listu`, `data_wyslania`, `opis_naprawy` itp.).*
+
+### Krok 3a: Generowanie danych testowych (200 zgłoszeń)
+Aby wypełnić bazę 200 realistycznymi zgłoszeniami serwisowymi (z różnymi statusami, danymi klientów, usterkami, opisami napraw, listami przewozowymi i powiązaną historią zdarzeń), uruchom:
+```bash
+npm run seed:zgloszenia
+# lub bezpośrednio:
+node seed-zgloszenia.js
+```
+Opcjonalnie:
+- `node seed-zgloszenia.js 50` – wygenerowanie innej liczby zgłoszeń (np. 50)
+- `node seed-zgloszenia.js --clean` – wyczyszczenie tabel `zgloszenia` i `historia_zgloszen` przed wygenerowaniem nowych rekordów
+
 
 ### Krok 4: Utworzenie pierwszych kont użytkowników
 Skorzystaj z wbudowanego narzędzia CLI `create-user.js`:
@@ -98,14 +110,14 @@ npm test
 ```
 *Skrypt wykonuje polecenie `node --test` z użyciem `supertest`. Dzięki wbudowanemu mockowaniu puli bazy danych w `app.test.js`, testy wykonują się błyskawicznie i nie wymagają aktywnego serwera MySQL.*
 
-Główne grupy przypadków testowych (łącznie **72 testy** w 11 suitach):
+Główne grupy przypadków testowych (łącznie **93 testy** w 13 suitach):
 1. **Uwierzytelnianie, logowanie i walidacja zgłoszeń**: walidacja pól obowiązkowych, brak tokenu (401), błędne dane logowania (401), poprawny token JWT (200), blokada nieprawidłowych formatów i dat z przyszłości (400).
 2. **Przejście `nowe` → `w_realizacji`**: automatyczne przypisanie zlecenia, uprawnienia serwisanta i admina (200), blokada pracownika i magazyniera (403).
 3. **Przejście `w_realizacji` → `do_wysylki`**: wyłączność dedykowanego endpointu `/naprawione`, wymóg opisu prac, uprawnienia przypisanego pracownika/serwisanta/admina (200), blokada magazyniera (403) oraz blokada przejścia ze statusu `nowe` (409 Conflict).
 4. **Przejście `do_wysylki` → `zakończone`**: uprawnienia magazyniera i admina, wymóg numeru listu przewozowego (`numer_listu`), walidacja długości (max 100 znaków), możliwość aktualizacji numeru listu na zakończonym zleceniu.
 5. **Cofanie statusu (Rollback)**: wyłączne prawo administratora do cofania statusu wstecz (200); blokada dla pozostałych ról (403).
 6. **Niedozwolone skoki w przód**: blokowanie pomijania kroków w procesie (409 Conflict) nawet dla administratora.
-7. **Uprawnienia do dedykowanych endpointów (RBAC)**: `/przypisz`, `/pracownicy`, `DELETE /api/zgloszenia/:id`, filtrowanie listy zgłoszeń zgodnie z rolą.
+7. **Uprawnienia do dedykowanych endpointów (RBAC) oraz parametry listy**: `/przypisz`, `/pracownicy`, `DELETE /api/zgloszenia/:id`, filtrowanie listy zgłoszeń zgodnie z rolą oraz obsługa parametrów query (`?szukaj=`, `?status=`, `?pracownik=`, `?strona=`, `?limit=`, `?sort=`) wyłącznie przez placeholdery `?` w SQL wraz ze zwracaniem metadanych paginacji (`total`, `page`, `limit`, `totalPages`).
 8. **Jednostkowa weryfikacja funkcji `czyMoznaZmienic`**: precyzyjna kontrola macierzy przejść i kodów błędów 409 vs 403.
 9. **Panel administratora – zarządzanie użytkownikami**:
    - `GET /api/admin/users`: lista kont bez pola `password_hash` (403 dla nie-admina, 200 dla admina).
@@ -119,14 +131,23 @@ Główne grupy przypadków testowych (łącznie **72 testy** w 11 suitach):
     - Dostępne dla każdego zalogowanego użytkownika.
     - Wymaga podania dotychczasowego hasła (weryfikacja `bcrypt`) oraz nowego hasła o długości min. 8 znaków.
     - Zwraca 400 przy błędnym haśle lub zbyt krótkim nowym haśle; 200 po udanej zmianie.
+11. **Historia zgłoszeń (`historia_zgloszen` i endpoint `GET /api/zgloszenia/:id/historia`)**:
+    - Tabela audytowa przechowująca pełną historię zmian (`zgloszenie_id`, `uzytkownik_id`, `akcja`, `z_statusu`, `na_status`, `szczegoly`, `created_at`).
+    - Automatyczne wywoływanie funkcji pomocniczej `dodajWpisHistorii` przy każdej akcji: utworzenie zgłoszenia (`utworzenie`), przypisanie pracownika (`przypisanie`), zatwierdzenie naprawy (`naprawa`), wysyłka (`wysyłka`), aktualizacja numeru listu (`zmiana_numeru_listu`), zmiana / cofnięcie statusu (`zmiana_statusu`).
+    - Usunięcie zgłoszenia (`DELETE /api/zgloszenia/:id`) trwale zapisuje wpis `usunięcie` z informacją o usuwającym (np. `Wpis usunięty przez admin`), a brak kaskadowego usuwania na kluczu obcym w `historia_zgloszen` gwarantuje zachowanie pełnej historii po usunięciu zgłoszenia.
+12. **Szczegóły zgłoszenia (`GET /api/zgloszenia/:id`) oraz czyszczenie etapów przy cofaniu statusu**:
+    - Pobieranie pełnych danych zgłoszenia wraz z powiązaną historią audytową. Egzekwowanie uprawnień RBAC (pracownik widzi tylko swoje, magazynier tylko `do_wysylki` i `zakończone`, admin/serwisant wszystkie).
+    - Przy cofaniu statusu wstecz (przez administratora) automatyczne czyszczenie danych późniejszych etapów:
+      - cofnięcie przed `zakończone` resetuje `data_wyslania = NULL` oraz `numer_listu = NULL`,
+      - cofnięcie przed `do_wysylki` resetuje `opis_naprawy = NULL` oraz `opis_naprawy_data = NULL`, a poprzednia treść naprawy jest bezpiecznie utrwalana w historii zdarzeń.
 
 ---
 
 ## Role użytkowników i przejścia statusów
 
 W systemie zaimplementowano role oraz ścisłą mapę przejść statusów (`PRZEJSCIA`):
-- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie zadań, zmiana statusów, wyłączne uprawnienie do cofania statusów wstecz, usuwanie zgłoszeń (`DELETE`), zakładka **„Użytkownicy”** do pełnego zarządzania kontami (tworzenie, zmiana roli, zmiana hasła, blokowanie/odblokowywanie kont).
-- **`serwisant`**: Przegląd wszystkich zleceń i przypisywanie ich pracownikom (przypisanie zlecenia o statusie "nowe" automatycznie zmienia status na "w realizacji"). Może również oznaczyć zlecenie jako naprawione ("w realizacji" -> "do wysyłki") z opisem naprawy.
+- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie zadań dowolnym użytkownikom (w tym serwisantom, pracownikom i magazynierom na dowolnym etapie), zmiana i cofanie statusów, dodawanie/edycja numeru listu przewozowego na dowolnym etapie, wysyłka paczek, usuwanie zgłoszeń (`DELETE`), zakładka **„Użytkownicy”** do pełnego zarządzania kontami (tworzenie, zmiana roli, zmiana hasła, blokowanie/odblokowywanie kont). Admin może zrobić wszystko w całym cyklu życia zgłoszenia.
+- **`serwisant`**: Przegląd wszystkich zleceń i przypisywanie ich pracownikom, serwisantom lub magazynierom (przypisanie zlecenia o statusie "nowe" automatycznie zmienia status na "w realizacji"). Może również oznaczyć zlecenie jako naprawione ("w realizacji" -> "do wysyłki") z opisem naprawy.
 - **`pracownik`**: Domyślnie widzi wyłącznie zlecenia przypisane do siebie. Może oznaczyć zlecenie jako naprawione ("w realizacji" -> "do wysyłki") ze sporządzeniem wymaganego opisu prac.
 - **`magazynier`**: Widzi zlecenia gotowe do wysyłki ("do wysyłki") oraz zakończone. Może oznaczyć zlecenie jako wysłane ("do wysyłki" -> "zakończone") podając numer listu przewozowego (`numer_listu`).
 
