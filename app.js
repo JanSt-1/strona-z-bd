@@ -30,14 +30,29 @@ app.use(helmet({
 }));
 // Limit rozmiaru ciała żądania JSON dobrany tak, aby zmieścił się najdłuższy dopuszczalny opis usterki (65535 znaków + narzut JSON), ale nic ponad to.
 app.use(express.json({ limit: '70kb' }));
-// Serwowanie plików statycznych (np. index.html) – całkowicie bez cache dla przeglądarki
+// Pomocnik do weryfikacji, czy plik posiada hash w nazwie (pliki z buildu produkcyjnego, np. bundle.a1b2c3d4.js, index-D7x2v_4z.js)
+const isHashedFile = (filePath) => {
+    const fileName = path.basename(filePath);
+    return /[.-][a-f0-9]{8,}\./i.test(fileName) || /[.-][a-zA-Z0-9_-]{8,}\./i.test(fileName);
+};
+app.isHashedFile = isHashedFile;
+
+// Serwowanie plików statycznych:
+// - index.html: no-store (przeglądarka pobiera zawsze świeży punkt wejścia SPA)
+// - pliki z buildu z hashem w nazwie: długie cache'owanie (max-age 1 rok, immutable)
+// - pozostałe pliki statyczne bez hasha (np. logo_mentor4.svg): standardowy cache (1 dzień)
 app.use(express.static(path.join(__dirname, 'public'), {
-    etag: false,
-    lastModified: false,
-    setHeaders: (res) => {
-        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-        res.set('Pragma', 'no-cache');
-        res.set('Expires', '0');
+    setHeaders: (res, filePath) => {
+        const fileName = path.basename(filePath).toLowerCase();
+        if (fileName === 'index.html') {
+            res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+            res.set('Pragma', 'no-cache');
+            res.set('Expires', '0');
+        } else if (isHashedFile(filePath)) {
+            res.set('Cache-Control', 'public, max-age=31536000, immutable');
+        } else {
+            res.set('Cache-Control', 'public, max-age=86400');
+        }
     }
 }));
 
@@ -137,13 +152,14 @@ const requireAdminOrSerwisant = requireRoles('admin', 'serwisant');
 
 // --- Endpointy API ---
 
-// 1. Health check (opcjonalny, pomocny weryfikacji serwera)
+// 1. Health check serwera i bazy danych (na zewnątrz wyłącznie status ok / error, szczegóły błędu do console.error)
 app.get('/api/health', async (req, res) => {
     try {
         await currentPool.query('SELECT 1');
-        res.json({ status: 'ok', database: 'connected', timestamp: new Date().toISOString() });
+        return res.json({ status: 'ok' });
     } catch (err) {
-        res.status(500).json({ status: 'error', database: 'disconnected', message: err.message });
+        console.error('Błąd połączenia z bazą danych w /api/health:', err);
+        return res.status(500).json({ status: 'error' });
     }
 });
 

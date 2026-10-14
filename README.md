@@ -110,7 +110,7 @@ npm test
 ```
 *Skrypt wykonuje polecenie `node --test` z użyciem `supertest`. Dzięki wbudowanemu mockowaniu puli bazy danych w `app.test.js`, testy wykonują się błyskawicznie i nie wymagają aktywnego serwera MySQL.*
 
-Główne grupy przypadków testowych (łącznie **112 testów** w 16 suitach):
+Główne grupy przypadków testowych (łącznie **118 testów** w 18 suitach):
 1. **Uwierzytelnianie, logowanie, ochrona Honeypot, klauzula RODO i walidacja zgłoszeń**: walidacja pól obowiązkowych, obowiązkowy checkbox zgody RODO (odrzucenie 400 przy braku lub false, utrwalenie znacznika czasu w `zgoda_rodo_data` przy akceptacji), ochrona antyspamowa Honeypot (wypełnione pole `website` zwraca 201 bez zapisu do bazy), brak tokenu (401), błędne dane logowania (401), poprawny token JWT (200), blokada nieprawidłowych formatów i dat z przyszłości (400).
 2. **Przejście `nowe` → `w_realizacji`**: automatyczne przypisanie zlecenia, uprawnienia serwisanta i admina (200), blokada pracownika i magazyniera (403).
 3. **Przejście `w_realizacji` → `do_wysylki`**: wyłączność dedykowanego endpointu `/naprawione`, wymóg opisu prac, uprawnienia przypisanego pracownika/serwisanta/admina (200), blokada magazyniera (403) oraz blokada przejścia ze statusu `nowe` (409 Conflict).
@@ -152,6 +152,15 @@ Główne grupy przypadków testowych (łącznie **112 testów** w 16 suitach):
 15. **Nagłówki bezpieczeństwa HTTP (`helmet`)**:
     - Zabezpieczenie serwera Express za pomocą biblioteki `helmet` z wyłączonym `contentSecurityPolicy` (ze względu na przeglądarkową kompilację JSX przez Babel Standalone).
     - Aktywne nagłówki ochronne: `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Strict-Transport-Security`, `X-Download-Options: noopen`, `X-Permitted-Cross-Domain-Policies: none`.
+16. **Endpoint `/api/health` (bezpieczny health check)**:
+    - Weryfikacja działania bazy danych (`SELECT 1`).
+    - Sukces zwraca kod HTTP 200 oraz ciało `{ status: "ok" }`.
+    - Awaria bazy danych zwraca kod HTTP 500 oraz ciało `{ status: "error" }` bez ujawniania `err.message` i konfiguracji na zewnątrz.
+    - Pełne szczegóły błędu logowane są wewnętrznie do `console.error`.
+17. **Cache-Control dla plików statycznych (`express.static`)**:
+    - `index.html`: nagłówek `Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate`, `Pragma: no-cache`, `Expires: 0` – wymusza pobieranie zawsze świeżego punktu wejścia SPA przy każdym wejściu użytkownika.
+    - Pliki z buildu z hashem w nazwie (np. `bundle.a1b2c3d4.js`, `style-D7x2v_4z.css`): długie cache'owanie `Cache-Control: public, max-age=31536000, immutable` (1 rok), eliminujące ponowne pobieranie niezmienionych assetów produkcyjnych.
+    - Pozostałe pliki statyczne bez hasha (np. `logo_mentor4.svg`): standardowe cache'owanie (`public, max-age=86400`) bez flagi `no-store`.
 
 ---
 

@@ -109,7 +109,7 @@ Format odpowiedzi błędów: `{ error: string }`.
 | `PATCH` | `/api/admin/users/:id/haslo` | JWT (`admin`) | Ustawienie nowego hasła dla użytkownika (`{ password }` min. 8 znaków). Haszowanie bcrypt. |
 | `PATCH` | `/api/admin/users/:id/status` | JWT (`admin`) | Zmiana/przełączenie statusu blokady konta (`{ aktywny }` lub toggle). Zabezpieczenie: admin nie może zablokować samego siebie (400). |
 | `PATCH` | `/api/profil/haslo` | JWT (każdy zalogowany) | Zmiana własnego hasła użytkownika (`{ currentPassword, newPassword }`). Weryfikuje stare hasło przez bcrypt, nowe hasło min. 8 znaków (400 przy błędzie). |
-| `GET` | `/api/health` | Publiczny | Health check bazy MySQL: `{ status: 'ok', database: 'connected' }`. |
+| `GET` | `/api/health` | Publiczny | Health check serwera i bazy danych: `{ status: 'ok' }` (przy błędzie bazy: 500 `{ status: 'error' }` bez ujawniania `err.message` na zewnątrz; szczegóły błędu trafiają wyłącznie do `console.error`). |
 
 ---
 
@@ -119,6 +119,10 @@ Format odpowiedzi błędów: `{ error: string }`.
 - Dwa niezależne widoki: formularz publiczny klienta (`PublicTicketForm`) oraz panel pracownika (`Dashboard` z logowaniem `LoginForm`).
 - **Ochrona antyspamowa Honeypot:** Ukryte pole formularza `website` (`display: none`, `tabIndex={-1}`, `autoComplete="off"`). Zwykli użytkownicy go nie widzą ani nie wypełniają. Boty wypełniające pole otrzymują 201 Created, lecz zgłoszenie nie trafia do bazy danych.
 - **Klauzula informacyjna RODO i zgoda:** Rozwijana sekcja `<details>`/`<summary>` z prostym placeholderem treści informacyjnej oraz obowiązkowy checkbox („Zapoznałem/am się z informacją o przetwarzaniu danych osobowych”). Wymagany na frontendzie i walidowany na serwerze; moment potwierdzenia zapisywany w kolumnie `zgoda_rodo_data`.
+- **Zasady Cache-Control dla plików statycznych (`express.static`):**
+  - `index.html`: `no-store, no-cache, must-revalidate, proxy-revalidate`, `Pragma: no-cache`, `Expires: 0` – przeglądarka zawsze pobiera świeży punkt wejścia SPA przy każdym wejściu.
+  - Pliki z buildu z hashem w nazwie (np. `bundle.a1b2c3d4.js`, `index-D7x2v_4z.js`): `public, max-age=31536000, immutable` (długi cache 1 rok).
+  - Pozostałe pliki statyczne bez hasha (np. `logo_mentor4.svg`): `public, max-age=86400` (1 dzień) bez `no-store`.
 - **Bezpieczeństwo sesji i obsługa błędów:** token JWT przechowywany w `localStorage` (`serwis_token`). Pomocnik `apiFetch` pobiera token dynamicznie przed każdym żądaniem.
   - **401 Unauthorized:** brakujący, nieprawidłowy lub wygasły token JWT. `handleAuthError` natychmiast czyści stan i wylogowuje użytkownika.
   - **403 Forbidden:** brak uprawnień do danej akcji (reguły ról RBAC, edycja zlecenia przypisanego do kogoś innego itp.). Frontend **nie wylogowuje** użytkownika, lecz wyświetla komunikat błędu z serwera w alercie (`showAlert(err.message, 'error')`).
@@ -141,7 +145,7 @@ npm run seed:zgloszenia   # Wygenerowanie 200 realistycznych zgłoszeń z histor
 node create-user.js admin Haslo123 admin   # Utworzenie pierwszego konta (hasło min. 8 znaków)
 npm start                 # Start serwera (port 3000)
 npm run dev               # Start serwera w trybie watch
-npm test                  # Uruchomienie 112 testów integracyjnych (node --test app.test.js)
+npm test                  # Uruchomienie 118 testów integracyjnych (node --test app.test.js)
 ```
 
 ---

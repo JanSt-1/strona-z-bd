@@ -5,6 +5,8 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 process.env.NODE_ENV = 'test';
 if (!process.env.JWT_SECRET) {
@@ -1702,6 +1704,95 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
         it('Nagłówek Content-Security-Policy jest wyłączony na czas kompilacji JSX w przeglądarce', async () => {
             const res = await request(app).get('/api/health');
             assert.strictEqual(res.headers['content-security-policy'], undefined);
+        });
+    });
+
+    describe('16. Endpoint /api/health (bezpieczny health check)', () => {
+        it('GET /api/health gdy baza danych działa zwraca 200 i { status: "ok" }', async () => {
+            const res = await request(app).get('/api/health');
+            assert.strictEqual(res.status, 200);
+            assert.deepStrictEqual(res.body, { status: 'ok' });
+        });
+
+        it('GET /api/health gdy zapytanie do bazy zawiedzie zwraca 500 i { status: "error" } bez ujawniania err.message', async () => {
+            const currentPool = app.getPool();
+            const failingPool = {
+                query: async () => {
+                    throw new Error('Access denied for user root@localhost (using password: YES)');
+                }
+            };
+            app.setPool(failingPool);
+            const origError = console.error;
+            let loggedError = null;
+            console.error = (...args) => { loggedError = args; };
+            try {
+                const res = await request(app).get('/api/health');
+                assert.strictEqual(res.status, 500);
+                assert.deepStrictEqual(res.body, { status: 'error' });
+                assert.strictEqual(res.body.message, undefined);
+                assert.ok(loggedError, 'Szczegóły błędu powinny trafić do console.error');
+            } finally {
+                console.error = origError;
+                app.setPool(currentPool);
+            }
+        });
+    });
+
+    describe('17. Cache-Control dla plików statycznych (express.static)', () => {
+        const testHashedJs = path.join(__dirname, 'public', 'bundle.a1b2c3d4.js');
+        const testHashedCss = path.join(__dirname, 'public', 'style-D7x2v_4z.css');
+
+        before(() => {
+            fs.writeFileSync(testHashedJs, 'console.log("hashed bundle");');
+            fs.writeFileSync(testHashedCss, 'body { color: red; }');
+        });
+
+        after(() => {
+            if (fs.existsSync(testHashedJs)) fs.unlinkSync(testHashedJs);
+            if (fs.existsSync(testHashedCss)) fs.unlinkSync(testHashedCss);
+        });
+
+        it('GET / oraz GET /index.html zwracają Cache-Control: no-store', async () => {
+            const resRoot = await request(app).get('/');
+            assert.strictEqual(resRoot.status, 200);
+            assert.match(resRoot.headers['cache-control'], /no-store/);
+            assert.strictEqual(resRoot.headers['pragma'], 'no-cache');
+            assert.strictEqual(resRoot.headers['expires'], '0');
+
+            const resIndex = await request(app).get('/index.html');
+            assert.strictEqual(resIndex.status, 200);
+            assert.match(resIndex.headers['cache-control'], /no-store/);
+            assert.strictEqual(resIndex.headers['pragma'], 'no-cache');
+            assert.strictEqual(resIndex.headers['expires'], '0');
+        });
+
+        it('Pliki statyczne bez hasha (np. /logo_mentor4.svg) NIE posiadają no-store i mają standardowy cache', async () => {
+            const res = await request(app).get('/logo_mentor4.svg');
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual(res.headers['cache-control'].includes('no-store'), false);
+            assert.match(res.headers['cache-control'], /max-age=86400/);
+            assert.strictEqual(res.headers['pragma'], undefined);
+        });
+
+        it('Pliki z buildu z hashem w nazwie mają długi czas cache\'owania (max-age 1 rok, immutable)', async () => {
+            const resJs = await request(app).get('/bundle.a1b2c3d4.js');
+            assert.strictEqual(resJs.status, 200);
+            assert.strictEqual(resJs.headers['cache-control'], 'public, max-age=31536000, immutable');
+
+            const resCss = await request(app).get('/style-D7x2v_4z.css');
+            assert.strictEqual(resCss.status, 200);
+            assert.strictEqual(resCss.headers['cache-control'], 'public, max-age=31536000, immutable');
+        });
+
+        it('Funkcja pomocnicza isHashedFile prawidłowo klasyfikuje nazwy plików z hashem', () => {
+            assert.strictEqual(app.isHashedFile('main.8f3a1b2c.js'), true);
+            assert.strictEqual(app.isHashedFile('assets/index-D7x2v_4z.js'), true);
+            assert.strictEqual(app.isHashedFile('app.12345678.css'), true);
+            assert.strictEqual(app.isHashedFile('vendor-a1b2c3d4e5f6.js'), true);
+            assert.strictEqual(app.isHashedFile('index.html'), false);
+            assert.strictEqual(app.isHashedFile('logo_mentor4.svg'), false);
+            assert.strictEqual(app.isHashedFile('bundle.min.js'), false);
+            assert.strictEqual(app.isHashedFile('style.css'), false);
         });
     });
 });
