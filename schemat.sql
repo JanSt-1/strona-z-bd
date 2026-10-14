@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS zgloszenia (
     przedmiot_zgloszenia VARCHAR(100) NOT NULL,
     numer_seryjny VARCHAR(100),
     data_zakupu DATE NOT NULL,
+    zgoda_rodo_data DATETIME NULL,
     przypisany_pracownik_id INT NULL,
     opis_naprawy TEXT NULL,
     opis_naprawy_data DATETIME NULL,

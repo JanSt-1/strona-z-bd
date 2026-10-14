@@ -110,8 +110,8 @@ npm test
 ```
 *Skrypt wykonuje polecenie `node --test` z użyciem `supertest`. Dzięki wbudowanemu mockowaniu puli bazy danych w `app.test.js`, testy wykonują się błyskawicznie i nie wymagają aktywnego serwera MySQL.*
 
-Główne grupy przypadków testowych (łącznie **93 testy** w 13 suitach):
-1. **Uwierzytelnianie, logowanie i walidacja zgłoszeń**: walidacja pól obowiązkowych, brak tokenu (401), błędne dane logowania (401), poprawny token JWT (200), blokada nieprawidłowych formatów i dat z przyszłości (400).
+Główne grupy przypadków testowych (łącznie **108 testów** w 15 suitach):
+1. **Uwierzytelnianie, logowanie, ochrona Honeypot, klauzula RODO i walidacja zgłoszeń**: walidacja pól obowiązkowych, obowiązkowy checkbox zgody RODO (odrzucenie 400 przy braku lub false, utrwalenie znacznika czasu w `zgoda_rodo_data` przy akceptacji), ochrona antyspamowa Honeypot (wypełnione pole `website` zwraca 201 bez zapisu do bazy), brak tokenu (401), błędne dane logowania (401), poprawny token JWT (200), blokada nieprawidłowych formatów i dat z przyszłości (400).
 2. **Przejście `nowe` → `w_realizacji`**: automatyczne przypisanie zlecenia, uprawnienia serwisanta i admina (200), blokada pracownika i magazyniera (403).
 3. **Przejście `w_realizacji` → `do_wysylki`**: wyłączność dedykowanego endpointu `/naprawione`, wymóg opisu prac, uprawnienia przypisanego pracownika/serwisanta/admina (200), blokada magazyniera (403) oraz blokada przejścia ze statusu `nowe` (409 Conflict).
 4. **Przejście `do_wysylki` → `zakończone`**: uprawnienia magazyniera i admina, wymóg numeru listu przewozowego (`numer_listu`), walidacja długości (max 100 znaków), możliwość aktualizacji numeru listu na zakończonym zleceniu.
@@ -140,6 +140,15 @@ Główne grupy przypadków testowych (łącznie **93 testy** w 13 suitach):
     - Przy cofaniu statusu wstecz (przez administratora) automatyczne czyszczenie danych późniejszych etapów:
       - cofnięcie przed `zakończone` resetuje `data_wyslania = NULL` oraz `numer_listu = NULL`,
       - cofnięcie przed `do_wysylki` resetuje `opis_naprawy = NULL` oraz `opis_naprawy_data = NULL`, a poprzednia treść naprawy jest bezpiecznie utrwalana w historii zdarzeń.
+13. **Rate limiting (`POST /api/zgloszenia` oraz `POST /api/login`)**:
+    - Pomijany w środowisku testowym (`skip: () => process.env.NODE_ENV === 'test'`).
+    - Ograniczenie do 5 zgłoszeń na godzinę z jednego IP na `POST /api/zgloszenia` (oraz 10 prób / 15 min na `POST /api/login`).
+    - Blokowanie nadmiarowych zapytań z kodem HTTP 429 Too Many Requests i czytelnym komunikatem błędu w języku polskim.
+14. **Limit rozmiaru ciała żądania JSON (`express.json limit: 70kb`)**:
+    - Jawnie skonfigurowany limit `express.json({ limit: '70kb' })` dopasowany do najdłuższego dopuszczalnego opisu usterki (65535 znaków + narzut JSON), bez niepotrzebnego dopuszczania większych danych.
+    - Zgłoszenie z maksymalnym dozwolonym opisem (65535 znaków) mieści się w limicie i zwraca 201 Created.
+    - Żądania przekraczające limit (np. 80KB) zwracają status 413 Payload Too Large z czytelnym komunikatem JSON.
+    - Błędnie sformatowane JSON-y zwracają status 400 Bad Request.
 
 ---
 

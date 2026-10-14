@@ -24,8 +24,8 @@ app.setPool = (pool) => {
 app.getPool = () => currentPool;
 
 // --- Middlewares ---
-app.use(cors());
-app.use(express.json());
+// Limit rozmiaru ciała żądania JSON dobrany tak, aby zmieścił się najdłuższy dopuszczalny opis usterki (65535 znaków + narzut JSON), ale nic ponad to.
+app.use(express.json({ limit: '70kb' }));
 // Serwowanie plików statycznych (np. index.html) – całkowicie bez cache dla przeglądarki
 app.use(express.static(path.join(__dirname, 'public'), {
     etag: false,
@@ -207,9 +207,31 @@ function validatePurchaseDate(dateStr) {
     return null;
 }
 
+// Rate limiting dla dodawania zgłoszeń (5 zgłoszeń / 1 godzinę z 1 IP)
+const zgloszeniaLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 godzina
+    limit: 5, // 5 zgłoszeń z jednego adresu IP
+    message: {
+        error: 'Zbyt wiele zgłoszeń z tego adresu IP. Dozwolony limit to 5 zgłoszeń na godzinę. Spróbuj ponownie później.'
+    },
+    standardHeaders: true, // Zwraca nagłówki RateLimit-*
+    legacyHeaders: false, // Wyłącza nagłówki X-RateLimit-*
+    skip: () => process.env.NODE_ENV === 'test'
+});
+
 // 2. POST /api/zgloszenia - Publiczne dodawanie nowego zgłoszenia serwisowego
-app.post('/api/zgloszenia', async (req, res) => {
-    const { nazwa_firmy, numer_seryjny, przedmiot_zgloszenia } = req.body || {};
+app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
+    const { website, nazwa_firmy, numer_seryjny, przedmiot_zgloszenia, zgoda_rodo } = req.body || {};
+
+    // Zabezpieczenie Honeypot: ukryte pole website przeciwko botom spamującym
+    const isHoneypotTriggered = typeof website === 'string' ? website.trim().length > 0 : Boolean(website);
+    if (isHoneypotTriggered) {
+        // Odpowiadamy 201 jak zwykle, ale nic nie zapisujemy do bazy danych
+        return res.status(201).json({
+            message: 'Zgłoszenie serwisowe zostało pomyślnie przyjęte.',
+            id: 0
+        });
+    }
 
     const requiredFields = [
         'imie', 'nazwisko', 'adres', 'kod_pocztowy', 'miasto', 'numer_telefonu',
@@ -276,10 +298,16 @@ app.post('/api/zgloszenia', async (req, res) => {
         cleanNumerSeryjny = serial;
     }
 
+    // 12. Walidacja akceptacji klauzuli RODO (wymagany checkbox)
+    const isZgodaRodo = zgoda_rodo === true || zgoda_rodo === 'true' || zgoda_rodo === 1 || zgoda_rodo === '1';
+    if (!isZgodaRodo) {
+        return fail(res, 'Pole "zgoda_rodo" jest wymagane: należy potwierdzić zapoznanie się z informacją o przetwarzaniu danych osobowych.');
+    }
+
     try {
         const query = `
-            INSERT INTO zgloszenia (imie, nazwisko, nazwa_firmy, adres, kod_pocztowy, miasto, numer_telefonu, email, przedmiot_zgloszenia, numer_seryjny, data_zakupu, opis_usterki, numer_fv, nip, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'nowe')
+            INSERT INTO zgloszenia (imie, nazwisko, nazwa_firmy, adres, kod_pocztowy, miasto, numer_telefonu, email, przedmiot_zgloszenia, numer_seryjny, data_zakupu, zgoda_rodo_data, opis_usterki, numer_fv, nip, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, 'nowe')
         `;
         const values = [
             c.imie,
@@ -1186,6 +1214,17 @@ app.patch('/api/profil/haslo', authenticateToken,
     }));
 
 
+// Obsługa błędu przekroczenia limitu payloadu express.json (413 Payload Too Large) oraz błędów parsowania JSON
+app.use((err, req, res, next) => {
+    if (err && (err.type === 'entity.too.large' || err.status === 413)) {
+        return res.status(413).json({ error: 'Przesłany ładunek żądania (payload) przekracza dozwolony limit.' });
+    }
+    if (err && err.status === 400 && 'body' in err) {
+        return res.status(400).json({ error: 'Nieprawidłowy format JSON w ciele żądania.' });
+    }
+    next(err);
+});
+
 // Obsługa błędów 404 dla nieistniejących tras API
 app.use('/api', (req, res) => {
     res.status(404).json({ error: 'Endpoint API nie został odnaleziony.' });
@@ -1194,5 +1233,7 @@ app.use('/api', (req, res) => {
 app.czyMoznaZmienic = czyMoznaZmienic;
 app.PRZEJSCIA = PRZEJSCIA;
 app.dodajWpisHistorii = dodajWpisHistorii;
+app.loginLimiter = loginLimiter;
+app.zgloszeniaLimiter = zgloszeniaLimiter;
 
 module.exports = app;

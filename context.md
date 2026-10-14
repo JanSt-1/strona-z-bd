@@ -23,6 +23,7 @@ strona_z_bd/
 ```
 
 - **Separation of Concerns:** `app.js` eksportuje aplikację Express i udostępnia `app.setPool(pool)` / `app.getPool()`. `index.js` wyłącznie uruchamia serwer HTTP (`app.listen()`).
+- **Parsowanie JSON i limit payloadu:** `app.use(express.json({ limit: '70kb' }))` jawnie ogranicza rozmiar ciała żądania, mieszcząc najdłuższy dopuszczalny opis usterki (65535 znaków) z narzutem struktury JSON, a odrzucając większe żądania kodem 413 Payload Too Large.
 - **Moduł bazy danych (`db.js`):** Centralizuje odczyt konfiguracji MySQL z `.env` (`DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_PORT`) i eksportuje pomocniki `createPool()` oraz `createConnection()`, wykorzystywane wspólnie przez `app.js`, `seed.js` i `create-user.js`.
 - **Pula połączeń:** `mysql2/promise` z parametryzowanymi zapytaniami (`?`).
 
@@ -36,11 +37,12 @@ strona_z_bd/
 - **Blokowanie kont:** Użytkownicy z `aktywny = FALSE` nie mogą się zalogować (403 Forbidden). Zamiast usuwać powiązane z historią zgłoszeń konta, administrator zarządza flagą aktywności. Administrator nie może zablokować ani odebrać roli samemu sobie.
 
 ### Tabela `zgloszenia`
-- `id` (INT PK AI), `imie` (VARCHAR(50)), `nazwisko` (VARCHAR(50)), `nazwa_firmy` (VARCHAR(100) NULL), `adres` (TEXT), `kod_pocztowy` (VARCHAR(6)), `miasto` (VARCHAR(100)), `numer_telefonu` (VARCHAR(20)), `email` (VARCHAR(100)), `opis_usterki` (TEXT), `numer_fv` (VARCHAR(50)), `nip` (VARCHAR(10)), `przedmiot_zgloszenia` (VARCHAR(100)), `numer_seryjny` (VARCHAR(100) NULL), `data_zakupu` (DATE), `status` (ENUM('nowe', 'w_realizacji', 'do_wysylki', 'zakończone') DEFAULT 'nowe'), `created_at` (TIMESTAMP).
+- `id` (INT PK AI), `imie` (VARCHAR(50)), `nazwisko` (VARCHAR(50)), `nazwa_firmy` (VARCHAR(100) NULL), `adres` (TEXT), `kod_pocztowy` (VARCHAR(6)), `miasto` (VARCHAR(100)), `numer_telefonu` (VARCHAR(20)), `email` (VARCHAR(100)), `opis_usterki` (TEXT), `numer_fv` (VARCHAR(50)), `nip` (VARCHAR(10)), `przedmiot_zgloszenia` (VARCHAR(100)), `numer_seryjny` (VARCHAR(100) NULL), `data_zakupu` (DATE), `zgoda_rodo_data` (DATETIME NULL), `status` (ENUM('nowe', 'w_realizacji', 'do_wysylki', 'zakończone') DEFAULT 'nowe'), `created_at` (TIMESTAMP).
 - **Pola przepływu serwisowego:**
   - `przypisany_pracownik_id` (INT NULL FK do `uzytkownicy.id` ON DELETE SET NULL)
   - `opis_naprawy` (TEXT NULL), `opis_naprawy_data` (DATETIME NULL)
   - `data_wyslania` (DATETIME NULL), `numer_listu` (VARCHAR(100) NULL)
+  - `zgoda_rodo_data` (DATETIME NULL - data i godzina potwierdzenia zapoznania się z informacją o przetwarzaniu danych osobowych przy wysyłce formularza)
 
 ### Tabela `historia_zgloszen`
 - `id` (INT PK AI), `zgloszenie_id` (INT NOT NULL), `uzytkownik_id` (INT NULL FK do `uzytkownicy.id` ON DELETE SET NULL), `akcja` (VARCHAR(100) NOT NULL), `z_statusu` (VARCHAR(50) NULL), `na_status` (VARCHAR(50) NULL), `szczegoly` (TEXT NULL), `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP).
@@ -90,7 +92,7 @@ Format odpowiedzi błędów: `{ error: string }`.
 
 | Metoda | Endpoint | Dostęp / Rola | Opis i Walidacja |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/api/zgloszenia` | Publiczny | Rejestracja zgłoszenia. Rygorystyczna walidacja: imię/nazwisko (bez cyfr, litery), NIP (10 cyfr), kod (`XX-XXX`), telefon (`+48` + 9 cyfr), przedmiot (z listy dozwolonych), data zakupu (`RRRR-MM-DD`, istniejąca w kalendarzu, nie z przyszłości; w przeciwnym razie 400). Limity długości zgodne z kolumnami (np. `numer_seryjny` max 100). `numer_seryjny` obowiązkowy wyłącznie dla monitorów i tablic interaktywnych (bez akcesoriów). Zwraca 201 `{ message, id }`. |
+| `POST` | `/api/zgloszenia` | Publiczny | Rejestracja zgłoszenia. Ochrona Honeypot (ukryte pole `website` – boty wypełniające pole otrzymują 201, lecz rekord nie jest zapisywany w bazie). Obowiązkowa zgoda RODO (`zgoda_rodo`: boolean/1; zapisuje `zgoda_rodo_data = NOW()`, błąd 400 w przypadku braku akceptacji). Rate limit: 5 zgłoszeń / 1 h z IP (pomijany w `NODE_ENV === 'test'`). Rygorystyczna walidacja: imię/nazwisko (bez cyfr, litery), NIP (10 cyfr), kod (`XX-XXX`), telefon (`+48` + 9 cyfr), przedmiot (z listy dozwolonych), data zakupu (`RRRR-MM-DD`, istniejąca w kalendarzu, nie z przyszłości; w przeciwnym razie 400). Limity długości zgodne z kolumnami (np. `numer_seryjny` max 100). `numer_seryjny` obowiązkowy wyłącznie dla monitorów i tablic interaktywnych (bez akcesoriów). Zwraca 201 `{ message, id }`. |
 | `POST` | `/api/login` | Publiczny | Logowanie (`username`, `password`). Rate limit: 10 prób / 15 min z IP (pomijany w `NODE_ENV === 'test'`). Weryfikacja hasła przez bcrypt. Blokada logowania dla kont z `aktywny = FALSE` (403). Zwraca 200 `{ token, user: { id, username, role } }`. |
 | `GET` | `/api/pracownicy` | JWT (`admin`, `serwisant`) | Pobiera listę aktywnych pracowników do przypisania (`pracownik`, `serwisant`, `magazynier`). |
 | `GET` | `/api/zgloszenia` | JWT (dowolna rola) | Lista zgłoszeń z obsługą paginacji, filtrów i wyszukiwania. Parametry query: `?szukaj=` (wyszukiwanie tekstowe LIKE we wszystkich polach, wyłącznie przez placeholdery `?`), `?status=` (filtr statusu), `?pracownik=` (filtr ID pracownika lub `nieprzypisane`), `?strona=` (numer strony, domyślnie 1, limit 25), `?limit=` (wielkość strony, max 100), `?sort=` (`asc` lub `desc` po dacie `created_at`). Zwraca obiekt `{ total, page, limit, totalPages, data, zgloszenia }`. Reguły ról RBAC (`pracownik` widzi tylko swoje, `magazynier` tylko `do_wysylki` i `zakończone`) są ściśle łączone (`AND`) z filtrami użytkownika. |
@@ -114,6 +116,8 @@ Format odpowiedzi błędów: `{ error: string }`.
 
 - Czysty **React 18 + Babel Standalone** serwowany statycznie przez Express.
 - Dwa niezależne widoki: formularz publiczny klienta (`PublicTicketForm`) oraz panel pracownika (`Dashboard` z logowaniem `LoginForm`).
+- **Ochrona antyspamowa Honeypot:** Ukryte pole formularza `website` (`display: none`, `tabIndex={-1}`, `autoComplete="off"`). Zwykli użytkownicy go nie widzą ani nie wypełniają. Boty wypełniające pole otrzymują 201 Created, lecz zgłoszenie nie trafia do bazy danych.
+- **Klauzula informacyjna RODO i zgoda:** Rozwijana sekcja `<details>`/`<summary>` z prostym placeholderem treści informacyjnej oraz obowiązkowy checkbox („Zapoznałem/am się z informacją o przetwarzaniu danych osobowych”). Wymagany na frontendzie i walidowany na serwerze; moment potwierdzenia zapisywany w kolumnie `zgoda_rodo_data`.
 - **Bezpieczeństwo sesji i obsługa błędów:** token JWT przechowywany w `localStorage` (`serwis_token`). Pomocnik `apiFetch` pobiera token dynamicznie przed każdym żądaniem.
   - **401 Unauthorized:** brakujący, nieprawidłowy lub wygasły token JWT. `handleAuthError` natychmiast czyści stan i wylogowuje użytkownika.
   - **403 Forbidden:** brak uprawnień do danej akcji (reguły ról RBAC, edycja zlecenia przypisanego do kogoś innego itp.). Frontend **nie wylogowuje** użytkownika, lecz wyświetla komunikat błędu z serwera w alercie (`showAlert(err.message, 'error')`).
@@ -136,7 +140,7 @@ npm run seed:zgloszenia   # Wygenerowanie 200 realistycznych zgłoszeń z histor
 node create-user.js admin Haslo123 admin   # Utworzenie pierwszego konta (hasło min. 8 znaków)
 npm start                 # Start serwera (port 3000)
 npm run dev               # Start serwera w trybie watch
-npm test                  # Uruchomienie 93 testów integracyjnych (node --test app.test.js)
+npm test                  # Uruchomienie 108 testów integracyjnych (node --test app.test.js)
 ```
 
 ---

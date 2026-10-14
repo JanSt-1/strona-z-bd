@@ -280,14 +280,14 @@ async function run() {
                 `INSERT INTO zgloszenia (
                     imie, nazwisko, nazwa_firmy, adres, kod_pocztowy, miasto,
                     numer_telefonu, email, opis_usterki, numer_fv, nip,
-                    przedmiot_zgloszenia, numer_seryjny, data_zakupu,
+                    przedmiot_zgloszenia, numer_seryjny, data_zakupu, zgoda_rodo_data,
                     przypisany_pracownik_id, opis_naprawy, opis_naprawy_data,
                     data_wyslania, numer_listu, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     imie, nazwisko, firma, adres, kod_pocztowy, miasto,
                     numer_telefonu, email, opis_usterki, numer_fv, nip,
-                    przedmiot, numer_seryjny, data_zakupu,
+                    przedmiot, numer_seryjny, data_zakupu, created_at,
                     przypisany_pracownik_id, opis_naprawy, opis_naprawy_data,
                     data_wyslania, numer_listu, status, created_at
                 ]

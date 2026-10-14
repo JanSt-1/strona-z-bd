@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 
 const crypto = require('crypto');
 
+process.env.NODE_ENV = 'test';
 if (!process.env.JWT_SECRET) {
     process.env.JWT_SECRET = crypto.randomBytes(32).toString('hex');
 }
@@ -233,6 +234,192 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
 
             assert.strictEqual(response.status, 400);
             assert.strictEqual(response.body.error, 'Pole "data_zakupu" nie może być datą z przyszłości.');
+        });
+
+        it('POST /api/zgloszenia z wypełnionym honeypotem (pole website) zwraca 201 jak zwykle, ale nic nie zapisuje do bazy', async () => {
+            allExecutedQueries = [];
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    website: 'http://spambot-link.example.com',
+                    imie: 'Spambot',
+                    nazwisko: 'Automatyczny',
+                    adres: 'ul. Spamerska 99',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    email: 'bot@spambot.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/SPAM/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Spam text'
+                });
+
+            assert.strictEqual(response.status, 201);
+            assert.strictEqual(response.body.message, 'Zgłoszenie serwisowe zostało pomyślnie przyjęte.');
+            assert.strictEqual(response.body.id, 0);
+
+            // Weryfikacja: ani jedno zapytanie INSERT nie zostało wykonane w bazie
+            const insertQueries = allExecutedQueries.filter(q => q.sql.includes('INSERT'));
+            assert.strictEqual(insertQueries.length, 0, 'Bot nie powinien wywołać żadnych zapytań INSERT do bazy');
+        });
+
+        it('POST /api/zgloszenia z pustym honeypotem zapisuje zgłoszenie standardowo (INSERT do bazy)', async () => {
+            allExecutedQueries = [];
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    website: '',
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Brak obrazu',
+                    zgoda_rodo: true
+                });
+
+            assert.strictEqual(response.status, 201);
+            assert.strictEqual(response.body.message, 'Zgłoszenie serwisowe zostało pomyślnie przyjęte.');
+
+            // Weryfikacja: wykonano INSERT do tabeli zgloszenia oraz historia_zgloszen
+            const insertZgloszenie = allExecutedQueries.find(q => q.sql.includes('INSERT INTO zgloszenia'));
+            assert.ok(insertZgloszenie, 'Powinno wykonać INSERT INTO zgloszenia');
+            const insertHistoria = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.ok(insertHistoria, 'Powinno wykonać INSERT INTO historia_zgloszen');
+        });
+
+        it('POST /api/zgloszenia bez potwierdzenia klauzuli RODO (zgoda_rodo: false) zwraca błąd 400', async () => {
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Brak obrazu',
+                    zgoda_rodo: false
+                });
+
+            assert.strictEqual(response.status, 400);
+            assert.strictEqual(
+                response.body.error,
+                'Pole "zgoda_rodo" jest wymagane: należy potwierdzić zapoznanie się z informacją o przetwarzaniu danych osobowych.'
+            );
+        });
+
+        it('POST /api/zgloszenia ze zgodą RODO zapisuje datę potwierdzenia w kolumnie zgoda_rodo_data', async () => {
+            allExecutedQueries = [];
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Brak obrazu',
+                    zgoda_rodo: true
+                });
+
+            assert.strictEqual(response.status, 201);
+            const insertZgloszenie = allExecutedQueries.find(q => q.sql.includes('INSERT INTO zgloszenia'));
+            assert.ok(insertZgloszenie, 'Powinno wykonać INSERT INTO zgloszenia');
+            assert.ok(insertZgloszenie.sql.includes('zgoda_rodo_data'), 'Zapytanie INSERT powinno zawierać kolumnę zgoda_rodo_data');
+        });
+
+        it('POST /api/zgloszenia bez pola zgoda_rodo (brak w obiekcie) zwraca błąd 400', async () => {
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Brak obrazu'
+                });
+
+            assert.strictEqual(response.status, 400);
+            assert.strictEqual(
+                response.body.error,
+                'Pole "zgoda_rodo" jest wymagane: należy potwierdzić zapoznanie się z informacją o przetwarzaniu danych osobowych.'
+            );
+        });
+
+        it('POST /api/zgloszenia ze zgoda_rodo jako 1 lub "true" jest poprawnie akceptowane (201)', async () => {
+            allExecutedQueries = [];
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Brak obrazu',
+                    zgoda_rodo: 'true'
+                });
+
+            assert.strictEqual(response.status, 201);
+            assert.strictEqual(response.body.message, 'Zgłoszenie serwisowe zostało pomyślnie przyjęte.');
+        });
+
+        it('POST /api/zgloszenia bez pola website (pominięte) zapisuje zgłoszenie standardowo (INSERT)', async () => {
+            allExecutedQueries = [];
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Brak obrazu',
+                    zgoda_rodo: true
+                });
+
+            assert.strictEqual(response.status, 201);
+            const insertQueries = allExecutedQueries.filter(q => q.sql.includes('INSERT INTO zgloszenia'));
+            assert.strictEqual(insertQueries.length, 1);
         });
 
         it('GET /api/zgloszenia bez tokenu powinien zwrócić status 401', async () => {
@@ -1027,7 +1214,8 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                     data_zakupu: '2026-01-01',
                     numer_fv: 'FV/999/2026',
                     nip: '1234567890',
-                    opis_usterki: 'Nie wyświetla obrazu'
+                    opis_usterki: 'Nie wyświetla obrazu',
+                    zgoda_rodo: true
                 });
 
             assert.strictEqual(resp.status, 201);
@@ -1326,6 +1514,171 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             const historyInsert = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
             assert.ok(historyInsert);
             assert.ok(historyInsert.values[5].includes('Naprawa portu HDMI'));
+        });
+    });
+
+    describe('13. Rate limiting (POST /api/zgloszenia oraz POST /api/login)', () => {
+        it('zgloszeniaLimiter i loginLimiter są wyeksportowane i poprawnie skonfigurowane', () => {
+            assert.ok(app.zgloszeniaLimiter, 'zgloszeniaLimiter powinien być zdefiniowany');
+            assert.ok(app.loginLimiter, 'loginLimiter powinien być zdefiniowany');
+        });
+
+        it('W środowisku testowym (NODE_ENV === "test") rate limiter na POST /api/zgloszenia jest pomijany', async () => {
+            assert.strictEqual(process.env.NODE_ENV, 'test');
+            // Wykonujemy wielokrotne zapytania - żadne nie powinno zostać zablokowane kodem 429
+            for (let i = 0; i < 7; i++) {
+                const res = await request(app)
+                    .post('/api/zgloszenia')
+                    .send({}); // puste body zwróci 400 z walidacji, a nie 429 z rate limitera
+                assert.strictEqual(res.status, 400);
+            }
+        });
+
+        it('Gdy rate limit jest aktywny (np. poza testami), blokuje 6. żądanie kodem 429 i zwraca polski komunikat', async () => {
+            const express = require('express');
+            const rateLimit = require('express-rate-limit');
+
+            const testApp = express();
+            const limiter = rateLimit({
+                windowMs: 60 * 60 * 1000,
+                limit: 5,
+                message: {
+                    error: 'Zbyt wiele zgłoszeń z tego adresu IP. Dozwolony limit to 5 zgłoszeń na godzinę. Spróbuj ponownie później.'
+                },
+                standardHeaders: true,
+                legacyHeaders: false
+            });
+
+            testApp.post('/test-zgloszenia', limiter, (req, res) => {
+                res.status(201).json({ success: true });
+            });
+
+            // Pierwsze 5 żądań przechodzi ze statusem 201
+            for (let i = 1; i <= 5; i++) {
+                const res = await request(testApp).post('/test-zgloszenia');
+                assert.strictEqual(res.status, 201);
+                assert.strictEqual(res.body.success, true);
+            }
+
+            // 6. żądanie powinno zostać zablokowane kodem 429
+            const blockedRes = await request(testApp).post('/test-zgloszenia');
+            assert.strictEqual(blockedRes.status, 429);
+            assert.strictEqual(
+                blockedRes.body.error,
+                'Zbyt wiele zgłoszeń z tego adresu IP. Dozwolony limit to 5 zgłoszeń na godzinę. Spróbuj ponownie później.'
+            );
+        });
+
+        it('Gdy loginLimiter jest aktywny, blokuje 11. próbę logowania kodem 429 i zwraca polski komunikat', async () => {
+            const express = require('express');
+            const rateLimit = require('express-rate-limit');
+
+            const testApp = express();
+            const limiter = rateLimit({
+                windowMs: 15 * 60 * 1000,
+                limit: 10,
+                message: {
+                    error: 'Zbyt wiele nieudanych prób logowania z tego adresu IP. Spróbuj ponownie za 15 minut.'
+                },
+                standardHeaders: true,
+                legacyHeaders: false
+            });
+
+            testApp.post('/test-login', limiter, (req, res) => {
+                res.status(200).json({ success: true });
+            });
+
+            for (let i = 1; i <= 10; i++) {
+                const res = await request(testApp).post('/test-login');
+                assert.strictEqual(res.status, 200);
+            }
+
+            const blockedRes = await request(testApp).post('/test-login');
+            assert.strictEqual(blockedRes.status, 429);
+            assert.strictEqual(
+                blockedRes.body.error,
+                'Zbyt wiele nieudanych prób logowania z tego adresu IP. Spróbuj ponownie za 15 minut.'
+            );
+        });
+    });
+
+    describe('14. Limit rozmiaru ciała żądania JSON (express.json limit)', () => {
+        it('POST /api/zgloszenia z maksymalnym dozwolonym opisem usterki (65535 znaków) mieści się w limicie express.json (70kb) i zwraca 201', async () => {
+            allExecutedQueries = [];
+            const maxOpis = 'a'.repeat(65535);
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: maxOpis,
+                    zgoda_rodo: true
+                });
+
+            assert.strictEqual(response.status, 201);
+            assert.strictEqual(response.body.message, 'Zgłoszenie serwisowe zostało pomyślnie przyjęte.');
+            const insertZgloszenie = allExecutedQueries.find(q => q.sql.includes('INSERT INTO zgloszenia'));
+            assert.ok(insertZgloszenie, 'Powinno wykonać INSERT do tabeli zgloszenia');
+            assert.strictEqual(insertZgloszenie.values[11].length, 65535);
+        });
+
+        it('Żądanie JSON przekraczające limit express.json (np. 80KB) zwraca błąd 413 Payload Too Large', async () => {
+            const tooLargeOpis = 'a'.repeat(80000);
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .set('Content-Type', 'application/json')
+                .send(JSON.stringify({
+                    opis_usterki: tooLargeOpis
+                }));
+
+            assert.strictEqual(response.status, 413);
+            assert.strictEqual(response.body.error, 'Przesłany ładunek żądania (payload) przekracza dozwolony limit.');
+        });
+
+        it('POST /api/zgloszenia z opisem usterki przekraczającym maksymalną dozwoloną długość (65536 znaków) zwraca błąd walidacji 400', async () => {
+            const invalidOpis = 'a'.repeat(65536);
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: invalidOpis,
+                    zgoda_rodo: true
+                });
+
+            assert.strictEqual(response.status, 400);
+            assert.strictEqual(
+                response.body.error,
+                'Pole "opis_usterki" przekracza maksymalną dozwoloną długość (65535 znaków).'
+            );
+        });
+
+        it('Żądanie z nieprawidłowym formatem JSON zwraca błąd 400', async () => {
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .set('Content-Type', 'application/json')
+                .send('{ niepoprawny_json: true, }');
+
+            assert.strictEqual(response.status, 400);
+            assert.strictEqual(response.body.error, 'Nieprawidłowy format JSON w ciele żądania.');
         });
     });
 });

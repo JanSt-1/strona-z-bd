@@ -1048,7 +1048,9 @@
             numer_seryjny: '',
             data_zakupu: '',
             numer_fv: '',
-            opis_usterki: ''
+            opis_usterki: '',
+            website: '',
+            zgoda_rodo: false
         };
 
 
@@ -1160,7 +1162,9 @@
                     [!/^\d{10}$/.test(formData.nip.trim()), 'Pole "NIP" jest wymagane i musi składać się z dokładnie 10 cyfr (bez myślników).'],
                     // telefon firmowy (obowiązkowy)
                     [!formData.telefon_kierunkowy, 'Proszę wybrać 2-cyfrowy numer kierunkowy dla telefonu firmowego.'],
-                    [formData.telefon_firmowy_7.length < 7, 'Dla telefonu firmowego należy podać pełne 7 cyfr po numerze kierunkowym.']
+                    [formData.telefon_firmowy_7.length < 7, 'Dla telefonu firmowego należy podać pełne 7 cyfr po numerze kierunkowym.'],
+                    // akceptacja klauzuli RODO (obowiązkowy checkbox)
+                    [!formData.zgoda_rodo, 'Wymagane jest potwierdzenie zapoznania się z informacją o przetwarzaniu danych osobowych.']
                 ].find(([invalid]) => invalid);
                 if (validationError) {
                     showAlert(validationError[1], 'error');
@@ -1173,6 +1177,7 @@
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
+                            website: formData.website || '',
                             imie: formData.imie,
                             nazwisko: formData.nazwisko,
                             nazwa_firmy: formData.nazwa_firmy ? formData.nazwa_firmy.trim() : null,
@@ -1186,7 +1191,8 @@
                             data_zakupu: formData.data_zakupu,
                             numer_fv: formData.numer_fv.trim(),
                             nip: formData.nip.trim(),
-                            opis_usterki: formData.opis_usterki
+                            opis_usterki: formData.opis_usterki,
+                            zgoda_rodo: formData.zgoda_rodo
                         })
                     });
 
@@ -1216,6 +1222,19 @@
                     <Alert alert={alert} />
 
                     <form onSubmit={handleSubmit}>
+                        {/* Honeypot: ukryte pole anty-spamowe dla botów (niewidoczne dla ludzi) */}
+                        <div style={{ display: 'none', position: 'absolute', left: '-9999px', opacity: 0, height: 0, width: 0, overflow: 'hidden' }} aria-hidden="true">
+                            <label htmlFor="website">Strona internetowa</label>
+                            <input
+                                type="text"
+                                id="website"
+                                name="website"
+                                tabIndex={-1}
+                                autoComplete="off"
+                                value={formData.website}
+                                onChange={e => setFormData({ ...formData, website: e.target.value })}
+                            />
+                        </div>
                         {/* Część 1: Dane osoby zgłaszającej */}
                         <section className="form-section">
                             <div className="form-section-header">
@@ -1454,6 +1473,35 @@
                                         onChange={e => setFormData({ ...formData, opis_usterki: e.target.value })}
                                     />
                                 </div>
+                            </div>
+                        </section>
+
+                        {/* Klauzula informacyjna z rozwijaną treścią i obowiązkowym checkboxem */}
+                        <section className="form-section" style={{ background: '#f8fafc', borderColor: '#cbd5e1' }}>
+                            <details style={{ cursor: 'pointer', marginBottom: '0.75rem' }}>
+                                <summary style={{ fontWeight: '600', color: '#0d5537', fontSize: '0.92rem', userSelect: 'none', outline: 'none' }}>
+                                    Informacja o przetwarzaniu danych osobowych (kliknij, aby rozwinąć)
+                                </summary>
+                                <div style={{ marginTop: '0.6rem', padding: '0.75rem', background: '#ffffff', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.85rem', color: '#475569', lineHeight: '1.5' }}>
+                                    <p style={{ margin: 0 }}>
+                                        [Treść klauzuli informacyjnej dotyczącej przetwarzania danych osobowych przez serwis w celu realizacji zgłoszenia serwisowego i kontaktu z klientem.]
+                                    </p>
+                                </div>
+                            </details>
+
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.6rem' }}>
+                                <input
+                                    type="checkbox"
+                                    id="zgoda_rodo"
+                                    name="zgoda_rodo"
+                                    required
+                                    checked={formData.zgoda_rodo}
+                                    onChange={e => setFormData({ ...formData, zgoda_rodo: e.target.checked })}
+                                    style={{ width: '18px', height: '18px', marginTop: '2px', cursor: 'pointer', accentColor: '#0d5537' }}
+                                />
+                                <label htmlFor="zgoda_rodo" style={{ cursor: 'pointer', fontSize: '0.9rem', color: '#1e293b', fontWeight: '500', lineHeight: '1.4' }}>
+                                    Zapoznałem/am się z informacją o przetwarzaniu danych osobowych *
+                                </label>
                             </div>
                         </section>
 
