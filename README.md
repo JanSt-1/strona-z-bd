@@ -196,3 +196,503 @@ node create-user.js <nazwa_uzytkownika> <haslo> [rola]
   
 Po utworzeniu konta przejdź w przeglądarce do zakładki **„Panel pracownika”** i zaloguj się podaną nazwą użytkownika oraz hasłem.
 Administrator po zalogowaniu może tworzyć kolejne konta bezpośrednio z poziomu interfejsu webowego (zakładka „Użytkownicy”).
+
+---
+
+## Wdrożenie produkcyjne
+
+Niniejsza instrukcja krok po kroku opisuje uruchomienie aplikacji na zewnętrznym serwerze produkcyjnym (VPS / serwer dedykowany z systemem Linux, np. Ubuntu 22.04 / 24.04 LTS lub Debian 12).
+
+```
+   [ Użytkownik / Przeglądarka ]
+                 │  HTTPS (port 443) / HTTP (port 80)
+                 ▼
+     ┌───────────────────────┐
+     │  Reverse Proxy        │  (Nginx / Caddy + certyfikat Let's Encrypt)
+     │  Terminacja SSL/TLS   │
+     └───────────┬───────────┘
+                 │  HTTP (localhost:3000)
+                 ▼
+     ┌───────────────────────┐
+     │  Aplikacja Node.js    │  (Zarządzana przez PM2 lub usługa systemd)
+     │  NODE_ENV=production  │
+     └───────────┬───────────┘
+                 │  TCP (localhost:3306)
+                 ▼
+     ┌───────────────────────┐
+     │  Baza MySQL / MariaDB │  (Automatyczny backup mysqldump z crona)
+     └───────────────────────┘
+```
+
+---
+
+### 1. Wymagania serwera
+
+- **System operacyjny:** Linux (zalecany Ubuntu 22.04 LTS / 24.04 LTS lub Debian 12).
+- **Zasoby sprzętowe:** min. 1 vCPU, 1–2 GB RAM, dysk SSD (wielkość zależna od liczby zgłoszeń i retencji kopii zapasowych).
+- **Środowisko uruchomieniowe:** Node.js (wersja 20 LTS lub 22 LTS) oraz menedżer pakietów `npm`.
+- **Baza danych:** MySQL 8.0+ lub MariaDB 10.6+ zainstalowana lokalnie na serwerze.
+- **Oprogramowanie pomocnicze:**
+  - Menedżer procesów: `pm2` lub wbudowany `systemd`.
+  - Serwer WWW / Reverse Proxy: `nginx` lub `caddy`.
+  - Narzędzia bazodanowe i systemowe: `mysql-client` (`mysqldump`), `cron`, `gzip`, `git`, `certbot`.
+- **Zapora sieciowa (UFW):**
+  - Otwarte porty publiczne: `22` (SSH), `80` (HTTP), `443` (HTTPS).
+  - Porty `3000` (aplikacja Node.js) oraz `3306` (MySQL) **muszą być zablokowane dla ruchu z zewnątrz** i dostępne wyłącznie z pętli lokalnej (`127.0.0.1`).
+
+Konfiguracja zapory UFW na serwerze:
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow 22/tcp
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw enable
+```
+
+---
+
+### 2. Przygotowanie środowiska i konfiguracja produkcyjna (`NODE_ENV=production`)
+
+Zaleca się uruchamianie aplikacji z poziomu dedykowanego użytkownika systemowego bez uprawnień roota (np. `serwis`):
+
+```bash
+# Utworzenie użytkownika systemowego z katalogiem domowym
+sudo adduser --system --group --shell /bin/bash serwis
+
+# Utworzenie katalogu na aplikację i nadanie uprawnień
+sudo mkdir -p /var/www/serwis
+sudo chown -R serwis:serwis /var/www/serwis
+```
+
+Zaloguj się na użytkownika `serwis` i pobierz kod aplikacji:
+```bash
+sudo -u serwis -i
+cd /var/www/serwis
+git clone <URL_TWOJEGO_REPOZYTORIUM> .
+```
+
+#### Instalacja zależności produkcyjnych
+Na środowisku produkcyjnym instalujemy wyłącznie zależności runtime (pomijając biblioteki testowe, np. `supertest`):
+```bash
+npm ci --omit=dev
+```
+
+#### Konfiguracja bazy danych i dedykowanego użytkownika MySQL
+Zaloguj się do konsoli MySQL jako root:
+```bash
+sudo mysql
+```
+Wykonaj polecenia tworzące bazę oraz użytkownika z ograniczonymi prawami wyłącznie do bazy `serwis_db`:
+```sql
+CREATE DATABASE IF NOT EXISTS serwis_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+CREATE USER 'serwis_user'@'localhost' IDENTIFIED BY 'Mocne_Unikalne_Haslo_DB_123!';
+GRANT ALL PRIVILEGES ON serwis_db.* TO 'serwis_user'@'localhost';
+FLUSH PRIVILEGES;
+EXIT;
+```
+
+#### Przygotowanie pliku produkcyjnego `.env`
+Skopiuj plik wzorcowy:
+```bash
+cp .env.example .env
+chmod 600 .env  # Ochrona pliku przed odczytem przez innych użytkowników systemu
+```
+
+Wypełnij plik `/var/www/serwis/.env` wartościami produkcyjnymi:
+```ini
+NODE_ENV=production
+PORT=3000
+
+# Konfiguracja MySQL
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_NAME=serwis_db
+DB_USER=serwis_user
+DB_PASSWORD=Mocne_Unikalne_Haslo_DB_123!
+
+# Sekret do podpisywania tokenów JWT (wygenerowany losowy ciąg min. 64 znaki)
+JWT_SECRET=super_tajny_klucz_wygenerowany_kryptograficznie
+```
+
+Wygenerowanie bezpiecznego klucza `JWT_SECRET`:
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
+#### Inicjalizacja schematu bazy danych i pierwsze konto administratora
+```bash
+# Utworzenie struktury tabel (schemat.sql)
+npm run seed
+
+# Utworzenie głównego konta administratora
+node create-user.js admin BardzoBezpieczneHasloAdmina! admin
+```
+
+---
+
+### 3. Uruchamianie na stałe (Process Manager)
+
+Aby aplikacja działała nieprzerwanie w tle, restartowała się samoczynnie w przypadku awarii oraz uruchamiała automatycznie po restarcie serwera, należy użyć menedżera procesów. Do wyboru są dwie metody: **PM2** (rekomendowana) lub **usługa systemowa systemd**.
+
+#### Opcja A: PM2 (Rekomendowane)
+
+1. Zainstaluj PM2 globalnie:
+   ```bash
+   sudo npm install -g pm2
+   ```
+
+2. Utwórz w katalogu `/var/www/serwis` plik konfiguracyjny `ecosystem.config.cjs`:
+   ```javascript
+   module.exports = {
+     apps: [{
+       name: 'serwis-app',
+       script: 'index.js',
+       cwd: '/var/www/serwis',
+       instances: 1,
+       autorestart: true,
+       watch: false,
+       max_memory_restart: '300M',
+       env: {
+         NODE_ENV: 'production',
+         PORT: 3000
+       }
+     }]
+   };
+   ```
+
+3. Uruchom aplikację i utrwal listę procesów:
+   ```bash
+   sudo -u serwis pm2 start /var/www/serwis/ecosystem.config.cjs
+   sudo -u serwis pm2 save
+   ```
+
+4. Skonfiguruj autostart PM2 przy starcie systemu:
+   ```bash
+   # Wygeneruj komendę systemd dla użytkownika serwis:
+   sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u serwis --hp /home/serwis
+   # (wykonaj polecenie, które wypisze PM2)
+   ```
+
+5. Przydatne komendy zarządzania:
+   ```bash
+   sudo -u serwis pm2 status              # Status procesu
+   sudo -u serwis pm2 logs serwis-app     # Podgląd logów w czasie rzeczywistym
+   sudo -u serwis pm2 restart serwis-app  # Restart aplikacji (np. po aktualizacji kodu)
+   sudo -u serwis pm2 reload serwis-app   # Przeładowanie bez przestoju (graceful reload)
+   ```
+
+---
+
+#### Opcja B: Usługa systemowa systemd (Alternatywa bez PM2)
+
+Jeśli wolisz natywne mechanizmy Linuksa bez dodatkowych pakietów npm:
+
+1. Utwórz plik jednostki systemowej:
+   ```bash
+   sudo nano /etc/systemd/system/serwis.service
+   ```
+
+2. Wklej następującą definicję:
+   ```ini
+   [Unit]
+   Description=System Obslugi Zgloszen Serwisowych (Express.js)
+   After=network.target mysql.service
+
+   [Service]
+   Type=simple
+   User=serwis
+   Group=serwis
+   WorkingDirectory=/var/www/serwis
+   EnvironmentFile=/var/www/serwis/.env
+   ExecStart=/usr/bin/node /var/www/serwis/index.js
+   Restart=always
+   RestartSec=5
+   StandardOutput=journal
+   StandardError=journal
+   SyslogIdentifier=serwis-app
+
+   # Ograniczenia bezpieczeństwa systemd
+   ProtectSystem=full
+   NoNewPrivileges=true
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+3. Przeładuj konfigurację systemd i włącz usługę:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now serwis.service
+   ```
+
+4. Zarządzanie usługą:
+   ```bash
+   sudo systemctl status serwis           # Status usługi
+   sudo systemctl restart serwis          # Restart aplikacji
+   sudo journalctl -u serwis -f           # Śledzenie logów aplikacji
+   ```
+
+---
+
+### 4. HTTPS przez Reverse Proxy (Nginx lub Caddy)
+
+Serwer Node.js nasłuchuje lokalnie na porcie `3000` (`http://127.0.0.1:3000`). Publiczny dostęp do aplikacji oraz szyfrowanie SSL/TLS realizuje Reverse Proxy.
+
+Wybierz **Nginx** (klasyczny standard branżowy) lub **Caddy** (najprostszy, automatyczny certyfikat SSL bez Certbota).
+
+#### Wariant 1: Nginx + Let's Encrypt (Certbot)
+
+1. Zainstaluj Nginx oraz Certbota:
+   ```bash
+   sudo apt update
+   sudo apt install -y nginx certbot python3-certbot-nginx
+   ```
+
+2. Utwórz plik wirtualnego hosta:
+   ```bash
+   sudo nano /etc/nginx/sites-available/serwis.conf
+   ```
+
+3. Wklej poniższą konfigurację (podmień `twoja-domena.pl` na własną domenę skierowaną na IP Twojego serwera):
+   ```nginx
+   server {
+       listen 80;
+       listen [::]:80;
+       server_name twoja-domena.pl www.twoja-domena.pl;
+
+       # Zabezpieczenie przed zbyt dużymi żądaniami
+       client_max_body_size 5M;
+
+       location / {
+           proxy_pass http://127.0.0.1:3000;
+           proxy_http_version 1.1;
+
+           # Przekazywanie nagłówków WebSocket / Upgrade (jeśli wymagane)
+           proxy_set_header Upgrade $http_upgrade;
+           proxy_set_header Connection 'upgrade';
+
+           # Przekazanie rzeczywistych danych klienta (niezbędne dla rate-limitera)
+           proxy_set_header Host $host;
+           proxy_set_header X-Real-IP $remote_addr;
+           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+           proxy_set_header X-Forwarded-Proto $scheme;
+
+           proxy_cache_bypass $http_upgrade;
+           proxy_read_timeout 60s;
+           proxy_connect_timeout 60s;
+       }
+   }
+   ```
+
+4. Aktywuj konfigurację i sprawdź poprawność składni:
+   ```bash
+   sudo ln -s /etc/nginx/sites-available/serwis.conf /etc/nginx/sites-enabled/
+   sudo nginx -t
+   sudo systemctl reload nginx
+   ```
+
+5. Wygeneruj bezpłatny certyfikat SSL za pomocą Certbota:
+   ```bash
+   sudo certbot --nginx -d twoja-domena.pl -d www.twoja-domena.pl
+   ```
+   *Certbot automatycznie doda konfigurację SSL w bloku Nginx, przekieruje cały ruch HTTP na HTTPS oraz skonfiguruje timer systemowy do automatycznego odnawiania certyfikatu co 90 dni.*
+
+---
+
+#### Wariant 2: Caddy (Alternatywa z automatycznym HTTPS)
+
+Caddy automatycznie pobiera certyfikat SSL z Let's Encrypt / ZeroSSL i sam dba o jego przedłużanie, bez konieczności instalowania Certbota.
+
+1. Zainstaluj Caddy zgodnie z oficjalną dokumentacją:
+   ```bash
+   sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+   sudo apt update
+   sudo apt install -y caddy
+   ```
+
+2. Zredaguj plik `/etc/caddy/Caddyfile`:
+   ```caddy
+   twoja-domena.pl {
+       reverse_proxy 127.0.0.1:3000 {
+           header_up X-Real-IP {remote_host}
+           header_up X-Forwarded-For {remote_host}
+           header_up X-Forwarded-Proto {scheme}
+       }
+
+       encode gzip zstd
+   }
+   ```
+
+3. Zastosuj zmiany w Caddy:
+   ```bash
+   sudo systemctl reload caddy
+   ```
+
+---
+
+### 5. Kopie zapasowe bazy danych (mysqldump z crona) i procedura przywracania
+
+System serwisowy przechowuje kluczowe dane biznesowe (zgłoszenia, dane klientów, historię audytową). Regularny backup bazy danych chroni przed utratą danych wskutek awarii sprzętowej lub błędów ludzkich.
+
+#### Bezpieczna autoryzacja bez podawania hasła w parametrach CLI
+Nigdy nie wpisuj hasła wprost w poleceniach `mysqldump` w cronie (jest ono wtedy widoczne w tablicy procesów `ps aux`). Zamiast tego utwórz bezpieczny plik konfiguracyjny dla użytkownika wykonującego kopię (np. root lub dedykowany użytkownik `backup`):
+
+Utwórz plik `/root/.my.cnf` (lub `~/.my.cnf`):
+```ini
+[client]
+user=serwis_user
+password="Mocne_Unikalne_Haslo_DB_123!"
+host=127.0.0.1
+```
+Zabezpiecz uprawnienia do pliku:
+```bash
+chmod 600 /root/.my.cnf
+```
+
+#### Skrypt tworzący kopię zapasową z kompresją i retencją
+Utwórz skrypt `/opt/scripts/backup-db.sh`:
+```bash
+sudo mkdir -p /opt/scripts /var/backups/mysql
+sudo nano /opt/scripts/backup-db.sh
+```
+
+Wklej zawartość skryptu:
+```bash
+#!/usr/bin/env bash
+set -eo pipefail
+
+# Konfiguracja
+DB_NAME="serwis_db"
+BACKUP_DIR="/var/backups/mysql"
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+FILENAME="${BACKUP_DIR}/${DB_NAME}_${TIMESTAMP}.sql.gz"
+RETENTION_DAYS=14 # Liczba dni przechowywania kopii
+
+mkdir -p "${BACKUP_DIR}"
+
+# Wykonanie zrzutu bazy z kompresją gzip
+# Opcje:
+# --single-transaction : gwarantuje spójność bez blokowania tabel InnoDB
+# --quick               : buforowanie wiersz po wierszu (dla dużych tabel)
+# --routines --triggers : uwzględnienie procedur i wyzwalaczy
+mysqldump --defaults-extra-file=/root/.my.cnf \
+          --single-transaction \
+          --quick \
+          --routines \
+          --triggers \
+          "${DB_NAME}" | gzip -9 > "${FILENAME}"
+
+# Sprawdzenie czy plik powstał i nie jest pusty
+if [ -s "${FILENAME}" ]; then
+    echo "[$(date)] Kopia zapasowa bazy ${DB_NAME} wykonana pomyślnie: ${FILENAME} ($(du -h "${FILENAME}" | cut -f1))"
+else
+    echo "[$(date)] BŁĄD: Kopia zapasowa bazy ${DB_NAME} jest pusta lub nie powiodła się!" >&2
+    exit 1
+fi
+
+# Rotacja: usunięcie kopii starszych niż RETENTION_DAYS dni
+find "${BACKUP_DIR}" -type f -name "${DB_NAME}_*.sql.gz" -mtime +"${RETENTION_DAYS}" -delete
+```
+
+Nadaj uprawnienia do wykonywania:
+```bash
+sudo chmod +x /opt/scripts/backup-db.sh
+```
+
+Przetestuj działanie skryptu ręcznie:
+```bash
+sudo /opt/scripts/backup-db.sh
+ls -lh /var/backups/mysql/
+```
+
+#### Harmonogramowanie w `cron`
+Otwórz tabelę zadań crona administratora:
+```bash
+sudo crontab -e
+```
+
+Dodaj wpis uruchamiający backup codziennie o **02:30 w nocy**:
+```cron
+# Codzienna kopia zapasowa bazy danych MySQL o 02:30
+30 2 * * * /opt/scripts/backup-db.sh >> /var/log/mysql-backup.log 2>&1
+```
+
+---
+
+#### Procedura przywracania bazy danych (Disaster Recovery)
+
+W przypadku awarii, uszkodzenia danych lub migracji na nowy serwer wykonaj poniższe kroki, aby odtworzyć bazę z wybranej kopii zapasowej.
+
+1. **Zidentyfikuj plik kopii zapasowej do przywrócenia:**
+   ```bash
+   ls -lt /var/backups/mysql/
+   # Przykładowy plik: /var/backups/mysql/serwis_db_20261014_023000.sql.gz
+   ```
+
+2. **Zatrzymaj aplikację na czas przywracania bazy** (aby zapobiec zapisywaniu nowych danych w trakcie importu):
+   ```bash
+   # Jeśli używasz PM2:
+   sudo -u serwis pm2 stop serwis-app
+
+   # Lub jeśli używasz systemd:
+   sudo systemctl stop serwis
+   ```
+
+3. **(Opcjonalnie) Wykonaj awaryjny zrzut aktualnego stanu przed nadpisaniem:**
+   ```bash
+   mysqldump --defaults-extra-file=/root/.my.cnf --single-transaction serwis_db | gzip > /var/backups/mysql/serwis_db_przed_przywroceniem.sql.gz
+   ```
+
+4. **Odtwórz bazę z pliku skompresowanego `.sql.gz`:**
+   ```bash
+   BACKUP_FILE="/var/backups/mysql/serwis_db_20261014_023000.sql.gz"
+
+   gunzip < "${BACKUP_FILE}" | mysql --defaults-extra-file=/root/.my.cnf serwis_db
+   ```
+
+   *Uwaga:* Jeśli baza `serwis_db` została usunięta lub przywracasz stan na nowo postawionym serwerze, utwórz najpierw pustą bazę:
+   ```bash
+   mysql --defaults-extra-file=/root/.my.cnf -e "CREATE DATABASE IF NOT EXISTS serwis_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+   gunzip < "${BACKUP_FILE}" | mysql --defaults-extra-file=/root/.my.cnf serwis_db
+   ```
+
+5. **Zweryfikuj spójność danych po imporcie:**
+   ```bash
+   mysql --defaults-extra-file=/root/.my.cnf -e "SELECT COUNT(*) AS liczba_uzytkownikow FROM serwis_db.uzytkownicy;"
+   mysql --defaults-extra-file=/root/.my.cnf -e "SELECT COUNT(*) AS liczba_zgloszen FROM serwis_db.zgloszenia;"
+   mysql --defaults-extra-file=/root/.my.cnf -e "SELECT COUNT(*) AS liczba_historii FROM serwis_db.historia_zgloszen;"
+   ```
+
+6. **Uruchom ponownie aplikację i zweryfikuj działanie:**
+   ```bash
+   # Jeśli używasz PM2:
+   sudo -u serwis pm2 start serwis-app
+
+   # Lub jeśli używasz systemd:
+   sudo systemctl start serwis
+   ```
+
+7. **Sprawdź logi aplikacji i health check:**
+   ```bash
+   # Test endpointu health check
+   curl -I http://127.0.0.1:3000/api/health
+   # Oczekiwany wynik: HTTP/1.1 200 OK {"status":"ok"}
+   ```
+
+---
+
+### Podsumowanie checklisty wdrożeniowej
+
+- [ ] Zainstalowano Node.js (v20+), MySQL 8+ oraz Nginx/Caddy.
+- [ ] Utworzono użytkownika systemowego `serwis` i pobrano aplikację do `/var/www/serwis`.
+- [ ] Zainstalowano zależności produkcyjne (`npm ci --omit=dev`).
+- [ ] Utworzono plik `.env` z `NODE_ENV=production` oraz bezpiecznym `JWT_SECRET`.
+- [ ] Zainicjalizowano strukturę bazy (`npm run seed`) i utworzono konto administratora (`create-user.js`).
+- [ ] Skonfigurowano automatyczny start aplikacji za pomocą PM2 lub systemd.
+- [ ] Skonfigurowano Reverse Proxy (Nginx + Certbot lub Caddy) z certyfikatem SSL/HTTPS.
+- [ ] Zamknięto w zaporze porty 3000 i 3306 przed dostępem publicznym.
+- [ ] Skonfigurowano skrypt backupowy `mysqldump` w harmonogramie `cron` i przetestowano procedurę odzyskiwania danych.
