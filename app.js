@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
+const helmet = require('helmet');
 const mysql = require('mysql2/promise');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
@@ -24,6 +24,10 @@ app.setPool = (pool) => {
 app.getPool = () => currentPool;
 
 // --- Middlewares ---
+// Nagłówki bezpieczeństwa HTTP (helmet) z wyłączonym CSP na czas kompilacji JSX w przeglądarce
+app.use(helmet({
+    contentSecurityPolicy: false
+}));
 // Limit rozmiaru ciała żądania JSON dobrany tak, aby zmieścił się najdłuższy dopuszczalny opis usterki (65535 znaków + narzut JSON), ale nic ponad to.
 app.use(express.json({ limit: '70kb' }));
 // Serwowanie plików statycznych (np. index.html) – całkowicie bez cache dla przeglądarki

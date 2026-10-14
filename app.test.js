@@ -1681,4 +1681,27 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(response.body.error, 'Nieprawidłowy format JSON w ciele żądania.');
         });
     });
+
+    describe('15. Nagłówki bezpieczeństwa HTTP (helmet)', () => {
+        it('Odpowiedź serwera zawiera nagłówek X-Content-Type-Options: nosniff', async () => {
+            const res = await request(app).get('/api/health');
+            assert.strictEqual(res.headers['x-content-type-options'], 'nosniff');
+        });
+
+        it('Odpowiedź serwera zawiera nagłówek X-Frame-Options: SAMEORIGIN', async () => {
+            const res = await request(app).get('/api/health');
+            assert.strictEqual(res.headers['x-frame-options'], 'SAMEORIGIN');
+        });
+
+        it('Odpowiedź serwera zawiera nagłówki ochrony przeglądarki (X-Download-Options, X-Permitted-Cross-Domain-Policies)', async () => {
+            const res = await request(app).get('/api/health');
+            assert.strictEqual(res.headers['x-download-options'], 'noopen');
+            assert.strictEqual(res.headers['x-permitted-cross-domain-policies'], 'none');
+        });
+
+        it('Nagłówek Content-Security-Policy jest wyłączony na czas kompilacji JSX w przeglądarce', async () => {
+            const res = await request(app).get('/api/health');
+            assert.strictEqual(res.headers['content-security-policy'], undefined);
+        });
+    });
 });

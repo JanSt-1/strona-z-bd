@@ -23,6 +23,7 @@ strona_z_bd/
 ```
 
 - **Separation of Concerns:** `app.js` eksportuje aplikację Express i udostępnia `app.setPool(pool)` / `app.getPool()`. `index.js` wyłącznie uruchamia serwer HTTP (`app.listen()`).
+- **Nagłówki bezpieczeństwa HTTP:** `app.use(helmet({ contentSecurityPolicy: false }))` zabezpiecza aplikację nagłówkami ochronnymi (m.in. `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Strict-Transport-Security`, `Referrer-Policy`), przy czym CSP pozostaje tymczasowo wyłączone do czasu wdrożenia bundlera frontendu (Babel Standalone w przeglądarce).
 - **Parsowanie JSON i limit payloadu:** `app.use(express.json({ limit: '70kb' }))` jawnie ogranicza rozmiar ciała żądania, mieszcząc najdłuższy dopuszczalny opis usterki (65535 znaków) z narzutem struktury JSON, a odrzucając większe żądania kodem 413 Payload Too Large.
 - **Moduł bazy danych (`db.js`):** Centralizuje odczyt konfiguracji MySQL z `.env` (`DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_PORT`) i eksportuje pomocniki `createPool()` oraz `createConnection()`, wykorzystywane wspólnie przez `app.js`, `seed.js` i `create-user.js`.
 - **Pula połączeń:** `mysql2/promise` z parametryzowanymi zapytaniami (`?`).
@@ -140,7 +141,7 @@ npm run seed:zgloszenia   # Wygenerowanie 200 realistycznych zgłoszeń z histor
 node create-user.js admin Haslo123 admin   # Utworzenie pierwszego konta (hasło min. 8 znaków)
 npm start                 # Start serwera (port 3000)
 npm run dev               # Start serwera w trybie watch
-npm test                  # Uruchomienie 108 testów integracyjnych (node --test app.test.js)
+npm test                  # Uruchomienie 112 testów integracyjnych (node --test app.test.js)
 ```
 
 ---

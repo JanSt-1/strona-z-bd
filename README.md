@@ -7,7 +7,7 @@ To pełna aplikacja webowa (SPA) umożliwiająca klientom szybkie rejestrowanie 
 ## Architektura i Separation of Concerns
 
 Aplikacja backendowa jest rozdzielona zgodnie z zasadą separacji odpowiedzialności:
-- **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (CORS, JSON, pliki statyczne), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
+- **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (nagłówki bezpieczeństwa helmet, limit rozmiaru JSON, pliki statyczne), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
 - **`db.js`**: Centralny moduł konfiguracji bazy danych MySQL uwzględniający `DB_PORT`, `DB_HOST`, `DB_USER`, `DB_PASSWORD` oraz `DB_NAME`. Udostępnia metody `createPool()` oraz `createConnection()`, z których korzystają `app.js`, `seed.js` oraz `create-user.js`.
 - **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację obecności `JWT_SECRET`, test połączenia z bazą MySQL oraz uruchomienie nasłuchiwania HTTP (`app.listen()`).
 - **`app.test.js`**: Zestaw testów integracyjnych API bazujący na natywnym runnerze `node:test` oraz bibliotece `supertest`.
@@ -110,7 +110,7 @@ npm test
 ```
 *Skrypt wykonuje polecenie `node --test` z użyciem `supertest`. Dzięki wbudowanemu mockowaniu puli bazy danych w `app.test.js`, testy wykonują się błyskawicznie i nie wymagają aktywnego serwera MySQL.*
 
-Główne grupy przypadków testowych (łącznie **108 testów** w 15 suitach):
+Główne grupy przypadków testowych (łącznie **112 testów** w 16 suitach):
 1. **Uwierzytelnianie, logowanie, ochrona Honeypot, klauzula RODO i walidacja zgłoszeń**: walidacja pól obowiązkowych, obowiązkowy checkbox zgody RODO (odrzucenie 400 przy braku lub false, utrwalenie znacznika czasu w `zgoda_rodo_data` przy akceptacji), ochrona antyspamowa Honeypot (wypełnione pole `website` zwraca 201 bez zapisu do bazy), brak tokenu (401), błędne dane logowania (401), poprawny token JWT (200), blokada nieprawidłowych formatów i dat z przyszłości (400).
 2. **Przejście `nowe` → `w_realizacji`**: automatyczne przypisanie zlecenia, uprawnienia serwisanta i admina (200), blokada pracownika i magazyniera (403).
 3. **Przejście `w_realizacji` → `do_wysylki`**: wyłączność dedykowanego endpointu `/naprawione`, wymóg opisu prac, uprawnienia przypisanego pracownika/serwisanta/admina (200), blokada magazyniera (403) oraz blokada przejścia ze statusu `nowe` (409 Conflict).
@@ -149,6 +149,9 @@ Główne grupy przypadków testowych (łącznie **108 testów** w 15 suitach):
     - Zgłoszenie z maksymalnym dozwolonym opisem (65535 znaków) mieści się w limicie i zwraca 201 Created.
     - Żądania przekraczające limit (np. 80KB) zwracają status 413 Payload Too Large z czytelnym komunikatem JSON.
     - Błędnie sformatowane JSON-y zwracają status 400 Bad Request.
+15. **Nagłówki bezpieczeństwa HTTP (`helmet`)**:
+    - Zabezpieczenie serwera Express za pomocą biblioteki `helmet` z wyłączonym `contentSecurityPolicy` (ze względu na przeglądarkową kompilację JSX przez Babel Standalone).
+    - Aktywne nagłówki ochronne: `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Strict-Transport-Security`, `X-Download-Options: noopen`, `X-Permitted-Cross-Domain-Policies: none`.
 
 ---
 
