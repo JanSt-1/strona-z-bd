@@ -41,7 +41,10 @@ app.isHashedFile = isHashedFile;
 // - index.html: no-store (przeglądarka pobiera zawsze świeży punkt wejścia SPA)
 // - pliki z buildu z hashem w nazwie: długie cache'owanie (max-age 1 rok, immutable)
 // - pozostałe pliki statyczne bez hasha (np. logo_mentor4.svg): standardowy cache (1 dzień)
-app.use(express.static(path.join(__dirname, 'public'), {
+const staticDir = path.join(__dirname, 'frontend', 'dist');
+app.staticDir = staticDir;
+
+app.use(express.static(staticDir, {
     setHeaders: (res, filePath) => {
         const fileName = path.basename(filePath).toLowerCase();
         if (fileName === 'index.html') {

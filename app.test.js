@@ -1739,12 +1739,18 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
     });
 
     describe('17. Cache-Control dla plików statycznych (express.static)', () => {
-        const testHashedJs = path.join(__dirname, 'public', 'bundle.a1b2c3d4.js');
-        const testHashedCss = path.join(__dirname, 'public', 'style-D7x2v_4z.css');
+        const staticDir = path.join(__dirname, 'frontend', 'dist');
+        const testHashedJs = path.join(staticDir, 'bundle.a1b2c3d4.js');
+        const testHashedCss = path.join(staticDir, 'style-D7x2v_4z.css');
+        const testIndexHtml = path.join(staticDir, 'index.html');
+        const testLogo = path.join(staticDir, 'logo_mentor4.svg');
 
         before(() => {
+            fs.mkdirSync(staticDir, { recursive: true });
             fs.writeFileSync(testHashedJs, 'console.log("hashed bundle");');
             fs.writeFileSync(testHashedCss, 'body { color: red; }');
+            if (!fs.existsSync(testIndexHtml)) fs.writeFileSync(testIndexHtml, '<!doctype html><html></html>');
+            if (!fs.existsSync(testLogo)) fs.writeFileSync(testLogo, '<svg></svg>');
         });
 
         after(() => {

@@ -7,11 +7,11 @@ To pełna aplikacja webowa (SPA) umożliwiająca klientom szybkie rejestrowanie 
 ## Architektura i Separation of Concerns
 
 Aplikacja jest rozdzielona zgodnie z zasadą separacji odpowiedzialności:
-- **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (nagłówki bezpieczeństwa helmet, limit rozmiaru JSON, serwowanie plików statycznych z `public/`), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
+- **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (nagłówki bezpieczeństwa helmet, limit rozmiaru JSON, serwowanie plików statycznych z `frontend/dist/`), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
 - **`db.js`**: Centralny moduł konfiguracji bazy danych MySQL uwzględniający `DB_PORT`, `DB_HOST`, `DB_USER`, `DB_PASSWORD` oraz `DB_NAME`. Udostępnia metody `createPool()` oraz `createConnection()`, z których korzystają `app.js`, `seed.js` oraz `create-user.js`.
 - **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację obecności `JWT_SECRET`, test połączenia z bazą MySQL oraz uruchomienie nasłuchiwania HTTP (`app.listen()`).
-- **`frontend/`**: Źródła interfejsu użytkownika SPA napisane w React 18 z bundlerem Vite i nowoczesnym stylem Tailwind CSS v4. Kod został podzielony modularnie na komponenty (`components/`), strony (`pages/`), scentralizowaną warstwę API (`api.js`) oraz stałe biznesowe (`constants.js`).
-- **`public/`**: Katalog dystrybucyjny serwowany przez Express. Zawiera skompilowany, zoptymalizowany pakiet produkcyjny wygenerowany poleceniem `npm run build:frontend` (`index.html`, zhaszowane `assets/index-*.js`, `assets/index-*.css` oraz `logo_mentor4.svg`).
+- **`frontend/`**: Źródła interfejsu użytkownika SPA napisane w React 18 z bundlerem Vite i nowoczesnym stylem Tailwind CSS v4. Kod został podzielony modularnie na komponenty (`components/`), strony (`pages/`), scentralizowaną warstwę API (`api.js`) oraz stałe biznesowe (`constants.js`). Wynik kompilacji trafia do katalogu `frontend/dist/`.
+- **`frontend/dist/`**: Katalog dystrybucyjny serwowany przez Express. Zawiera skompilowany, zoptymalizowany pakiet produkcyjny wygenerowany poleceniem `npm run build` (`index.html`, zhaszowane `assets/index-*.js`, `assets/index-*.css`, `favicon.svg` oraz `logo_mentor4.svg`).
 - **`app.test.js`**: Zestaw testów integracyjnych API bazujący na natywnym runnerze `node:test` oraz bibliotece `supertest`.
 
 ---
@@ -89,9 +89,10 @@ node create-user.js nazwa_magazyniera HasloMagazyniera magazynier
 
 ### Krok 5: Zbudowanie frontendu i uruchomienie serwera
 
-Najpierw skompiluj aplikację React za pomocą Vite (wygeneruje zoptymalizowane pliki w katalogu `public/` serwowanym przez Express):
+Najpierw skompiluj aplikację React za pomocą Vite (wygeneruje zoptymalizowane pliki w katalogu `frontend/dist/` serwowanym bezpośrednio przez Express):
 ```bash
-npm run build:frontend
+npm run build
+# (alias: npm run build:frontend)
 ```
 
 Następnie uruchom aplikację w trybie produkcyjnym:
@@ -104,10 +105,15 @@ npm run dev
 ```
 
 #### Praca nad frontendem (Live HMR)
-Jeśli rozwijasz interfejs użytkownika, możesz uruchomić niezależny serwer deweloperski Vite z natychmiastowym odświeżaniem HMR na porcie 5173 (z automatycznym proxy zapytań `/api` do działającego w tle backendu Express na porcie 3000):
+Jeśli rozwijasz interfejs użytkownika, możesz uruchomić niezależny serwer deweloperski Vite z natychmiastowym odświeżaniem HMR na porcie 5173:
 ```bash
-npm run dev:frontend
+npm run dev:front
+# (alias: npm run dev:frontend)
 ```
+*Vite posiada skonfigurowany w `vite.config.js` proxy (`server.proxy`), który automatycznie przekierowuje zapytania do `/api` na adres `http://localhost:3000` uruchomionego backendu Express.*
+
+#### Favicon i identyfikacja wizualna
+Aplikacja posiada dedykowany favicon (`favicon.svg`) wygenerowany na bazie sygnetu logo Mentor, serwowany bezpośrednio w nagłówku strony i w pasku zakładek przeglądarki.
 
 Po uruchomieniu aplikacja produkcyjna dostępna jest pod adresem:
 👉 **http://localhost:3000** (lub dev serwer frontendu pod **http://localhost:5173**)
@@ -164,7 +170,7 @@ Główne grupy przypadków testowych (łącznie **118 testów** w 18 suitach):
     - Żądania przekraczające limit (np. 80KB) zwracają status 413 Payload Too Large z czytelnym komunikatem JSON.
     - Błędnie sformatowane JSON-y zwracają status 400 Bad Request.
 15. **Nagłówki bezpieczeństwa HTTP (`helmet`)**:
-    - Zabezpieczenie serwera Express za pomocą biblioteki `helmet` z wyłączonym `contentSecurityPolicy` (ze względu na przeglądarkową kompilację JSX przez Babel Standalone).
+    - Zabezpieczenie serwera Express za pomocą biblioteki `helmet` z wyłączonym `contentSecurityPolicy`. Frontend kompilowany jest z wyprzedzeniem przez Vite (brak Babel Standalone w przeglądarce).
     - Aktywne nagłówki ochronne: `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Strict-Transport-Security`, `X-Download-Options: noopen`, `X-Permitted-Cross-Domain-Policies: none`.
 16. **Endpoint `/api/health` (bezpieczny health check)**:
     - Weryfikacja działania bazy danych (`SELECT 1`).
@@ -703,7 +709,7 @@ W przypadku awarii, uszkodzenia danych lub migracji na nowy serwer wykonaj poni�
 
 - [ ] Zainstalowano Node.js (v20+), MySQL 8+ oraz Nginx/Caddy.
 - [ ] Utworzono użytkownika systemowego `serwis` i pobrano aplikację do `/var/www/serwis`.
-- [ ] Zainstalowano zależności projektu (`npm ci`) oraz zbudowano zoptymalizowany frontend (`npm run build:frontend`).
+- [ ] Zainstalowano zależności projektu (`npm ci`) oraz zbudowano zoptymalizowany frontend do `frontend/dist/` (`npm run build`).
 - [ ] Utworzono plik `.env` z `NODE_ENV=production` oraz bezpiecznym `JWT_SECRET`.
 - [ ] Zainicjalizowano strukturę bazy (`npm run seed`) i utworzono konto administratora (`create-user.js`).
 - [ ] Skonfigurowano automatyczny start aplikacji za pomocą PM2 lub systemd.

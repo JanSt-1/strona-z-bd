@@ -9,7 +9,7 @@ Kompleksowy system zgłoszeń serwisowych (SPA + REST API) w technologii **Expre
 ```
 strona_z_bd/
 ├── .env / .env.example      # Zmienne: PORT, DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT, JWT_SECRET
-├── app.js                   # Instancja Express: middleware, RBAC, walidacja, JWT, routing, pula DB, serwowanie public/
+├── app.js                   # Instancja Express: middleware, RBAC, walidacja, JWT, routing, pula DB, serwowanie frontend/dist/
 ├── db.js                    # Centralna konfiguracja połączenia MySQL (DB_PORT, createPool, createConnection)
 ├── index.js                 # Entrypoint serwera: weryfikacja .env i JWT_SECRET, test DB, app.listen()
 ├── app.test.js              # Testy integracyjne API (node:test + supertest, 118 testów, mock DB przez app.setPool())
@@ -19,13 +19,10 @@ strona_z_bd/
 ├── create-user.js           # CLI: tworzenie kont z haszowaniem bcrypt (`node create-user.js <user> <pass> [rola]`)
 ├── frontend/                # Źródła aplikacji SPA (React + Vite + Tailwind CSS v4)
 │   ├── src/                 # Komponenty (components/), strony (pages/), api.js, constants.js, index.css
-│   ├── public/              # Statyczne zasoby źródłowe frontendu (logo_mentor4.svg)
+│   ├── public/              # Statyczne zasoby źródłowe frontendu (logo_mentor4.svg, favicon.svg)
+│   ├── dist/                # Katalog dystrybucyjny serwowany przez Express (wynik npm run build)
 │   ├── package.json         # Zależności frontendu (React, Tailwind, Vite)
-│   └── vite.config.js       # Konfiguracja Vite: proxy do backendu /api, outDir: ../public, emptyOutDir: true
-├── public/                  # Katalog dystrybucyjny serwowany przez Express (wynik npm run build:frontend)
-│   ├── assets/              # Zbudowane pliki JS i CSS z hashem (długi cache 1 rok immutable)
-│   ├── index.html           # Skompilowany punkt wejścia SPA (Cache-Control: no-store)
-│   └── logo_mentor4.svg     # Logo systemu
+│   └── vite.config.js       # Konfiguracja Vite: proxy do backendu /api, outDir: dist, emptyOutDir: true
 └── context.md               # [TEN PLIK] Wytyczne architektoniczne i biznesowe dla deweloperów i agentów AI
 ```
 
@@ -142,7 +139,7 @@ Format odpowiedzi błędów: `{ error: string }`.
   - `api.js`: Scentralizowany klient API (`apiFetch`, `apiJson`, `ticketApi`, `authApi`, `workerApi`, `userApi`, `healthApi`, nasłuchiwacz 401 `onUnauthorized`).
   - `constants.js`: Lista produktów (`PRZEDMIOTY_LISTA`), 49 stref kierunkowych (`NUMERY_KIERUNKOWE`), etykiety statusów (`STATUS_LABELS`), role (`ROLES`), pusty stan formularza (`EMPTY_TICKET_FORM`).
   - `index.css`: Style bazowe Tailwind CSS v4, tokeny kolorystyczne, klasy komponentowe bez statycznych inline `style={{}}`.
-- **Budowanie i assety produkcyjne:** `npm run build:frontend` (lub `npm run build` w `frontend/`) kompiluje aplikację Vite do `public/` z hashowanymi assetami `assets/index-*.js` i `assets/index-*.css`, spełniając reguły 1-rocznego `Cache-Control: immutable`.
+- **Budowanie i assety produkcyjne:** `npm run build` (lub `npm run build:frontend`) kompiluje aplikację Vite do `frontend/dist/` z hashowanymi assetami `assets/index-*.js` i `assets/index-*.css`, spełniając reguły 1-rocznego `Cache-Control: immutable`. Plik `index.html` serwowany jest z nagłówkiem `Cache-Control: no-store`.
 - **Ochrona antyspamowa Honeypot:** Ukryte pole formularza `website`. Zwykli użytkownicy go nie widzą ani nie wypełniają. Boty wypełniające pole otrzymują 201 Created, lecz zgłoszenie nie trafia do bazy danych.
 - **Klauzula informacyjna RODO i zgoda:** Rozwijana sekcja `<details>`/`<summary>` z klauzulą oraz obowiązkowy checkbox („Zapoznałem/am się z informacją o przetwarzaniu danych osobowych”).
 - **Bezpieczeństwo sesji i obsługa błędów:**
@@ -156,13 +153,13 @@ Format odpowiedzi błędów: `{ error: string }`.
 
 ```bash
 npm install                     # Instalacja zależności całego projektu (backend + frontend przez npm workspaces)
-npm run build:frontend          # Zbudowanie frontendu Vite do katalogu public/
+npm run build                   # Zbudowanie frontendu Vite do katalogu frontend/dist/
 npm run seed                    # Wgranie schematu bazy danych (schemat.sql)
 npm run seed:zgloszenia         # Wygenerowanie 200 realistycznych zgłoszeń z historią zdarzeń
 node create-user.js admin Haslo123 admin   # Utworzenie pierwszego konta (hasło min. 8 znaków)
-npm start                       # Start serwera produkcyjnego (port 3000, serwuje API oraz public/)
+npm start                       # Start serwera produkcyjnego (port 3000, serwuje API oraz frontend/dist/)
 npm run dev                     # Start serwera backendowego w trybie watch
-npm run dev:frontend            # Start deweloperskiego serwera Vite (port 5173 z proxy do backendu :3000)
+npm run dev:front               # Start deweloperskiego serwera Vite (port 5173 z proxy do backendu :3000)
 npm test                        # Uruchomienie 118 testów integracyjnych (node --test app.test.js)
 ```
 
