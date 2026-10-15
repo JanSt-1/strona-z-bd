@@ -1,3 +1,31 @@
+# Zależności
 node_modules/
+
+# Środowisko i sekrety
 .env
+.env.local
+*.local
+
+# Logi
+logs/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Katalogi edytorów i systemu
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Buildy i dystrybucja tymczasowa
+dist/
+dist-ssr/

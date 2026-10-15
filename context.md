@@ -1,6 +1,6 @@
 # Kontekst Projektu: System Obsługi Zgłoszeń Serwisowych
 
-Kompleksowy system zgłoszeń serwisowych (SPA + REST API) w technologii **Express.js (v5)**, **MySQL** oraz **React 18** (bez bundlera, osadzony w `public/index.html`).
+Kompleksowy system zgłoszeń serwisowych (SPA + REST API) w technologii **Express.js (v5)**, **MySQL** oraz **React** (modularny frontend w `frontend/` z bundlerem **Vite** i **Tailwind CSS**, kompilowany do katalogu produkcyjnego `public/`).
 
 ---
 
@@ -9,21 +9,28 @@ Kompleksowy system zgłoszeń serwisowych (SPA + REST API) w technologii **Expre
 ```
 strona_z_bd/
 ├── .env / .env.example      # Zmienne: PORT, DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT, JWT_SECRET
-├── app.js                   # Instancja Express: middleware, RBAC, walidacja, JWT, routing, pula DB (bez app.listen())
+├── app.js                   # Instancja Express: middleware, RBAC, walidacja, JWT, routing, pula DB, serwowanie public/
 ├── db.js                    # Centralna konfiguracja połączenia MySQL (DB_PORT, createPool, createConnection)
 ├── index.js                 # Entrypoint serwera: weryfikacja .env i JWT_SECRET, test DB, app.listen()
-├── app.test.js              # Testy integracyjne API (node:test + supertest, 82 testy, mock DB przez app.setPool())
+├── app.test.js              # Testy integracyjne API (node:test + supertest, 118 testów, mock DB przez app.setPool())
 ├── schemat.sql              # Schemat MySQL (tabele: uzytkownicy, zgloszenia, historia_zgloszen)
 ├── seed.js                  # Inicjalizacja bazy i aplikowanie schemat.sql (`npm run seed`)
+├── seed-zgloszenia.js       # Generator 200 realistycznych zgłoszeń z historią zdarzeń (`npm run seed:zgloszenia`)
 ├── create-user.js           # CLI: tworzenie kont z haszowaniem bcrypt (`node create-user.js <user> <pass> [rola]`)
-├── public/
-│   ├── index.html           # SPA w React 18: formularz zgłoszeniowy klienta + panel pracownika z RBAC
-│   └── logo_mentor4.svg     # Logo systemu w nagłówku
+├── frontend/                # Źródła aplikacji SPA (React + Vite + Tailwind CSS v4)
+│   ├── src/                 # Komponenty (components/), strony (pages/), api.js, constants.js, index.css
+│   ├── public/              # Statyczne zasoby źródłowe frontendu (logo_mentor4.svg)
+│   ├── package.json         # Zależności frontendu (React, Tailwind, Vite)
+│   └── vite.config.js       # Konfiguracja Vite: proxy do backendu /api, outDir: ../public, emptyOutDir: true
+├── public/                  # Katalog dystrybucyjny serwowany przez Express (wynik npm run build:frontend)
+│   ├── assets/              # Zbudowane pliki JS i CSS z hashem (długi cache 1 rok immutable)
+│   ├── index.html           # Skompilowany punkt wejścia SPA (Cache-Control: no-store)
+│   └── logo_mentor4.svg     # Logo systemu
 └── context.md               # [TEN PLIK] Wytyczne architektoniczne i biznesowe dla deweloperów i agentów AI
 ```
 
 - **Separation of Concerns:** `app.js` eksportuje aplikację Express i udostępnia `app.setPool(pool)` / `app.getPool()`. `index.js` wyłącznie uruchamia serwer HTTP (`app.listen()`).
-- **Nagłówki bezpieczeństwa HTTP:** `app.use(helmet({ contentSecurityPolicy: false }))` zabezpiecza aplikację nagłówkami ochronnymi (m.in. `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Strict-Transport-Security`, `Referrer-Policy`), przy czym CSP pozostaje tymczasowo wyłączone do czasu wdrożenia bundlera frontendu (Babel Standalone w przeglądarce).
+- **Nagłówki bezpieczeństwa HTTP:** `app.use(helmet({ contentSecurityPolicy: false }))` zabezpiecza aplikację nagłówkami ochronnymi (m.in. `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Strict-Transport-Security`, `Referrer-Policy`). Frontend korzysta z bundlera Vite (brak Babel Standalone w przeglądarce).
 - **Parsowanie JSON i limit payloadu:** `app.use(express.json({ limit: '70kb' }))` jawnie ogranicza rozmiar ciała żądania, mieszcząc najdłuższy dopuszczalny opis usterki (65535 znaków) z narzutem struktury JSON, a odrzucając większe żądania kodem 413 Payload Too Large.
 - **Moduł bazy danych (`db.js`):** Centralizuje odczyt konfiguracji MySQL z `.env` (`DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_PORT`) i eksportuje pomocniki `createPool()` oraz `createConnection()`, wykorzystywane wspólnie przez `app.js`, `seed.js` i `create-user.js`.
 - **Pula połączeń:** `mysql2/promise` z parametryzowanymi zapytaniami (`?`).
@@ -113,39 +120,50 @@ Format odpowiedzi błędów: `{ error: string }`.
 
 ---
 
-## 5. Frontend SPA (`public/index.html`)
+## 5. Frontend SPA (`frontend/` -> `public/`)
 
-- Czysty **React 18 + Babel Standalone** serwowany statycznie przez Express.
-- Dwa niezależne widoki: formularz publiczny klienta (`PublicTicketForm`) oraz panel pracownika (`Dashboard` z logowaniem `LoginForm`).
-- **Ochrona antyspamowa Honeypot:** Ukryte pole formularza `website` (`display: none`, `tabIndex={-1}`, `autoComplete="off"`). Zwykli użytkownicy go nie widzą ani nie wypełniają. Boty wypełniające pole otrzymują 201 Created, lecz zgłoszenie nie trafia do bazy danych.
-- **Klauzula informacyjna RODO i zgoda:** Rozwijana sekcja `<details>`/`<summary>` z prostym placeholderem treści informacyjnej oraz obowiązkowy checkbox („Zapoznałem/am się z informacją o przetwarzaniu danych osobowych”). Wymagany na frontendzie i walidowany na serwerze; moment potwierdzenia zapisywany w kolumnie `zgoda_rodo_data`.
-- **Zasady Cache-Control dla plików statycznych (`express.static`):**
-  - `index.html`: `no-store, no-cache, must-revalidate, proxy-revalidate`, `Pragma: no-cache`, `Expires: 0` – przeglądarka zawsze pobiera świeży punkt wejścia SPA przy każdym wejściu.
-  - Pliki z buildu z hashem w nazwie (np. `bundle.a1b2c3d4.js`, `index-D7x2v_4z.js`): `public, max-age=31536000, immutable` (długi cache 1 rok).
-  - Pozostałe pliki statyczne bez hasha (np. `logo_mentor4.svg`): `public, max-age=86400` (1 dzień) bez `no-store`.
-- **Bezpieczeństwo sesji i obsługa błędów:** token JWT przechowywany w `localStorage` (`serwis_token`). Pomocnik `apiFetch` pobiera token dynamicznie przed każdym żądaniem.
-  - **401 Unauthorized:** brakujący, nieprawidłowy lub wygasły token JWT. `handleAuthError` natychmiast czyści stan i wylogowuje użytkownika.
-  - **403 Forbidden:** brak uprawnień do danej akcji (reguły ról RBAC, edycja zlecenia przypisanego do kogoś innego itp.). Frontend **nie wylogowuje** użytkownika, lecz wyświetla komunikat błędu z serwera w alercie (`showAlert(err.message, 'error')`).
-- Pomocnik `apiJson(endpoint, options, fallbackError)` obsługuje ujednolicone zapytania API i wyłapuje błędy backendu.
-- **Paginacja, wyszukiwanie i filtry listy zgłoszeń:**
-  - Pasek wyszukiwania tekstowego, filtry statusu, przypisanego pracownika oraz sortowania po dacie utworzenia.
-  - Paginacja (poprzednia/następna strona, informacja o łącznej liczbie wyników i stron).
-- **Zarządzanie hasłami:**
-  - Administrator ma dedykowaną zakładkę „Użytkownicy” z tabelą kont, zmianą roli, blokowaniem/odblokowywaniem, dodawaniem użytkowników oraz modalem „Zmień hasło” dla każdego konta.
-  - Każdy zalogowany użytkownik (niezależnie od roli) ma w nagłówku panelu przycisk „Zmień hasło” otwierający modal weryfikujący dotychczasowe hasło i wymuszający min. 8 znaków dla nowego hasła.
+- Nowoczesna modularna architektura **React + Vite** z ostylowaniem w **Tailwind CSS**.
+- **Struktura katalogu `frontend/src/`:**
+  - `components/`:
+    - `Header.jsx`: Nagłówek z logo firmy, nawigacją i przełączaniem zakładek.
+    - `Alert.jsx`: Komponent powiadomień sukcesu i błędów z animacją wejścia.
+    - `StatusBadge.jsx`: Pigułka statusu z dedykowaną kolorystyką (nowe, w realizacji, do wysyłki, zakończone).
+    - `StatusControl.jsx`: Kontrolki zmiany statusu zależne od ról (RBAC) w wierszach tabeli.
+    - `ShipControl.jsx`: Formularz wysyłki dla magazyniera z walidacją numeru listu przewozowego na żywo.
+    - `RepairModal.jsx`: Modal raportu naprawy z zatwierdzeniem i automatycznym datowaniem.
+    - `TrackingNumberModal.jsx`: Modal wprowadzania/edycji numeru listu przewozowego.
+    - `ChangeOwnPasswordModal.jsx`: Modal zmiany własnego hasła (min. 8 znaków, weryfikacja dotychczasowego hasła).
+    - `AdminPasswordModal.jsx`: Modal resetowania hasła użytkownika przez administratora.
+    - `AdminUsersPanel.jsx`: Kompletny panel zarządzania kontami, rolami, blokadami i dodawaniem użytkowników.
+  - `pages/`:
+    - `PublicTicketForm.jsx`: Publiczny formularz zgłoszeniowy (Honeypot, 3 sekcje, kalendarz, NIP, warunkowy S/N, RODO).
+    - `LoginForm.jsx`: Karta logowania pracownika z obsługą JWT i błędów.
+    - `Dashboard.jsx`: Główny widok pracownika/serwisanta/magazyniera/admina z filtrami, wyszukiwarką, sortowaniem, tabelą i paginacją.
+  - `api.js`: Scentralizowany klient API (`apiFetch`, `apiJson`, `ticketApi`, `authApi`, `workerApi`, `userApi`, `healthApi`, nasłuchiwacz 401 `onUnauthorized`).
+  - `constants.js`: Lista produktów (`PRZEDMIOTY_LISTA`), 49 stref kierunkowych (`NUMERY_KIERUNKOWE`), etykiety statusów (`STATUS_LABELS`), role (`ROLES`), pusty stan formularza (`EMPTY_TICKET_FORM`).
+  - `index.css`: Style bazowe Tailwind CSS v4, tokeny kolorystyczne, klasy komponentowe bez statycznych inline `style={{}}`.
+- **Budowanie i assety produkcyjne:** `npm run build:frontend` (lub `npm run build` w `frontend/`) kompiluje aplikację Vite do `public/` z hashowanymi assetami `assets/index-*.js` i `assets/index-*.css`, spełniając reguły 1-rocznego `Cache-Control: immutable`.
+- **Ochrona antyspamowa Honeypot:** Ukryte pole formularza `website`. Zwykli użytkownicy go nie widzą ani nie wypełniają. Boty wypełniające pole otrzymują 201 Created, lecz zgłoszenie nie trafia do bazy danych.
+- **Klauzula informacyjna RODO i zgoda:** Rozwijana sekcja `<details>`/`<summary>` z klauzulą oraz obowiązkowy checkbox („Zapoznałem/am się z informacją o przetwarzaniu danych osobowych”).
+- **Bezpieczeństwo sesji i obsługa błędów:**
+  - Token JWT przechowywany w `localStorage` (`serwis_token`).
+  - **401 Unauthorized:** wygaśnięcie lub brak sesji. Automatyczne wylogowanie i powrót do ekranu logowania.
+  - **403 Forbidden:** brak uprawnień RBAC. Frontend nie wylogowuje, lecz wyświetla komunikat błędu z backendu w alercie.
 
 ---
 
 ## 6. Uruchomienie i Testy
 
 ```bash
-npm install               # Instalacja zależności
-npm run seed              # Wgranie schematu bazy danych (schemat.sql)
-npm run seed:zgloszenia   # Wygenerowanie 200 realistycznych zgłoszeń z historią zdarzeń
+npm install                     # Instalacja zależności całego projektu (backend + frontend przez npm workspaces)
+npm run build:frontend          # Zbudowanie frontendu Vite do katalogu public/
+npm run seed                    # Wgranie schematu bazy danych (schemat.sql)
+npm run seed:zgloszenia         # Wygenerowanie 200 realistycznych zgłoszeń z historią zdarzeń
 node create-user.js admin Haslo123 admin   # Utworzenie pierwszego konta (hasło min. 8 znaków)
-npm start                 # Start serwera (port 3000)
-npm run dev               # Start serwera w trybie watch
-npm test                  # Uruchomienie 118 testów integracyjnych (node --test app.test.js)
+npm start                       # Start serwera produkcyjnego (port 3000, serwuje API oraz public/)
+npm run dev                     # Start serwera backendowego w trybie watch
+npm run dev:frontend            # Start deweloperskiego serwera Vite (port 5173 z proxy do backendu :3000)
+npm test                        # Uruchomienie 118 testów integracyjnych (node --test app.test.js)
 ```
 
 ---

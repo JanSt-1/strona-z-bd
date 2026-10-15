@@ -3,12 +3,17 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "workspaces": [
+    "frontend"
+  ],
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
     "seed": "node seed.js",
     "seed:zgloszenia": "node seed-zgloszenia.js",
-    "test": "node --test"
+    "test": "node --test",
+    "build:frontend": "npm --prefix frontend run build",
+    "dev:frontend": "npm --prefix frontend run dev"
   },
   "keywords": [],
   "author": "",
