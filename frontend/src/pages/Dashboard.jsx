@@ -240,13 +240,13 @@ export default function Dashboard({ user, token, onLogout }) {
 
       {/* Zakładki pod-nawigacji dla administratora */}
       {user?.role === 'admin' && (
-        <div className="flex gap-2 bg-white/50 p-1.5 rounded-xl border border-[var(--card-border)] mb-6">
+        <div className="flex gap-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200 mb-6">
           <button
             type="button"
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
               currentTab === 'tickets'
-                ? 'bg-[#005c1f] text-white shadow-md'
-                : 'text-emerald-950 hover:bg-emerald-500/20'
+                ? 'bg-[var(--primary)] text-[var(--text-white)] shadow-sm'
+                : 'text-slate-700 hover:bg-slate-200'
             }`}
             onClick={() => setDashboardTab('tickets')}
           >
@@ -262,8 +262,8 @@ export default function Dashboard({ user, token, onLogout }) {
             type="button"
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
               currentTab === 'users'
-                ? 'bg-[#005c1f] text-white shadow-md'
-                : 'text-emerald-950 hover:bg-emerald-500/20'
+                ? 'bg-[var(--primary)] text-[var(--text-white)] shadow-sm'
+                : 'text-slate-700 hover:bg-slate-200'
             }`}
             onClick={() => setDashboardTab('users')}
           >
@@ -285,7 +285,7 @@ export default function Dashboard({ user, token, onLogout }) {
       ) : (
         <>
           {/* Pasek kontrolny filtrów */}
-          <div className="flex flex-wrap gap-3 items-center justify-between mb-4 bg-white/70 p-3 rounded-xl border border-[var(--card-border)] backdrop-blur-md">
+          <div className="flex flex-wrap gap-3 items-center justify-between mb-4 bg-slate-50 p-3 rounded-xl border border-slate-200">
             <div className="flex flex-wrap gap-2.5 items-center flex-1">
               <form
                 className="flex items-center gap-1.5 flex-1 min-w-[220px] max-w-sm"
@@ -387,7 +387,7 @@ export default function Dashboard({ user, token, onLogout }) {
           </div>
 
           {/* Tabela zgłoszeń */}
-          <div className="overflow-x-auto bg-white/95 rounded-xl shadow-md border border-[var(--card-border)]">
+          <div className="overflow-x-auto bg-white rounded-xl shadow-sm border border-slate-200">
             <table>
               <thead>
                 <tr>
@@ -601,7 +601,7 @@ export default function Dashboard({ user, token, onLogout }) {
           </div>
 
           {/* Paginacja */}
-          <div className="flex flex-wrap justify-between items-center gap-3 mt-4 p-3 bg-white/70 rounded-xl border border-[var(--card-border)] text-xs text-slate-700">
+          <div className="flex flex-wrap justify-between items-center gap-3 mt-4 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700">
             <div>
               <span>
                 Strona <strong>{page}</strong> z <strong>{totalPages || 1}</strong>

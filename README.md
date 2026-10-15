@@ -60,7 +60,7 @@ npm run seed
 *(Skrypt ten aplikuje pełną strukturę tabel `uzytkownicy`, `zgloszenia` oraz `historia_zgloszen` z pliku `schemat.sql`, w tym pola `numer_listu`, `data_wyslania`, `opis_naprawy` itp.).*
 
 ### Krok 3a: Generowanie danych testowych (200 zgłoszeń)
-Aby wypełnić bazę 200 realistycznymi zgłoszeniami serwisowymi (z różnymi statusami, danymi klientów, usterkami, opisami napraw, listami przewozowymi i powiązaną historią zdarzeń), uruchom:
+Aby wypełnić bazę 200 zgłoszeniami serwisowymi (z różnymi statusami, danymi klientów, usterkami, opisami napraw, listami przewozowymi i powiązaną historią zdarzeń), uruchom:
 ```bash
 npm run seed:zgloszenia
 # lub bezpośrednio:

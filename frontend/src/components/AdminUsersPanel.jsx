@@ -254,7 +254,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
       )}
 
       {/* Tabela użytkowników */}
-      <div className="overflow-x-auto bg-white/90 rounded-xl shadow-md border border-[var(--card-border)]">
+      <div className="overflow-x-auto bg-white rounded-xl shadow-sm border border-slate-200">
         <table>
           <thead>
             <tr>
