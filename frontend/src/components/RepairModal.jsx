@@ -41,21 +41,21 @@ export default function RepairModal({ ticket, onClose, onSubmit }) {
       }}
     >
       <div className="modal-card">
-        <div className="flex justify-between items-center mb-4 pb-2 border-b border-emerald-400/30">
-          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+        <div className="flex justify-between items-center mb-4 pb-2 border-b border-line">
+          <h3 className="text-lg font-bold text-ink flex items-center gap-2">
             <span>🔧</span>
             <span>Raport z naprawy — Zgłoszenie #{ticket.id}</span>
           </h3>
           <button
             type="button"
             onClick={onClose}
-            className="text-red-400 hover:text-red-200 text-xl font-bold p-1 leading-none transition-colors cursor-pointer"
+            className="text-danger hover:text-danger text-xl font-bold p-1 leading-none transition-colors cursor-pointer"
           >
             ✕
           </button>
         </div>
 
-        <div className="bg-white/95 text-slate-900 p-3.5 rounded-lg mb-4 text-sm shadow-inner space-y-1">
+        <div className="bg-page border border-line text-ink p-3.5 rounded-lg mb-4 text-sm space-y-1">
           <div>
             <strong>Klient:</strong> {ticket.imie} {ticket.nazwisko}{' '}
             {ticket.nazwa_firmy ? `(${ticket.nazwa_firmy})` : ''}
@@ -64,13 +64,13 @@ export default function RepairModal({ ticket, onClose, onSubmit }) {
             <strong>Produkt:</strong> {ticket.przedmiot_zgloszenia}{' '}
             {ticket.numer_seryjny ? `| SN: ${ticket.numer_seryjny}` : ''}
           </div>
-          <div className="mt-1 text-slate-600 whitespace-pre-wrap break-words leading-relaxed text-xs">
+          <div className="mt-1 text-muted whitespace-pre-wrap break-words leading-relaxed text-xs">
             <strong>Zgłoszona usterka:</strong> {ticket.opis_usterki}
           </div>
         </div>
 
         {modalError && (
-          <div className="bg-red-500/20 border border-red-500/50 text-red-200 p-3 rounded-lg text-sm mb-4">
+          <div className="bg-danger/10 border border-danger/40 text-danger p-3 rounded-lg text-sm mb-4">
             {modalError}
           </div>
         )}
@@ -79,7 +79,7 @@ export default function RepairModal({ ticket, onClose, onSubmit }) {
           <div>
             <label
               htmlFor="repairDescription"
-              className="block font-semibold text-white text-sm mb-1.5"
+              className="block font-semibold text-ink text-sm mb-1.5"
             >
               Opis wykonanych prac (co zostało zrobione / wymienione) *
             </label>
@@ -91,9 +91,9 @@ export default function RepairModal({ ticket, onClose, onSubmit }) {
               placeholder="np. Wymieniono moduł zasilacza, przetestowano ekran dotykowy, wgrano aktualizację firmware..."
               value={opis}
               onChange={(e) => setOpis(e.target.value)}
-              className="w-full bg-white text-slate-900 border border-emerald-300 rounded-lg p-3 text-sm resize-y outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full bg-card text-ink border border-line rounded-lg p-3 text-sm resize-y outline-none focus:ring-2 focus:ring-primary"
             />
-            <small className="block text-emerald-100 text-xs mt-1.5 leading-normal">
+            <small className="block text-muted text-xs mt-1.5 leading-normal">
               Wpis zostanie automatycznie opatrzony bieżącą datą i czasem serwera. Po zatwierdzeniu zlecenie natychmiast pojawi się u magazynierów ze statusem "Do wysyłki".
             </small>
           </div>
@@ -101,7 +101,7 @@ export default function RepairModal({ ticket, onClose, onSubmit }) {
           <div className="flex justify-end gap-3 pt-2">
             <button
               type="button"
-              className="btn-reset"
+              className="btn-secondary"
               onClick={onClose}
               disabled={submitting}
             >
@@ -110,7 +110,7 @@ export default function RepairModal({ ticket, onClose, onSubmit }) {
             <button
               type="submit"
               disabled={submitting}
-              className="bg-gradient-to-r from-emerald-500 to-teal-700 hover:from-emerald-600 hover:to-teal-800 text-white font-semibold px-5 py-2.5 rounded-lg text-sm transition-all shadow-md hover:shadow-lg disabled:opacity-50 cursor-pointer"
+              className="btn-primary"
             >
               {submitting ? 'Zapisywanie...' : '✔ Zatwierdź naprawę i przekaż do wysyłki'}
             </button>

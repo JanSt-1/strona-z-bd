@@ -1,6 +1,6 @@
 # Kontekst Projektu: System Obsługi Zgłoszeń Serwisowych
 
-Kompleksowy system zgłoszeń serwisowych (SPA + REST API) w technologii **Express.js (v5)**, **MySQL** oraz **React** (modularny frontend w `frontend/` z bundlerem **Vite** i **Tailwind CSS**, kompilowany do katalogu produkcyjnego `public/`).
+Kompleksowy system zgłoszeń serwisowych (SPA + REST API) w technologii **Express.js (v5)**, **MySQL** oraz **React** (modularny frontend w `frontend/` z bundlerem **Vite** i **Tailwind CSS**, kompilowany do katalogu produkcyjnego `frontend/dist/`).
 
 ---
 
@@ -8,7 +8,9 @@ Kompleksowy system zgłoszeń serwisowych (SPA + REST API) w technologii **Expre
 
 ```
 strona_z_bd/
-├── .env / .env.example      # Zmienne: PORT, DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT, JWT_SECRET
+├── .env / .env.example      # Zmienne: PORT, DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT, JWT_SECRET (.env jest w .gitignore)
+├── .github/workflows/ci.yml # CI (GitHub Actions): npm ci + testy
+├── README.md                # Instrukcja uruchomienia i opis projektu
 ├── app.js                   # Instancja Express: middleware, RBAC, walidacja, JWT, routing, pula DB, serwowanie frontend/dist/
 ├── db.js                    # Centralna konfiguracja połączenia MySQL (DB_PORT, createPool, createConnection)
 ├── index.js                 # Entrypoint serwera: weryfikacja .env i JWT_SECRET, test DB, app.listen()
@@ -18,7 +20,9 @@ strona_z_bd/
 ├── seed-zgloszenia.js       # Generator 200 realistycznych zgłoszeń z historią zdarzeń (`npm run seed:zgloszenia`)
 ├── create-user.js           # CLI: tworzenie kont z haszowaniem bcrypt (`node create-user.js <user> <pass> [rola]`)
 ├── frontend/                # Źródła aplikacji SPA (React + Vite + Tailwind CSS v4)
-│   ├── src/                 # Komponenty (components/), strony (pages/), api.js, constants.js, index.css
+│   ├── src/                 # App.jsx (z ErrorBoundary), main.jsx, components/, pages/, api.js, constants.js, index.css
+│   ├── .oxlintrc.json       # Konfiguracja lintera oxlint (`npm --prefix frontend run lint`)
+│   ├── index.html           # Punkt wejścia Vite
 │   ├── public/              # Statyczne zasoby źródłowe frontendu (logo_mentor4.svg, favicon.svg)
 │   ├── dist/                # Katalog dystrybucyjny serwowany przez Express (wynik npm run build)
 │   ├── package.json         # Zależności frontendu (React, Tailwind, Vite)
@@ -117,14 +121,16 @@ Format odpowiedzi błędów: `{ error: string }`.
 
 ---
 
-## 5. Frontend SPA (`frontend/` -> `public/`)
+## 5. Frontend SPA (`frontend/` -> `frontend/dist/`)
 
-- Nowoczesna modularna architektura **React + Vite** z ostylowaniem w **Tailwind CSS**.
+- Nowoczesna modularna architektura **React + Vite** z ostylowaniem w **Tailwind CSS v4** opartym na zmiennych CSS (patrz „System wizualny” poniżej).
+- `App.jsx` zawiera `ErrorBoundary` owijający widok główny: błąd renderowania pokazuje komunikat z przyciskami „Odśwież stronę” i „Wyczyść sesję i zresetuj” zamiast białego ekranu.
 - **Struktura katalogu `frontend/src/`:**
   - `components/`:
-    - `Header.jsx`: Nagłówek z logo firmy, nawigacją i przełączaniem zakładek.
+    - `Header.jsx`: Nagłówek z logo firmy, nawigacją i przełączaniem zakładek (na wąskim ekranie zakładki układają się pod logo, pełna szerokość).
     - `Alert.jsx`: Komponent powiadomień sukcesu i błędów z animacją wejścia.
-    - `StatusBadge.jsx`: Pigułka statusu z dedykowaną kolorystyką (nowe, w realizacji, do wysyłki, zakończone).
+    - `StatusBadge.jsx`: Pigułka statusu z kolorystyką ze zmiennych `--status-*` (nowe, w realizacji, do wysyłki, zakończone).
+    - `TicketDetailsModal.jsx`: Okno szczegółów zgłoszenia (klient, adres, NIP, FV, produkt, opis usterki, raport naprawy, przypisanie i wysyłka, historia pobierana z `GET /api/zgloszenia/:id`).
     - `StatusControl.jsx`: Kontrolki zmiany statusu zależne od ról (RBAC) w wierszach tabeli.
     - `ShipControl.jsx`: Formularz wysyłki dla magazyniera z walidacją numeru listu przewozowego na żywo.
     - `RepairModal.jsx`: Modal raportu naprawy z zatwierdzeniem i automatycznym datowaniem.
@@ -135,10 +141,15 @@ Format odpowiedzi błędów: `{ error: string }`.
   - `pages/`:
     - `PublicTicketForm.jsx`: Publiczny formularz zgłoszeniowy (Honeypot, 3 sekcje, kalendarz, NIP, warunkowy S/N, RODO).
     - `LoginForm.jsx`: Karta logowania pracownika z obsługą JWT i błędów.
-    - `Dashboard.jsx`: Główny widok pracownika/serwisanta/magazyniera/admina z filtrami, wyszukiwarką, sortowaniem, tabelą i paginacją.
+    - `Dashboard.jsx`: Główny widok pracownika/serwisanta/magazyniera/admina z filtrami, wyszukiwarką, sortowaniem i paginacją. Lista zgłoszeń: na desktopie (`md+`) tabela o 6 kolumnach (nr, klient, produkt, przypisany, status, data; w kolumnie daty przyciski „Szczegóły” i „Usuń”), na telefonie karty jedna pod drugą. Pełne dane (adres, NIP, FV, opis usterki, raport naprawy) są w `TicketDetailsModal`. Lista przypisania pokazuje pełną nazwę użytkownika bez ucinania.
   - `api.js`: Scentralizowany klient API (`apiFetch`, `apiJson`, `ticketApi`, `authApi`, `workerApi`, `userApi`, `healthApi`, nasłuchiwacz 401 `onUnauthorized`).
   - `constants.js`: Lista produktów (`PRZEDMIOTY_LISTA`), 49 stref kierunkowych (`NUMERY_KIERUNKOWE`), etykiety statusów (`STATUS_LABELS`), role (`ROLES`), pusty stan formularza (`EMPTY_TICKET_FORM`).
-  - `index.css`: Style bazowe Tailwind CSS v4, tokeny kolorystyczne, klasy komponentowe bez statycznych inline `style={{}}`.
+  - `index.css`: Jedyne miejsce definicji kolorów i odstępów (zmienne w `:root`), mapowanie na klasy Tailwinda (`@theme inline`), klasy komponentowe (przyciski, karty, pola, tabela, statusy, modale), bez statycznych inline `style={{}}`.
+- **System wizualny (obowiązujące zasady):**
+  - **Kolory wyłącznie ze zmiennych** w `:root` (`index.css`): `--bg-page`, `--bg-card` (pełny kolor, bez przezroczystości), `--text-main`, `--text-muted`, `--text-white`, `--primary` (zieleń z logo), `--primary-dark`, `--danger`, `--border`, 4 statusy `--status-nowe|w-realizacji|do-wysylki|zakonczone`. Weryfikacja: `grep -E "#[0-9a-fA-F]{3,6}|rgb" -r frontend/src` ma trafiać tylko w blok `:root`. Tinty i cienie przez `color-mix()` ze zmiennych. W `.jsx` używać klas `text-ink`, `text-muted`, `bg-page`, `bg-card`, `border-line`, `text-danger`, `bg-primary/10` itd. – nie klas palety Tailwinda (`slate-*`, `red-*`…) ani wartości `[#hex]`.
+  - **Odstępy** jako zmienne `--space-4/8/16/24/32`.
+  - **Przyciski w 3 wariantach:** `.btn-primary` (pełna zieleń), `.btn-secondary` (obramowanie; także „Odśwież”, „Wyloguj”), `.btn-danger` (czerwony).
+  - **Dostępność:** kontrast WCAG AA (min. 4,5:1) dla tekstu i przycisków; wąski ekran (375 px) bez przewijania w bok, formularz w jednej kolumnie; przy 1366 px tabela mieści się bez przewijania w bok.
 - **Budowanie i assety produkcyjne:** `npm run build` (lub `npm run build:frontend`) kompiluje aplikację Vite do `frontend/dist/` z hashowanymi assetami `assets/index-*.js` i `assets/index-*.css`, spełniając reguły 1-rocznego `Cache-Control: immutable`. Plik `index.html` serwowany jest z nagłówkiem `Cache-Control: no-store`.
 - **Ochrona antyspamowa Honeypot:** Ukryte pole formularza `website`. Zwykli użytkownicy go nie widzą ani nie wypełniają. Boty wypełniające pole otrzymują 201 Created, lecz zgłoszenie nie trafia do bazy danych.
 - **Klauzula informacyjna RODO i zgoda:** Rozwijana sekcja `<details>`/`<summary>` z klauzulą oraz obowiązkowy checkbox („Zapoznałem/am się z informacją o przetwarzaniu danych osobowych”).

@@ -24,7 +24,7 @@ export default function StatusControl({
                 type="button"
                 onClick={() => onUpdateStatus(ticket.id, 'w_realizacji')}
                 title="Rozpocznij realizację tego zgłoszenia"
-                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs py-1 px-2.5 rounded shadow-sm transition-all cursor-pointer"
+                className="btn-primary py-1 px-2.5 text-xs"
               >
                 Rozpocznij realizację
               </button>
@@ -34,18 +34,18 @@ export default function StatusControl({
                 type="button"
                 onClick={() => onOpenRepairModal(ticket)}
                 title="Opisz wykonane prace i przekaż do magazynu jako Do wysyłki"
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-1 px-2.5 rounded shadow-sm transition-all cursor-pointer"
+                className="btn-primary py-1 px-2.5 text-xs"
               >
                 Oznacz jako naprawione
               </button>
             )}
             {curStatus === 'do_wysylki' && (
-              <span className="text-xs text-purple-700 font-semibold bg-purple-100 px-2 py-0.5 rounded">
+              <span className="text-xs text-status-wysylki font-semibold bg-status-wysylki/10 px-2 py-0.5 rounded">
                 Przekazano do wysyłki
               </span>
             )}
             {curStatus === 'zakończone' && (
-              <span className="text-xs text-blue-700 font-semibold bg-blue-100 px-2 py-0.5 rounded">
+              <span className="text-xs text-status-zakonczone font-semibold bg-status-zakonczone/10 px-2 py-0.5 rounded">
                 ✔ Zakończone
               </span>
             )}
@@ -59,7 +59,7 @@ export default function StatusControl({
               <ShipControl ticket={ticket} onUpdateStatus={onUpdateStatus} />
             )}
             {curStatus === 'zakończone' && (
-              <span className="text-xs text-blue-700 font-semibold bg-blue-100 px-2 py-0.5 rounded">
+              <span className="text-xs text-status-zakonczone font-semibold bg-status-zakonczone/10 px-2 py-0.5 rounded">
                 ✔ Wysłano / Zakończono
               </span>
             )}
@@ -74,7 +74,7 @@ export default function StatusControl({
                 type="button"
                 onClick={() => onOpenRepairModal(ticket)}
                 title="Opisz wykonane prace i oznacz jako Do wysyłki"
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-1 px-2.5 rounded shadow-sm transition-all cursor-pointer"
+                className="btn-primary py-1 px-2.5 text-xs"
               >
                 Oznacz jako naprawione
               </button>
@@ -90,7 +90,7 @@ export default function StatusControl({
                 type="button"
                 onClick={() => onOpenRepairModal(ticket)}
                 title="Opisz naprawę i oznacz jako Do wysyłki"
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-1 px-2.5 rounded shadow-sm transition-all cursor-pointer"
+                className="btn-primary py-1 px-2.5 text-xs"
               >
                 Oznacz jako naprawione
               </button>
@@ -104,7 +104,7 @@ export default function StatusControl({
               value={curStatus}
               onChange={(e) => onUpdateStatus(ticket.id, e.target.value)}
               title="Zmień status zgłoszenia"
-              className="bg-white border border-slate-300 text-slate-800 rounded px-2 py-1 text-xs outline-none focus:border-emerald-600 cursor-pointer"
+              className="bg-card border border-line text-ink rounded px-2 py-1 text-xs outline-none focus:border-primary/30 cursor-pointer"
             >
               <option value="nowe">nowe</option>
               <option value="w_realizacji">w realizacji</option>

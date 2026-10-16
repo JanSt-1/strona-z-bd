@@ -171,8 +171,8 @@ export default function PublicTicketForm() {
   return (
     <main className="app-card">
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-slate-900 mb-1">Zgłoś problem serwisowy</h2>
-        <p className="text-sm text-slate-800">
+        <h2 className="text-2xl font-bold text-ink mb-1">Zgłoś problem serwisowy</h2>
+        <p className="text-sm text-ink">
           Wypełnij poniższy formularz. Skontaktujemy się z Tobą po zarejestrowaniu zgłoszenia.
         </p>
       </div>
@@ -195,13 +195,13 @@ export default function PublicTicketForm() {
         </div>
 
         {/* Część 1: Dane osoby zgłaszającej */}
-        <section className="form-section">
+        <section className="mb-8">
           <div className="form-section-header">
             <span className="form-section-badge">1</span>
             <h3 className="form-section-title">Dane osoby zgłaszającej</h3>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <div>
+            <div className="w-full">
               <label htmlFor="imie" className="app-label">Imię *</label>
               <input
                 type="text"
@@ -210,10 +210,10 @@ export default function PublicTicketForm() {
                 placeholder="np. Jan"
                 value={formData.imie}
                 onChange={(e) => setFormData({ ...formData, imie: e.target.value })}
-                className="app-input"
+                className="app-input w-full"
               />
             </div>
-            <div>
+            <div className="w-full">
               <label htmlFor="nazwisko" className="app-label">Nazwisko *</label>
               <input
                 type="text"
@@ -222,10 +222,10 @@ export default function PublicTicketForm() {
                 placeholder="np. Kowalski"
                 value={formData.nazwisko}
                 onChange={(e) => setFormData({ ...formData, nazwisko: e.target.value })}
-                className="app-input"
+                className="app-input w-full"
               />
             </div>
-            <div>
+            <div className="w-full">
               <label htmlFor="numer_telefonu" className="app-label">Telefon kontaktowy *</label>
               <input
                 type="tel"
@@ -241,10 +241,10 @@ export default function PublicTicketForm() {
                     setFormData((prev) => ({ ...prev, numer_telefonu: '+48 ' }));
                   }
                 }}
-                className="app-input"
+                className="app-input w-full"
               />
             </div>
-            <div>
+            <div className="w-full">
               <label htmlFor="email" className="app-label">E-mail *</label>
               <input
                 type="email"
@@ -253,20 +253,20 @@ export default function PublicTicketForm() {
                 placeholder="np. jan.kowalski@example.com"
                 value={formData.email}
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                className="app-input"
+                className="app-input w-full"
               />
             </div>
           </div>
         </section>
 
         {/* Część 2: Dane firmy */}
-        <section className="form-section">
+        <section className="mb-8">
           <div className="form-section-header">
             <span className="form-section-badge">2</span>
             <h3 className="form-section-title">Dane firmy</h3>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <div className="md:col-span-2">
+            <div className="w-full md:col-span-2">
               <label htmlFor="nazwa_firmy" className="app-label">Nazwa firmy (opcjonalnie)</label>
               <input
                 type="text"
@@ -274,10 +274,10 @@ export default function PublicTicketForm() {
                 placeholder="np. Kowalski Sp. z o.o."
                 value={formData.nazwa_firmy}
                 onChange={(e) => setFormData({ ...formData, nazwa_firmy: e.target.value })}
-                className="app-input"
+                className="app-input w-full"
               />
             </div>
-            <div className="md:col-span-2">
+            <div className="w-full md:col-span-2">
               <label htmlFor="adres" className="app-label">Adres *</label>
               <input
                 type="text"
@@ -286,10 +286,10 @@ export default function PublicTicketForm() {
                 placeholder="np. ul. Lipowa 12/4"
                 value={formData.adres}
                 onChange={(e) => setFormData({ ...formData, adres: e.target.value })}
-                className="app-input"
+                className="app-input w-full"
               />
             </div>
-            <div>
+            <div className="w-full">
               <label htmlFor="kod_pocztowy" className="app-label">Kod pocztowy * (XX-XXX)</label>
               <input
                 type="text"
@@ -301,10 +301,10 @@ export default function PublicTicketForm() {
                 value={formData.kod_pocztowy}
                 onChange={handlePostalCodeChange}
                 onKeyDown={handlePostalCodeKeyDown}
-                className="app-input"
+                className="app-input w-full"
               />
             </div>
-            <div>
+            <div className="w-full">
               <label htmlFor="miasto" className="app-label">Miasto *</label>
               <input
                 type="text"
@@ -313,10 +313,10 @@ export default function PublicTicketForm() {
                 placeholder="np. Warszawa"
                 value={formData.miasto}
                 onChange={(e) => setFormData({ ...formData, miasto: e.target.value })}
-                className="app-input"
+                className="app-input w-full"
               />
             </div>
-            <div>
+            <div className="w-full md:col-span-2">
               <label htmlFor="nip" className="app-label">NIP * (10 cyfr, bez myślników)</label>
               <input
                 type="text"
@@ -327,20 +327,20 @@ export default function PublicTicketForm() {
                 placeholder="np. 1234567890"
                 value={formData.nip}
                 onChange={handleNipChange}
-                className="app-input"
+                className="app-input w-full"
               />
             </div>
-            <div className="md:col-span-2">
+            <div className="w-full md:col-span-2">
               <label htmlFor="telefon_kierunkowy" className="app-label">
                 Telefon firmowy / stacjonarny *
               </label>
-              <div className="flex flex-col sm:flex-row gap-3">
-                <div className="sm:w-1/3">
+              <div className="flex flex-col md:flex-row gap-3">
+                <div className="w-full md:w-1/3">
                   <select
                     id="telefon_kierunkowy"
                     value={formData.telefon_kierunkowy}
                     onChange={(e) => setFormData({ ...formData, telefon_kierunkowy: e.target.value })}
-                    className="app-select cursor-pointer"
+                    className="app-select cursor-pointer w-full"
                   >
                     <option value="">-- Kierunkowy (2 cyfry) --</option>
                     {NUMERY_KIERUNKOWE.map((item) => (
@@ -350,7 +350,7 @@ export default function PublicTicketForm() {
                     ))}
                   </select>
                 </div>
-                <div className="sm:w-2/3">
+                <div className="w-full md:w-2/3">
                   <input
                     type="text"
                     id="telefon_firmowy_7"
@@ -359,7 +359,7 @@ export default function PublicTicketForm() {
                     placeholder="Pozostałe 7 cyfr (np. 1234567)"
                     value={formData.telefon_firmowy_7}
                     onChange={handleCompanyPhone7Change}
-                    className="app-input"
+                    className="app-input w-full"
                   />
                 </div>
               </div>
@@ -368,13 +368,13 @@ export default function PublicTicketForm() {
         </section>
 
         {/* Część 3: Zgłaszana usterka */}
-        <section className="form-section">
+        <section className="mb-8">
           <div className="form-section-header">
             <span className="form-section-badge">3</span>
             <h3 className="form-section-title">Zgłaszana usterka</h3>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <div>
+            <div className="w-full">
               <label htmlFor="data_zakupu" className="app-label">Data zakupu *</label>
               <input
                 type="date"
@@ -383,10 +383,10 @@ export default function PublicTicketForm() {
                 max={TODAY_ISO}
                 value={formData.data_zakupu}
                 onChange={(e) => setFormData({ ...formData, data_zakupu: e.target.value })}
-                className="app-input"
+                className="app-input w-full"
               />
             </div>
-            <div>
+            <div className="w-full">
               <label htmlFor="numer_fv" className="app-label">Numer faktury / paragonu *</label>
               <input
                 type="text"
@@ -395,17 +395,17 @@ export default function PublicTicketForm() {
                 placeholder="np. FV/2026/04/1234"
                 value={formData.numer_fv}
                 onChange={(e) => setFormData({ ...formData, numer_fv: e.target.value })}
-                className="app-input"
+                className="app-input w-full"
               />
             </div>
-            <div>
+            <div className="w-full">
               <label htmlFor="przedmiot_zgloszenia" className="app-label">Przedmiot zgłoszenia *</label>
               <select
                 id="przedmiot_zgloszenia"
                 required
                 value={formData.przedmiot_zgloszenia}
                 onChange={handleSubjectChange}
-                className="app-select cursor-pointer"
+                className="app-select cursor-pointer w-full"
               >
                 <option value="">-- Wybierz przedmiot zgłoszenia --</option>
                 {PRZEDMIOTY_LISTA.map((item) => (
@@ -415,13 +415,13 @@ export default function PublicTicketForm() {
                 ))}
               </select>
             </div>
-            <div>
+            <div className="w-full">
               <label htmlFor="numer_seryjny" className="app-label">
                 Numer seryjny (S/N){' '}
                 {isSnActive ? (
-                  <span className="text-red-600 font-semibold">* (wymagany)</span>
+                  <span className="text-danger font-semibold">* (wymagany)</span>
                 ) : (
-                  <span className="text-slate-500 font-normal text-xs">(tylko dla monitorów i tablic)</span>
+                  <span className="text-muted font-normal text-xs">(tylko dla monitorów i tablic)</span>
                 )}
               </label>
               <input
@@ -436,12 +436,11 @@ export default function PublicTicketForm() {
                 }
                 value={formData.numer_seryjny}
                 onChange={(e) => setFormData({ ...formData, numer_seryjny: e.target.value })}
-                className={`app-input ${
-                  !isSnActive ? 'bg-slate-100 text-slate-400 cursor-not-allowed border-slate-200' : ''
-                }`}
+                className={`app-input w-full ${!isSnActive ? 'bg-page text-muted cursor-not-allowed border-line' : ''
+                  }`}
               />
             </div>
-            <div className="md:col-span-2">
+            <div className="w-full md:col-span-2">
               <label htmlFor="opis_usterki" className="app-label">Dokładny opis usterki *</label>
               <textarea
                 id="opis_usterki"
@@ -450,21 +449,21 @@ export default function PublicTicketForm() {
                 placeholder="Opisz objawy, okoliczności powstania awarii oraz model urządzenia..."
                 value={formData.opis_usterki}
                 onChange={(e) => setFormData({ ...formData, opis_usterki: e.target.value })}
-                className="app-textarea"
+                className="app-textarea w-full"
               />
             </div>
           </div>
         </section>
 
         {/* Klauzula informacyjna z rozwijaną treścią i obowiązkowym checkboxem */}
-        <section className="form-section bg-slate-50 border-slate-300">
+        <section className="pt-6 border-t border-line mb-6">
           <details className="cursor-pointer mb-3 group">
-            <summary className="font-semibold text-[#0d5537] text-sm select-none outline-none hover:underline">
+            <summary className="font-semibold text-primary-dark text-sm select-none outline-none hover:underline">
               Informacja o przetwarzaniu danych osobowych (kliknij, aby rozwinąć)
             </summary>
-            <div className="mt-2.5 p-3.5 bg-white rounded-lg border border-slate-200 text-xs text-slate-700 leading-relaxed shadow-xs">
+            <div className="mt-2.5 p-3.5 bg-page rounded-lg text-xs text-ink leading-relaxed border border-line">
               <p>
-                [Treść klauzuli informacyjnej dotyczącej przetwarzania danych osobowych przez serwis w celu realizacji zgłoszenia serwisowego i kontaktu z klientem.]
+                [Placeholder treści klauzuli.]
               </p>
             </div>
           </details>
@@ -477,9 +476,9 @@ export default function PublicTicketForm() {
               required
               checked={formData.zgoda_rodo}
               onChange={(e) => setFormData({ ...formData, zgoda_rodo: e.target.checked })}
-              className="w-4 h-4 mt-0.5 rounded text-emerald-700 border-slate-300 focus:ring-emerald-500 cursor-pointer accent-[#0d5537]"
+              className="w-4 h-4 mt-0.5 rounded text-primary-dark border-line focus:ring-primary cursor-pointer accent-primary"
             />
-            <label htmlFor="zgoda_rodo" className="cursor-pointer text-sm font-medium text-slate-800 select-none">
+            <label htmlFor="zgoda_rodo" className="cursor-pointer text-sm font-medium text-ink select-none">
               Zapoznałem/am się z informacją o przetwarzaniu danych osobowych *
             </label>
           </div>
@@ -491,7 +490,7 @@ export default function PublicTicketForm() {
           </button>
           <button
             type="button"
-            className="btn-reset w-full sm:w-auto"
+            className="btn-secondary w-full sm:w-auto"
             onClick={handleReset}
             disabled={loading}
             title="Wyczyść wszystkie dane z formularza"

@@ -129,21 +129,21 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
     <div>
       {/* Statystyki podsumowujące */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-white/85 border border-emerald-800/20 rounded-xl p-4 flex flex-col shadow-sm">
-          <span className="text-2xl font-bold text-[#0d5537]">{totalCount}</span>
-          <span className="text-xs text-slate-600 font-medium mt-1">Wszystkie konta</span>
+        <div className="bg-card border border-primary/30 rounded-xl p-4 flex flex-col shadow-sm">
+          <span className="text-2xl font-bold text-primary-dark">{totalCount}</span>
+          <span className="text-xs text-muted font-medium mt-1">Wszystkie konta</span>
         </div>
-        <div className="bg-white/85 border border-emerald-800/20 rounded-xl p-4 flex flex-col shadow-sm">
-          <span className="text-2xl font-bold text-emerald-700">{activeCount}</span>
-          <span className="text-xs text-slate-600 font-medium mt-1">Aktywne</span>
+        <div className="bg-card border border-primary/30 rounded-xl p-4 flex flex-col shadow-sm">
+          <span className="text-2xl font-bold text-primary-dark">{activeCount}</span>
+          <span className="text-xs text-muted font-medium mt-1">Aktywne</span>
         </div>
-        <div className="bg-white/85 border border-emerald-800/20 rounded-xl p-4 flex flex-col shadow-sm">
-          <span className="text-2xl font-bold text-red-700">{blockedCount}</span>
-          <span className="text-xs text-slate-600 font-medium mt-1">Zablokowane</span>
+        <div className="bg-card border border-primary/30 rounded-xl p-4 flex flex-col shadow-sm">
+          <span className="text-2xl font-bold text-danger">{blockedCount}</span>
+          <span className="text-xs text-muted font-medium mt-1">Zablokowane</span>
         </div>
-        <div className="bg-white/85 border border-emerald-800/20 rounded-xl p-4 flex flex-col shadow-sm">
-          <span className="text-2xl font-bold text-blue-700">{adminCount}</span>
-          <span className="text-xs text-slate-600 font-medium mt-1">Administratorzy</span>
+        <div className="bg-card border border-primary/30 rounded-xl p-4 flex flex-col shadow-sm">
+          <span className="text-2xl font-bold text-status-zakonczone">{adminCount}</span>
+          <span className="text-xs text-muted font-medium mt-1">Administratorzy</span>
         </div>
       </div>
 
@@ -161,7 +161,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
         <div className="flex gap-2 items-center">
           <button
             type="button"
-            className="btn-reset py-2 px-3 text-sm"
+            className="btn-secondary py-2 px-3 text-sm"
             onClick={fetchUsers}
             title="Odśwież listę kont"
           >
@@ -189,7 +189,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
             <h3 className="form-section-title">Dodaj nowe konto użytkownika</h3>
           </div>
           {createError && (
-            <div className="p-3 mb-4 rounded-lg text-sm bg-red-500/15 border border-red-500/40 text-red-700">
+            <div className="p-3 mb-4 rounded-lg text-sm bg-danger/10 border border-danger/40 text-danger">
               {createError}
             </div>
           )}
@@ -236,7 +236,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
             <div className="flex justify-end gap-3 mt-4">
               <button
                 type="button"
-                className="btn-reset"
+                className="btn-secondary"
                 onClick={() => setShowCreateForm(false)}
               >
                 Anuluj
@@ -254,7 +254,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
       )}
 
       {/* Tabela użytkowników */}
-      <div className="overflow-x-auto bg-white rounded-xl shadow-sm border border-slate-200">
+      <div className="overflow-x-auto bg-card rounded-xl shadow-sm border border-line">
         <table>
           <thead>
             <tr>
@@ -269,13 +269,13 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="text-center py-8 text-slate-500 font-medium">
+                <td colSpan={6} className="text-center py-8 text-muted font-medium">
                   Ładowanie listy użytkowników...
                 </td>
               </tr>
             ) : filteredUsers.length === 0 ? (
               <tr>
-                <td colSpan={6} className="text-center py-8 text-slate-600 font-medium">
+                <td colSpan={6} className="text-center py-8 text-muted font-medium">
                   {searchTerm ? 'Nie znaleziono kont spełniających kryteria.' : 'Brak kont użytkowników w bazie.'}
                 </td>
               </tr>
@@ -284,13 +284,13 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                 const isSelf = u.id === currentUser?.id;
                 const isBusy = actionInProgressId === u.id;
                 return (
-                  <tr key={u.id} className={u.aktywny ? 'hover:bg-slate-50/50' : 'bg-red-500/5 hover:bg-red-500/10'}>
-                    <td className="text-center font-bold text-slate-700">#{u.id}</td>
+                  <tr key={u.id} className={u.aktywny ? 'hover:bg-page' : 'bg-danger/10 hover:bg-danger/15'}>
+                    <td className="text-center font-bold text-ink">#{u.id}</td>
                     <td>
                       <div className="flex items-center gap-1.5">
-                        <span className="font-semibold text-slate-900">{u.username}</span>
+                        <span className="font-semibold text-ink">{u.username}</span>
                         {isSelf && (
-                          <span className="bg-[#0d5537] text-white text-[0.65rem] font-bold px-1.5 py-0.5 rounded-full uppercase" title="Aktualnie zalogowany administrator">
+                          <span className="bg-primary-dark text-inverse text-[0.65rem] font-bold px-1.5 py-0.5 rounded-full uppercase" title="Aktualnie zalogowany administrator">
                             Ty
                           </span>
                         )}
@@ -302,7 +302,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                         disabled={isBusy || (isSelf && u.role === 'admin')}
                         onChange={(e) => handleRoleChange(u, e.target.value)}
                         title={isSelf ? 'Nie możesz odebrać roli administratora samemu sobie' : 'Zmień rolę'}
-                        className="bg-white border border-slate-300 rounded px-2 py-1 text-xs font-semibold text-slate-800 outline-none focus:border-emerald-600 disabled:opacity-60 cursor-pointer"
+                        className="bg-card border border-line rounded px-2 py-1 text-xs font-semibold text-ink outline-none focus:border-primary/30 disabled:opacity-60 cursor-pointer"
                       >
                         <option value="pracownik">pracownik</option>
                         <option value="serwisant">serwisant</option>
@@ -312,17 +312,17 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                     </td>
                     <td>
                       {u.aktywny ? (
-                        <span className="inline-flex items-center gap-1 text-emerald-700 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-full text-xs font-semibold">
+                        <span className="inline-flex items-center gap-1 text-primary-dark bg-primary/10 border border-primary/30 px-2 py-0.5 rounded-full text-xs font-semibold">
                           ● Aktywny
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-red-700 bg-red-100 border border-red-300 px-2 py-0.5 rounded-full text-xs font-semibold">
+                        <span className="inline-flex items-center gap-1 text-danger bg-danger/10 border border-danger/40 px-2 py-0.5 rounded-full text-xs font-semibold">
                           ✕ Zablokowany
                         </span>
                       )}
                     </td>
                     <td>
-                      <small className="text-slate-600">
+                      <small className="text-muted">
                         {u.created_at ? new Date(u.created_at).toLocaleString('pl-PL') : '-'}
                       </small>
                     </td>
@@ -333,10 +333,8 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                           disabled={isBusy || isSelf}
                           onClick={() => handleToggleStatus(u)}
                           title={isSelf ? 'Nie możesz zablokować własnego konta' : (u.aktywny ? 'Zablokuj konto' : 'Odblokuj konto')}
-                          className={`text-xs font-semibold px-2 py-1 rounded transition-colors inline-flex items-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
-                            u.aktywny
-                              ? 'bg-red-100 text-red-700 hover:bg-red-600 hover:text-white border border-red-300'
-                              : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-600 hover:text-white border border-emerald-300'
+                          className={`text-xs py-1 px-2.5 inline-flex items-center gap-1 ${
+                            u.aktywny ? 'btn-danger' : 'btn-primary'
                           }`}
                         >
                           {u.aktywny ? 'Zablokuj' : 'Odblokuj'}
@@ -346,7 +344,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                           disabled={isBusy}
                           onClick={() => setPasswordModalUser(u)}
                           title="Ustaw nowe hasło dla tego konta"
-                          className="bg-blue-100 text-blue-800 hover:bg-blue-600 hover:text-white border border-blue-300 text-xs font-semibold px-2 py-1 rounded transition-colors inline-flex items-center gap-1 cursor-pointer disabled:opacity-40"
+                          className="btn-secondary text-xs py-1 px-2.5 inline-flex items-center gap-1"
                         >
                           Zmień hasło
                         </button>

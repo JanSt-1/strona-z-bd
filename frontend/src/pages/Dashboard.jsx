@@ -6,6 +6,8 @@ import RepairModal from '../components/RepairModal';
 import TrackingNumberModal from '../components/TrackingNumberModal';
 import ChangeOwnPasswordModal from '../components/ChangeOwnPasswordModal';
 import AdminUsersPanel from '../components/AdminUsersPanel';
+import TicketDetailsModal from '../components/TicketDetailsModal';
+import StatusBadge from '../components/StatusBadge';
 
 export default function Dashboard({ user, token, onLogout }) {
   const [tickets, setTickets] = useState([]);
@@ -15,6 +17,7 @@ export default function Dashboard({ user, token, onLogout }) {
   const [alert, setAlert] = useState(null);
   const [repairModalTicket, setRepairModalTicket] = useState(null);
   const [trackingModalTicket, setTrackingModalTicket] = useState(null);
+  const [detailsModalTicket, setDetailsModalTicket] = useState(null);
   const [dashboardTab, setDashboardTab] = useState('tickets'); // 'tickets' | 'users'
   const [showOwnPasswordModal, setShowOwnPasswordModal] = useState(false);
 
@@ -186,13 +189,13 @@ export default function Dashboard({ user, token, onLogout }) {
   return (
     <div className="app-card">
       {/* Pasek nagłówka panelu pracownika */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 pb-4 border-b border-emerald-800/20">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6 pb-4 border-b border-primary/30">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">
+          <h2 className="text-2xl font-bold text-ink">
             {currentTab === 'users' ? 'Użytkownicy (Zarządzanie kontami)' : 'Zgłoszenia serwisowe'}
           </h2>
           <div className="flex items-center gap-2 mt-1">
-            <span className="bg-cyan-500/20 text-[#002911] font-semibold text-xs px-2.5 py-1 rounded-full border border-cyan-500/40">
+            <span className="bg-primary/10 text-primary-dark font-semibold text-xs px-2.5 py-1 rounded-full border border-primary/30">
               Zalogowano: {user?.username || 'Użytkownik'} (Rola: {user?.role || 'pracownik'})
             </span>
           </div>
@@ -201,7 +204,7 @@ export default function Dashboard({ user, token, onLogout }) {
         <div className="flex items-center gap-2.5 flex-wrap">
           <button
             type="button"
-            className="btn-reset py-1.5 px-3 text-xs inline-flex items-center gap-1.5"
+            className="btn-secondary py-1.5 px-3 text-xs inline-flex items-center gap-1.5"
             onClick={() => setShowOwnPasswordModal(true)}
             title="Zmień swoje hasło logowania"
           >
@@ -213,8 +216,8 @@ export default function Dashboard({ user, token, onLogout }) {
           </button>
           <button
             type="button"
-            className="btn-reset py-1.5 px-3 text-xs inline-flex items-center gap-1.5"
-            onClick={currentTab === 'users' ? () => {} : () => fetchTickets()}
+            className="btn-secondary py-1.5 px-3 text-xs inline-flex items-center gap-1.5"
+            onClick={currentTab === 'users' ? () => { } : () => fetchTickets()}
             title="Odśwież listę zgłoszeń"
           >
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
@@ -224,7 +227,7 @@ export default function Dashboard({ user, token, onLogout }) {
           </button>
           <button
             type="button"
-            className="btn-reset py-1.5 px-3 text-xs inline-flex items-center gap-1.5 !text-red-700 hover:!text-red-800 !border-red-300 hover:!border-red-400 !bg-red-50/70 hover:!bg-red-100/80"
+            className="btn-secondary py-1.5 px-3 text-xs inline-flex items-center gap-1.5"
             onClick={onLogout}
             title="Wyloguj z systemu"
           >
@@ -240,14 +243,13 @@ export default function Dashboard({ user, token, onLogout }) {
 
       {/* Zakładki pod-nawigacji dla administratora */}
       {user?.role === 'admin' && (
-        <div className="flex gap-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200 mb-6">
+        <div className="flex gap-2 bg-page p-1.5 rounded-xl border border-line mb-6">
           <button
             type="button"
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-              currentTab === 'tickets'
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${currentTab === 'tickets'
                 ? 'bg-[var(--primary)] text-[var(--text-white)] shadow-sm'
-                : 'text-slate-700 hover:bg-slate-200'
-            }`}
+                : 'text-ink hover:bg-line'
+              }`}
             onClick={() => setDashboardTab('tickets')}
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -260,11 +262,10 @@ export default function Dashboard({ user, token, onLogout }) {
           </button>
           <button
             type="button"
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${
-              currentTab === 'users'
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${currentTab === 'users'
                 ? 'bg-[var(--primary)] text-[var(--text-white)] shadow-sm'
-                : 'text-slate-700 hover:bg-slate-200'
-            }`}
+                : 'text-ink hover:bg-line'
+              }`}
             onClick={() => setDashboardTab('users')}
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -285,7 +286,7 @@ export default function Dashboard({ user, token, onLogout }) {
       ) : (
         <>
           {/* Pasek kontrolny filtrów */}
-          <div className="flex flex-wrap gap-3 items-center justify-between mb-4 bg-slate-50 p-3 rounded-xl border border-slate-200">
+          <div className="flex flex-wrap gap-3 items-center justify-between mb-4 bg-page p-3 rounded-xl border border-line">
             <div className="flex flex-wrap gap-2.5 items-center flex-1">
               <form
                 className="flex items-center gap-1.5 flex-1 min-w-[220px] max-w-sm"
@@ -302,7 +303,7 @@ export default function Dashboard({ user, token, onLogout }) {
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="app-input py-1.5 text-xs"
                 />
-                <button type="submit" className="btn-reset py-1.5 px-3 text-xs" title="Szukaj">
+                <button type="submit" className="btn-secondary py-1.5 px-3 text-xs" title="Szukaj">
                   <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
                     <circle cx="11" cy="11" r="8" />
                     <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -339,7 +340,7 @@ export default function Dashboard({ user, token, onLogout }) {
                     setPage(1);
                     fetchTickets({ page: 1, worker: val });
                   }}
-                  className="app-select py-1.5 text-xs w-auto cursor-pointer"
+                  className="app-select py-1.5 text-xs w-auto min-w-[190px] cursor-pointer"
                 >
                   <option value="">Wszyscy pracownicy</option>
                   <option value="nieprzypisane">Nieprzypisane</option>
@@ -369,7 +370,7 @@ export default function Dashboard({ user, token, onLogout }) {
               {(searchQuery || statusFilter || workerFilter || sortOrder !== 'desc') && (
                 <button
                   type="button"
-                  className="btn-reset py-1.5 px-3 text-xs"
+                  className="btn-secondary py-1.5 px-3 text-xs"
                   onClick={() => {
                     setSearchQuery('');
                     setStatusFilter('');
@@ -386,151 +387,104 @@ export default function Dashboard({ user, token, onLogout }) {
             </div>
           </div>
 
-          {/* Tabela zgłoszeń */}
-          <div className="overflow-x-auto bg-white rounded-xl shadow-sm border border-slate-200">
+          {/* Tabela zgłoszeń (Widok DESKTOP: 6 kolumn: Nr, Klient, Produkt, Przypisany, Status, Data) */}
+          <div className="hidden md:block overflow-x-auto bg-card rounded-xl shadow-sm border border-line">
             <table>
               <thead>
                 <tr>
-                  <th className="w-12 text-center">ID</th>
-                  <th className="min-w-[150px]">Klient &amp; Kontakt</th>
-                  <th className="min-w-[120px]">Adres</th>
-                  <th className="min-w-[220px] max-w-[340px]">Przedmiot &amp; Usterka</th>
-                  <th className="min-w-[140px]">Przypisany pracownik</th>
-                  <th className="min-w-[220px] max-w-[340px]">Raport z naprawy</th>
-                  <th className="min-w-[110px]">Nr FV &amp; NIP</th>
-                  <th className="min-w-[140px]">Status</th>
-                  <th className="min-w-[130px]">Data</th>
-                  <th className="min-w-[80px]">Akcje</th>
+                  <th className="w-16 text-center">Nr</th>
+                  <th className="min-w-[170px]">Klient</th>
+                  <th className="min-w-[180px]">Produkt / Usterka</th>
+                  <th className="min-w-[230px]">Przypisany</th>
+                  <th className="min-w-[160px]">Status</th>
+                  <th className="min-w-[140px]">Data</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={10} className="text-center py-10 text-slate-500 font-medium">
+                    <td colSpan={6} className="text-center py-10 text-muted font-medium">
                       Ładowanie danych z bazy MySQL...
                     </td>
                   </tr>
                 ) : tickets.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="text-center py-12 text-slate-600 font-medium">
+                    <td colSpan={6} className="text-center py-12 text-muted font-medium">
                       {getEmptyMessage()}
                     </td>
                   </tr>
                 ) : (
                   tickets.map((t) => (
-                    <tr key={t.id} className="hover:bg-slate-50/70 transition-colors">
-                      <td className="text-center font-bold text-slate-800">#{t.id}</td>
+                    <tr key={t.id} className="hover:bg-page transition-colors">
+                      <td className="text-center font-bold text-ink">
+                        <button
+                          type="button"
+                          onClick={() => setDetailsModalTicket(t)}
+                          className="font-bold text-ink hover:text-[var(--primary)] hover:underline cursor-pointer"
+                          title="Kliknij, aby otworzyć szczegóły"
+                        >
+                          #{t.id}
+                        </button>
+                      </td>
                       <td>
-                        <div className="font-semibold text-slate-900">
+                        <div className="font-semibold text-ink">
                           {t.imie} {t.nazwisko}
                         </div>
                         {t.nazwa_firmy && (
-                          <div className="text-xs text-[#005c1f] font-semibold">
+                          <div className="text-xs text-primary-dark font-semibold">
                             Firma: {t.nazwa_firmy}
                           </div>
                         )}
-                        <div className="text-xs text-slate-600">{t.email}</div>
-                        <div className="text-xs text-slate-600">{t.numer_telefonu}</div>
+                        <div className="text-xs text-muted">{t.numer_telefonu}</div>
+                        <div className="text-xs text-muted">{t.email}</div>
                       </td>
                       <td>
-                        <div className="text-xs text-slate-800">{t.adres}</div>
-                        {(t.kod_pocztowy || t.miasto) && (
-                          <div className="text-xs text-slate-500 font-medium">
-                            {t.kod_pocztowy} {t.miasto}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        {t.przedmiot_zgloszenia && (
-                          <div className="font-semibold text-[#005c1f] text-xs mb-0.5">
-                            {t.przedmiot_zgloszenia}
-                          </div>
-                        )}
+                        <div className="font-semibold text-primary-dark text-xs">
+                          {t.przedmiot_zgloszenia || '—'}
+                        </div>
                         {t.numer_seryjny && (
-                          <div className="text-xs text-slate-800 font-semibold mb-0.5">
+                          <div className="text-xs text-ink font-medium mt-0.5">
                             SN: {t.numer_seryjny}
                           </div>
                         )}
-                        {t.data_zakupu && (
-                          <div className="text-[0.7rem] text-slate-500 mb-1">
-                            Data zakupu: {t.data_zakupu}
-                          </div>
-                        )}
-                        <div className="text-xs text-slate-700 whitespace-pre-wrap break-words leading-relaxed max-h-32 overflow-y-auto">
-                          {t.opis_usterki}
-                        </div>
-                      </td>
-                      <td>
-                        {user?.role === 'admin' || user?.role === 'serwisant' ? (
-                          <select
-                            value={t.przypisany_pracownik_id || ''}
-                            onChange={(e) => handleAssignWorker(t.id, e.target.value)}
-                            title="Przypisz to zlecenie pracownikowi"
-                            className="w-full max-w-[170px] bg-white border border-slate-300 text-slate-800 rounded px-2 py-1 text-xs outline-none focus:border-emerald-600 cursor-pointer"
+                        {t.opis_usterki && (
+                          <div
+                            className="text-xs text-muted mt-1.5 ticket-excerpt max-w-[240px]"
+                            title={t.opis_usterki}
                           >
-                            <option value="">— Nieprzypisane —</option>
-                            {workers.map((w) => (
-                              <option key={w.id} value={w.id}>
-                                {w.username} ({w.role})
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <div>
-                            {t.przypisany_pracownik_username ? (
-                              <span className="font-semibold text-[#005c1f] text-xs">
-                                👤 {t.przypisany_pracownik_username}
-                              </span>
-                            ) : (
-                              <span className="text-slate-400 text-xs">Nieprzypisane</span>
-                            )}
+                            <span className="font-semibold text-ink">Usterka: </span>
+                            {t.opis_usterki}
                           </div>
                         )}
                       </td>
                       <td>
-                        {t.opis_naprawy ? (
-                          <div className="repair-box">
-                            <div className="font-semibold text-[#005c1f] text-xs mb-0.5">
-                              Naprawiono:
+                        <div className="min-w-[210px]">
+                          {user?.role === 'admin' || user?.role === 'serwisant' ? (
+                            <select
+                              value={t.przypisany_pracownik_id || ''}
+                              onChange={(e) => handleAssignWorker(t.id, e.target.value)}
+                              title="Przypisz to zlecenie pracownikowi"
+                              className="w-full min-w-[200px] bg-card border border-line text-ink rounded px-2.5 py-1.5 text-xs outline-none focus:border-primary/30 cursor-pointer font-medium"
+                            >
+                              <option value="">— Nieprzypisane —</option>
+                              {workers.map((w) => (
+                                <option key={w.id} value={w.id}>
+                                  {w.username} ({w.role})
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <div>
+                              {t.przypisany_pracownik_username ? (
+                                <span className="font-semibold text-primary-dark text-xs whitespace-normal break-words">
+                                  👤 {t.przypisany_pracownik_username}
+                                </span>
+                              ) : (
+                                <span className="text-muted text-xs">Nieprzypisane</span>
+                              )}
                             </div>
-                            <div className="text-xs text-slate-800 whitespace-pre-wrap break-words leading-relaxed">
-                              {t.opis_naprawy}
-                            </div>
-                            {t.opis_naprawy_data && (
-                              <div className="text-[0.7rem] text-slate-500 mt-1 flex items-center gap-1">
-                                <span>🕒</span>
-                                <span>{t.opis_naprawy_data}</span>
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <div>
-                            {((user?.role === 'pracownik' && t.status === 'w_realizacji') ||
-                              user?.role === 'admin') &&
-                            t.status !== 'zakończone' ? (
-                              <button
-                                type="button"
-                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-1 px-2.5 rounded shadow-sm transition-all cursor-pointer"
-                                onClick={() => setRepairModalTicket(t)}
-                                title="Wpisz co zostało zrobione i przekaż do wysyłki"
-                              >
-                                Opisz naprawę
-                              </button>
-                            ) : (
-                              <span className="text-slate-400 text-xs">
-                                {user?.role === 'pracownik' && t.status === 'nowe'
-                                  ? 'Wymaga rozpoczęcia'
-                                  : 'Oczekuje na opis'}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <div className="font-semibold text-xs text-slate-800">{t.numer_fv}</div>
-                        {t.nip && (
-                          <div className="text-[0.7rem] text-slate-500">NIP: {t.nip}</div>
-                        )}
+                          )}
+                        </div>
                       </td>
                       <td>
                         <StatusControl
@@ -541,57 +495,43 @@ export default function Dashboard({ user, token, onLogout }) {
                         />
                       </td>
                       <td>
-                        <small className="text-slate-600 text-[0.75rem]">
-                          {t.created_at ? new Date(t.created_at).toLocaleString('pl-PL') : '-'}
-                        </small>
-                        {t.data_wyslania && (
-                          <div className="mt-1 text-xs text-[#005c1f] font-semibold">
-                            Wysłano: {t.data_wyslania}
-                          </div>
-                        )}
-                        {t.numer_listu && (
-                          <div className="mt-0.5 text-xs text-slate-700 break-all">
-                            List:{' '}
-                            <strong className="text-slate-900 font-semibold">{t.numer_listu}</strong>
-                          </div>
-                        )}
-                        {user?.role === 'admin' && (
-                          <div className="mt-1.5">
-                            <button
-                              type="button"
-                              className="btn-reset text-[0.7rem] py-0.5 px-1.5"
-                              onClick={() => setTrackingModalTicket(t)}
-                              title="Wpisz lub zmień numer listu przewozowego"
-                            >
-                              ✏ {t.numer_listu ? 'Zmień nr listu' : '+ Nr listu'}
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        {user?.role === 'admin' ? (
+                        <div className="text-xs text-ink font-medium whitespace-nowrap">
+                          {t.created_at ? new Date(t.created_at).toLocaleDateString('pl-PL') : '-'}
+                        </div>
+                        <div className="text-[0.7rem] text-muted">
+                          {t.created_at ? new Date(t.created_at).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : ''}
+                        </div>
+                        <div className="mt-2 flex items-center gap-1.5 flex-wrap">
                           <button
                             type="button"
-                            disabled={deletingId === t.id}
-                            onClick={() => handleDeleteTicket(t.id)}
-                            title={`Usuń zgłoszenie #${t.id}`}
-                            className="bg-red-100 hover:bg-red-600 text-red-700 hover:text-white border border-red-300 text-xs font-semibold px-2 py-1 rounded transition-colors inline-flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                            className="btn-secondary py-1 px-2.5 text-xs"
+                            onClick={() => setDetailsModalTicket(t)}
+                            title="Zobacz pełne szczegóły zgłoszenia (adres, NIP, FV, usterka, raport)"
                           >
-                            {deletingId === t.id ? (
-                              'Usuwanie...'
-                            ) : (
-                              <>
-                                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                                  <polyline points="3 6 5 6 21 6" />
-                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                </svg>
-                                Usuń
-                              </>
-                            )}
+                            Szczegóły
                           </button>
-                        ) : (
-                          <span className="text-slate-400 text-xs">—</span>
-                        )}
+                          {user?.role === 'admin' && (
+                            <button
+                              type="button"
+                              disabled={deletingId === t.id}
+                              onClick={() => handleDeleteTicket(t.id)}
+                              title={`Usuń zgłoszenie #${t.id}`}
+                              className="btn-danger text-xs py-1 px-2 inline-flex items-center gap-1"
+                            >
+                              {deletingId === t.id ? (
+                                '...'
+                              ) : (
+                                <>
+                                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                                    <polyline points="3 6 5 6 21 6" />
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                  </svg>
+                                  Usuń
+                                </>
+                              )}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -600,20 +540,162 @@ export default function Dashboard({ user, token, onLogout }) {
             </table>
           </div>
 
+          {/* Karty zgłoszeń (Widok MOBILE / TELEFON: jedna karta pod drugą) */}
+          <div className="block md:hidden space-y-3">
+            {loading ? (
+              <div className="bg-card rounded-xl border border-line p-8 text-center text-muted font-medium">
+                Ładowanie danych z bazy MySQL...
+              </div>
+            ) : tickets.length === 0 ? (
+              <div className="bg-card rounded-xl border border-line p-8 text-center text-muted font-medium">
+                {getEmptyMessage()}
+              </div>
+            ) : (
+              tickets.map((t) => (
+                <div
+                  key={t.id}
+                  className="bg-card rounded-xl border border-line p-4 shadow-xs space-y-3 hover:border-line transition-colors"
+                >
+                  {/* Górny wiersz karty: ID, Data i Status */}
+                  <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-line">
+                    <div>
+                      <button
+                        type="button"
+                        onClick={() => setDetailsModalTicket(t)}
+                        className="text-base font-bold text-ink hover:text-[var(--primary)] hover:underline cursor-pointer"
+                      >
+                        #{t.id}
+                      </button>
+                      <div className="text-[0.7rem] text-muted mt-0.5">
+                        {t.created_at ? new Date(t.created_at).toLocaleString('pl-PL') : '-'}
+                      </div>
+                    </div>
+                    <StatusBadge status={t.status} />
+                  </div>
+
+                  {/* Dane klienta */}
+                  <div className="text-xs space-y-0.5">
+                    <span className="text-[0.7rem] text-muted uppercase font-semibold block">Klient</span>
+                    <div className="font-semibold text-ink text-sm">
+                      {t.imie} {t.nazwisko}
+                    </div>
+                    {t.nazwa_firmy && (
+                      <div className="text-primary-dark font-semibold">
+                        Firma: {t.nazwa_firmy}
+                      </div>
+                    )}
+                    <div className="text-muted">{t.numer_telefonu} &bull; {t.email}</div>
+                  </div>
+
+                  {/* Produkt i usterka */}
+                  <div className="text-xs bg-page p-2.5 rounded-lg border border-line">
+                    <span className="text-[0.7rem] text-muted uppercase font-semibold block mb-0.5">Produkt</span>
+                    <div className="font-semibold text-primary-dark">
+                      {t.przedmiot_zgloszenia || '—'}
+                    </div>
+                    {t.numer_seryjny && (
+                      <div className="text-ink font-medium mt-0.5">
+                        SN: {t.numer_seryjny}
+                      </div>
+                    )}
+                    {t.opis_usterki && (
+                      <div className="text-muted mt-1.5 pt-1.5 border-t border-line/60 ticket-excerpt" title={t.opis_usterki}>
+                        <span className="font-semibold text-ink">Usterka: </span>
+                        {t.opis_usterki}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Przypisany pracownik */}
+                  <div className="text-xs">
+                    <span className="text-[0.7rem] text-muted uppercase font-semibold block mb-1">Przypisany</span>
+                    {user?.role === 'admin' || user?.role === 'serwisant' ? (
+                      <select
+                        value={t.przypisany_pracownik_id || ''}
+                        onChange={(e) => handleAssignWorker(t.id, e.target.value)}
+                        title="Przypisz to zlecenie pracownikowi"
+                        className="w-full bg-card border border-line text-ink rounded px-2.5 py-1.5 text-xs outline-none focus:border-primary/30 cursor-pointer"
+                      >
+                        <option value="">— Nieprzypisane —</option>
+                        {workers.map((w) => (
+                          <option key={w.id} value={w.id}>
+                            {w.username} ({w.role})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="font-medium text-ink">
+                        {t.przypisany_pracownik_username ? (
+                          <span className="font-semibold text-primary-dark">
+                            👤 {t.przypisany_pracownik_username}
+                          </span>
+                        ) : (
+                          <span className="text-muted">Nieprzypisane</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Kontrolki zmiany statusu */}
+                  <div className="pt-1">
+                    <StatusControl
+                      ticket={t}
+                      user={user}
+                      onUpdateStatus={handleUpdateStatus}
+                      onOpenRepairModal={(ticketToRepair) => setRepairModalTicket(ticketToRepair)}
+                    />
+                  </div>
+
+                  {/* Dolne przyciski karty */}
+                  <div className="pt-2 border-t border-line flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      className="btn-secondary py-1.5 px-3 text-xs flex-1 justify-center"
+                      onClick={() => setDetailsModalTicket(t)}
+                    >
+                      Szczegóły
+                    </button>
+                    {user?.role === 'admin' && (
+                      <button
+                        type="button"
+                        disabled={deletingId === t.id}
+                        onClick={() => handleDeleteTicket(t.id)}
+                        title={`Usuń zgłoszenie #${t.id}`}
+                        className="btn-danger py-1.5 px-3 text-xs inline-flex items-center gap-1 justify-center"
+                      >
+                        {deletingId === t.id ? (
+                          'Usuwanie...'
+                        ) : (
+                          <>
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                              <polyline points="3 6 5 6 21 6" />
+                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                            </svg>
+                            Usuń
+                          </>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
           {/* Paginacja */}
-          <div className="flex flex-wrap justify-between items-center gap-3 mt-4 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700">
+          <div className="flex flex-wrap justify-between items-center gap-3 mt-4 p-3 bg-page rounded-xl border border-line text-xs text-ink">
             <div>
               <span>
                 Strona <strong>{page}</strong> z <strong>{totalPages || 1}</strong>
               </span>
-              <span className="ml-3 text-slate-500">
+              <span className="ml-3 text-muted">
                 (Łącznie wyników: <strong>{total}</strong>)
               </span>
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                className="btn-reset py-1 px-3 text-xs"
+                className="btn-secondary py-1 px-3 text-xs"
                 disabled={page <= 1 || loading}
                 onClick={() => {
                   const prev = Math.max(1, page - 1);
@@ -625,7 +707,7 @@ export default function Dashboard({ user, token, onLogout }) {
               </button>
               <button
                 type="button"
-                className="btn-reset py-1 px-3 text-xs"
+                className="btn-secondary py-1 px-3 text-xs"
                 disabled={page >= totalPages || loading}
                 onClick={() => {
                   const next = page + 1;
@@ -637,6 +719,17 @@ export default function Dashboard({ user, token, onLogout }) {
               </button>
             </div>
           </div>
+
+          {detailsModalTicket && (
+            <TicketDetailsModal
+              key={detailsModalTicket.id}
+              ticket={detailsModalTicket}
+              user={user}
+              onClose={() => setDetailsModalTicket(null)}
+              onOpenRepairModal={(t) => setRepairModalTicket(t)}
+              onOpenTrackingModal={(t) => setTrackingModalTicket(t)}
+            />
+          )}
 
           {repairModalTicket && (
             <RepairModal

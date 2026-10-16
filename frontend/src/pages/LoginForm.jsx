@@ -27,8 +27,8 @@ export default function LoginForm({ onLoginSuccess }) {
   return (
     <div className="app-card max-w-md mx-auto my-12">
       <div className="mb-6 text-center">
-        <h2 className="text-2xl font-bold text-slate-900 mb-1">Logowanie do panelu</h2>
-        <p className="text-xs text-slate-800">
+        <h2 className="text-2xl font-bold text-ink mb-1">Logowanie do panelu</h2>
+        <p className="text-xs text-ink">
           Dostęp wyłącznie dla uprawnionych pracowników serwisu
         </p>
       </div>

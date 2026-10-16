@@ -43,29 +43,29 @@ export default function TrackingNumberModal({ ticket, onClose, onSave }) {
       }}
     >
       <div className="modal-card max-w-md">
-        <div className="flex justify-between items-center mb-4 pb-2 border-b border-emerald-400/30">
-          <h3 className="text-lg font-bold text-white flex items-center gap-2">
+        <div className="flex justify-between items-center mb-4 pb-2 border-b border-line">
+          <h3 className="text-lg font-bold text-ink flex items-center gap-2">
             <span>📦</span>
             <span>Numer listu przewozowego — #{ticket.id}</span>
           </h3>
           <button
             type="button"
             onClick={onClose}
-            className="text-red-400 hover:text-red-200 text-xl font-bold p-1 leading-none transition-colors cursor-pointer"
+            className="text-danger hover:text-danger text-xl font-bold p-1 leading-none transition-colors cursor-pointer"
           >
             ✕
           </button>
         </div>
 
         {error && (
-          <div className="bg-red-500/20 border border-red-500/50 text-red-200 p-3 rounded-lg text-sm mb-4">
+          <div className="bg-danger/10 border border-danger/40 text-danger p-3 rounded-lg text-sm mb-4">
             {error}
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-white font-semibold text-sm mb-1.5">
+            <label className="block text-ink font-semibold text-sm mb-1.5">
               Numer listu przewozowego / przesyłki (maks. 100 znaków)
             </label>
             <input
@@ -75,9 +75,9 @@ export default function TrackingNumberModal({ ticket, onClose, onSave }) {
               value={numer}
               onChange={(e) => setNumer(e.target.value)}
               autoFocus
-              className="w-full bg-white text-slate-900 border border-emerald-300 rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+              className="w-full bg-card text-ink border border-line rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-primary"
             />
-            <div className="flex justify-end text-xs text-emerald-100 mt-1">
+            <div className="flex justify-end text-xs text-muted mt-1">
               <span>{numer.length}/100</span>
             </div>
           </div>
@@ -85,7 +85,7 @@ export default function TrackingNumberModal({ ticket, onClose, onSave }) {
           <div className="flex justify-end gap-3 pt-2">
             <button
               type="button"
-              className="btn-reset"
+              className="btn-secondary"
               onClick={onClose}
               disabled={saving}
             >
