@@ -6,10 +6,12 @@ To pełna aplikacja webowa (SPA) umożliwiająca klientom szybkie rejestrowanie 
 
 ## Architektura i Separation of Concerns
 
-Aplikacja backendowa jest rozdzielona zgodnie z zasadą separacji odpowiedzialności:
-- **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (nagłówki bezpieczeństwa helmet, limit rozmiaru JSON, pliki statyczne), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
+Aplikacja jest rozdzielona zgodnie z zasadą separacji odpowiedzialności:
+- **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (nagłówki bezpieczeństwa helmet, limit rozmiaru JSON, serwowanie plików statycznych z `frontend/dist/`), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
 - **`db.js`**: Centralny moduł konfiguracji bazy danych MySQL uwzględniający `DB_PORT`, `DB_HOST`, `DB_USER`, `DB_PASSWORD` oraz `DB_NAME`. Udostępnia metody `createPool()` oraz `createConnection()`, z których korzystają `app.js`, `seed.js` oraz `create-user.js`.
 - **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację obecności `JWT_SECRET`, test połączenia z bazą MySQL oraz uruchomienie nasłuchiwania HTTP (`app.listen()`).
+- **`frontend/`**: Źródła interfejsu użytkownika SPA napisane w React 18 z bundlerem Vite i nowoczesnym stylem Tailwind CSS v4. Kod został podzielony modularnie na komponenty (`components/`), strony (`pages/`), scentralizowaną warstwę API (`api.js`) oraz stałe biznesowe (`constants.js`). Wynik kompilacji trafia do katalogu `frontend/dist/`.
+- **`frontend/dist/`**: Katalog dystrybucyjny serwowany przez Express. Zawiera skompilowany, zoptymalizowany pakiet produkcyjny wygenerowany poleceniem `npm run build` (`index.html`, zhaszowane `assets/index-*.js`, `assets/index-*.css`, `favicon.svg` oraz `logo_mentor4.svg`).
 - **`app.test.js`**: Zestaw testów integracyjnych API bazujący na natywnym runnerze `node:test` oraz bibliotece `supertest`.
 
 ---
@@ -25,7 +27,7 @@ Przed uruchomieniem projektu upewnij się, że masz zainstalowane:
 ## Uruchomienie krok po kroku
 
 ### Krok 1: Instalacja zależności
-W głównym katalogu projektu zainstaluj niezbędne biblioteki:
+Dzięki konfiguracji npm workspaces, jedno polecenie w głównym katalogu instaluje zależności zarówno backendu, jak i frontendu:
 ```bash
 npm install
 ```
@@ -58,7 +60,7 @@ npm run seed
 *(Skrypt ten aplikuje pełną strukturę tabel `uzytkownicy`, `zgloszenia` oraz `historia_zgloszen` z pliku `schemat.sql`, w tym pola `numer_listu`, `data_wyslania`, `opis_naprawy` itp.).*
 
 ### Krok 3a: Generowanie danych testowych (200 zgłoszeń)
-Aby wypełnić bazę 200 realistycznymi zgłoszeniami serwisowymi (z różnymi statusami, danymi klientów, usterkami, opisami napraw, listami przewozowymi i powiązaną historią zdarzeń), uruchom:
+Aby wypełnić bazę 200 zgłoszeniami serwisowymi (z różnymi statusami, danymi klientów, usterkami, opisami napraw, listami przewozowymi i powiązaną historią zdarzeń), uruchom:
 ```bash
 npm run seed:zgloszenia
 # lub bezpośrednio:
@@ -85,18 +87,36 @@ node create-user.js nazwa_pracownika HasloPracownika pracownik
 node create-user.js nazwa_magazyniera HasloMagazyniera magazynier
 ```
 
-### Krok 5: Uruchomienie serwera
-Uruchom aplikację w trybie produkcyjnym:
+### Krok 5: Zbudowanie frontendu i uruchomienie serwera
+
+Najpierw skompiluj aplikację React za pomocą Vite (wygeneruje zoptymalizowane pliki w katalogu `frontend/dist/` serwowanym bezpośrednio przez Express):
+```bash
+npm run build
+# (alias: npm run build:frontend)
+```
+
+Następnie uruchom aplikację w trybie produkcyjnym:
 ```bash
 npm start
 ```
-Lub w trybie deweloperskim z automatycznym restartem po zmianach w kodzie:
+Lub w trybie deweloperskim z automatycznym restartem backendu:
 ```bash
 npm run dev
 ```
 
-Po uruchomieniu aplikacja dostępna jest pod adresem:
-👉 **http://localhost:3000**
+#### Praca nad frontendem (Live HMR)
+Jeśli rozwijasz interfejs użytkownika, możesz uruchomić niezależny serwer deweloperski Vite z natychmiastowym odświeżaniem HMR na porcie 5173:
+```bash
+npm run dev:front
+# (alias: npm run dev:frontend)
+```
+*Vite posiada skonfigurowany w `vite.config.js` proxy (`server.proxy`), który automatycznie przekierowuje zapytania do `/api` na adres `http://localhost:3000` uruchomionego backendu Express.*
+
+#### Favicon i identyfikacja wizualna
+Aplikacja posiada dedykowany favicon (`favicon.svg`) wygenerowany na bazie sygnetu logo Mentor, serwowany bezpośrednio w nagłówku strony i w pasku zakładek przeglądarki.
+
+Po uruchomieniu aplikacja produkcyjna dostępna jest pod adresem:
+👉 **http://localhost:3000** (lub dev serwer frontendu pod **http://localhost:5173**)
 
 ---
 
@@ -150,7 +170,7 @@ Główne grupy przypadków testowych (łącznie **118 testów** w 18 suitach):
     - Żądania przekraczające limit (np. 80KB) zwracają status 413 Payload Too Large z czytelnym komunikatem JSON.
     - Błędnie sformatowane JSON-y zwracają status 400 Bad Request.
 15. **Nagłówki bezpieczeństwa HTTP (`helmet`)**:
-    - Zabezpieczenie serwera Express za pomocą biblioteki `helmet` z wyłączonym `contentSecurityPolicy` (ze względu na przeglądarkową kompilację JSX przez Babel Standalone).
+    - Zabezpieczenie serwera Express za pomocą biblioteki `helmet` z wyłączonym `contentSecurityPolicy`. Frontend kompilowany jest z wyprzedzeniem przez Vite (brak Babel Standalone w przeglądarce).
     - Aktywne nagłówki ochronne: `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Strict-Transport-Security`, `X-Download-Options: noopen`, `X-Permitted-Cross-Domain-Policies: none`.
 16. **Endpoint `/api/health` (bezpieczny health check)**:
     - Weryfikacja działania bazy danych (`SELECT 1`).
@@ -287,7 +307,7 @@ Wykonaj polecenia tworzące bazę oraz użytkownika z ograniczonymi prawami wył
 ```sql
 CREATE DATABASE IF NOT EXISTS serwis_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
-CREATE USER 'serwis_user'@'localhost' IDENTIFIED BY 'Mocne_Unikalne_Haslo_DB_123!';
+CREATE USER 'serwis_user'@'localhost' IDENTIFIED BY 'wlasne_haslo';
 GRANT ALL PRIVILEGES ON serwis_db.* TO 'serwis_user'@'localhost';
 FLUSH PRIVILEGES;
 EXIT;
@@ -310,10 +330,10 @@ DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_NAME=serwis_db
 DB_USER=serwis_user
-DB_PASSWORD=Mocne_Unikalne_Haslo_DB_123!
+DB_PASSWORD=wlasne_haslo
 
 # Sekret do podpisywania tokenów JWT (wygenerowany losowy ciąg min. 64 znaki)
-JWT_SECRET=super_tajny_klucz_wygenerowany_kryptograficznie
+JWT_SECRET=wygeneruj_wlasny
 ```
 
 Wygenerowanie bezpiecznego klucza `JWT_SECRET`:
@@ -327,16 +347,16 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 npm run seed
 
 # Utworzenie głównego konta administratora
-node create-user.js admin BardzoBezpieczneHasloAdmina! admin
+node create-user.js nazwa_admina haslo_admina admin
 ```
 
 ---
 
 ### 3. Uruchamianie na stałe (Process Manager)
 
-Aby aplikacja działała nieprzerwanie w tle, restartowała się samoczynnie w przypadku awarii oraz uruchamiała automatycznie po restarcie serwera, należy użyć menedżera procesów. Do wyboru są dwie metody: **PM2** (rekomendowana) lub **usługa systemowa systemd**.
+Aby aplikacja działała nieprzerwanie w tle, restartowała się samoczynnie w przypadku awarii oraz uruchamiała automatycznie po restarcie serwera, należy użyć menedżera procesów. Do wyboru są dwie metody: **PM2** lub **usługa systemowa systemd**.
 
-#### Opcja A: PM2 (Rekomendowane)
+#### Opcja A: PM2
 
 1. Zainstaluj PM2 globalnie:
    ```bash
@@ -545,7 +565,7 @@ Utwórz plik `/root/.my.cnf` (lub `~/.my.cnf`):
 ```ini
 [client]
 user=serwis_user
-password="Mocne_Unikalne_Haslo_DB_123!"
+password="wlasne_haslo"
 host=127.0.0.1
 ```
 Zabezpiecz uprawnienia do pliku:
@@ -689,7 +709,7 @@ W przypadku awarii, uszkodzenia danych lub migracji na nowy serwer wykonaj poni�
 
 - [ ] Zainstalowano Node.js (v20+), MySQL 8+ oraz Nginx/Caddy.
 - [ ] Utworzono użytkownika systemowego `serwis` i pobrano aplikację do `/var/www/serwis`.
-- [ ] Zainstalowano zależności produkcyjne (`npm ci --omit=dev`).
+- [ ] Zainstalowano zależności projektu (`npm ci`) oraz zbudowano zoptymalizowany frontend do `frontend/dist/` (`npm run build`).
 - [ ] Utworzono plik `.env` z `NODE_ENV=production` oraz bezpiecznym `JWT_SECRET`.
 - [ ] Zainicjalizowano strukturę bazy (`npm run seed`) i utworzono konto administratora (`create-user.js`).
 - [ ] Skonfigurowano automatyczny start aplikacji za pomocą PM2 lub systemd.
