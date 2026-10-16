@@ -528,12 +528,34 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(response.body.error, 'Możesz oznaczyć jako naprawione tylko zlecenie przypisane do Ciebie.');
         });
 
-        it('Serwisant może oznaczyć jako naprawione dowolne zlecenie w_realizacji (200)', async () => {
+        it('Serwisant może oznaczyć jako naprawione przypisane zlecenie w_realizacji (200)', async () => {
             setMockTicket({ status: 'w_realizacji', przypisany_pracownik_id: 1 });
             const response = await request(app)
                 .patch('/api/zgloszenia/1/naprawione')
                 .set('Authorization', `Bearer ${serwisantToken}`)
                 .send({ opis_naprawy: 'Serwisant naprawił płytę główną.' });
+            assert.strictEqual(response.status, 200);
+            assert.strictEqual(response.body.status, 'do_wysylki');
+        });
+
+        it('Serwisant oznaczając nieprzypisane zlecenie jako naprawione zostaje do niego automatycznie przypisany (200)', async () => {
+            setMockTicket({ status: 'w_realizacji', przypisany_pracownik_id: null });
+            const response = await request(app)
+                .patch('/api/zgloszenia/1/naprawione')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ opis_naprawy: 'Serwisant naprawił i przypisał automatycznie' });
+            assert.strictEqual(response.status, 200);
+            assert.strictEqual(response.body.status, 'do_wysylki');
+            assert.strictEqual(response.body.przypisany_pracownik_id, 50);
+            assert.strictEqual(response.body.przypisany_pracownik_username, 'serwisant_testowy');
+        });
+
+        it('Admin MOŻE oznaczyć jako naprawione zlecenie nieprzypisane do żadnego pracownika (200)', async () => {
+            setMockTicket({ status: 'w_realizacji', przypisany_pracownik_id: null });
+            const response = await request(app)
+                .patch('/api/zgloszenia/1/naprawione')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ opis_naprawy: 'Admin naprawił nieprzypisane zlecenie' });
             assert.strictEqual(response.status, 200);
             assert.strictEqual(response.body.status, 'do_wysylki');
         });
@@ -963,6 +985,103 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(czyMoznaZmienic('pracownik', 'w_realizacji', 'do_wysylki').allowed, true);
             assert.strictEqual(czyMoznaZmienic('magazynier', 'do_wysylki', 'zakończone').allowed, true);
             assert.strictEqual(czyMoznaZmienic('admin', 'do_wysylki', 'zakończone').allowed, true);
+        });
+
+        it('wyznaczDozwoloneAkcje wyznacza akcje z jednego źródła (Single Source of Truth) dla ról', () => {
+            const wyznacz = app.wyznaczDozwoloneAkcje;
+            assert.strictEqual(typeof wyznacz, 'function');
+
+            const pracownik = { id: 10, role: 'pracownik' };
+            const serwisant = { id: 20, role: 'serwisant' };
+            const magazynier = { id: 30, role: 'magazynier' };
+            const admin = { id: 40, role: 'admin' };
+
+            // 1. Rola: PRACOWNIK
+            // Na 'nowe' pracownik nie ma akcji (nie może rozpocząć ani cofnąć)
+            assert.deepStrictEqual(wyznacz(pracownik, { id: 1, status: 'nowe', przypisany_pracownik_id: 10 }), []);
+            // Na 'w_realizacji' pracownik przypisany widzi tylko 'naprawione'
+            const pRealizacjiAssigned = wyznacz(pracownik, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 10 });
+            assert.strictEqual(pRealizacjiAssigned.length, 1);
+            assert.strictEqual(pRealizacjiAssigned[0].akcja, 'naprawione');
+            assert.strictEqual(pRealizacjiAssigned[0].typ, 'naprawa');
+            assert.strictEqual(pRealizacjiAssigned[0].na_status, 'do_wysylki');
+            // Na 'w_realizacji' pracownik NIEprzypisany nie ma żadnych akcji
+            assert.deepStrictEqual(wyznacz(pracownik, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 999 }), []);
+            // Na 'do_wysylki' oraz 'zakończone' pracownik nie ma akcji
+            assert.deepStrictEqual(wyznacz(pracownik, { id: 1, status: 'do_wysylki', przypisany_pracownik_id: 10 }), []);
+            assert.deepStrictEqual(wyznacz(pracownik, { id: 1, status: 'zakończone', przypisany_pracownik_id: 10 }), []);
+
+            // 2. Rola: SERWISANT
+            const sNowe = wyznacz(serwisant, { id: 1, status: 'nowe' });
+            assert.strictEqual(sNowe.length, 1);
+            assert.strictEqual(sNowe[0].akcja, 'rozpocznij_realizacje');
+            assert.strictEqual(sNowe[0].na_status, 'w_realizacji');
+
+            // Serwisant na 'w_realizacji': dla zlecenia nieprzypisanego widzi akcję 'naprawione' (automatycznie przypisze go przy naprawie)
+            const sRealizacjiUnassigned = wyznacz(serwisant, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: null });
+            assert.strictEqual(sRealizacjiUnassigned.length, 1);
+            assert.strictEqual(sRealizacjiUnassigned[0].akcja, 'naprawione');
+            assert.strictEqual(sRealizacjiUnassigned[0].na_status, 'do_wysylki');
+
+            // Dla zlecenia przypisanego serwisant również widzi akcję 'naprawione'
+            const sRealizacji = wyznacz(serwisant, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 5 });
+            assert.strictEqual(sRealizacji.length, 1);
+            assert.strictEqual(sRealizacji[0].akcja, 'naprawione');
+            assert.strictEqual(sRealizacji[0].na_status, 'do_wysylki');
+
+            assert.deepStrictEqual(wyznacz(serwisant, { id: 1, status: 'do_wysylki', przypisany_pracownik_id: 5 }), []);
+            assert.deepStrictEqual(wyznacz(serwisant, { id: 1, status: 'zakończone', przypisany_pracownik_id: 5 }), []);
+
+            // 3. Rola: MAGAZYNIER
+            assert.deepStrictEqual(wyznacz(magazynier, { id: 1, status: 'nowe' }), []);
+            assert.deepStrictEqual(wyznacz(magazynier, { id: 1, status: 'w_realizacji' }), []);
+            const mWysylka = wyznacz(magazynier, { id: 1, status: 'do_wysylki' });
+            assert.strictEqual(mWysylka.length, 1);
+            assert.strictEqual(mWysylka[0].akcja, 'wyslij');
+            assert.strictEqual(mWysylka[0].typ, 'wysylka');
+            assert.strictEqual(mWysylka[0].na_status, 'zakończone');
+            assert.deepStrictEqual(wyznacz(magazynier, { id: 1, status: 'zakończone' }), []);
+
+            // 4. Rola: ADMIN (zawiera akcje w przód oraz cofanie do wcześniejszych etapów)
+            const aNowe = wyznacz(admin, { id: 1, status: 'nowe' });
+            assert.strictEqual(aNowe.length, 1);
+            assert.strictEqual(aNowe[0].akcja, 'rozpocznij_realizacje');
+
+            const aRealizacji = wyznacz(admin, { id: 1, status: 'w_realizacji' });
+            assert.strictEqual(aRealizacji.length, 2);
+            assert.strictEqual(aRealizacji.some(a => a.typ === 'cofnij' && a.na_status === 'nowe'), true);
+            assert.strictEqual(aRealizacji.some(a => a.typ === 'naprawa' && a.na_status === 'do_wysylki'), true);
+
+            const aWysylka = wyznacz(admin, { id: 1, status: 'do_wysylki' });
+            assert.strictEqual(aWysylka.length, 3);
+            assert.strictEqual(aWysylka.some(a => a.typ === 'cofnij' && a.na_status === 'nowe'), true);
+            assert.strictEqual(aWysylka.some(a => a.typ === 'cofnij' && a.na_status === 'w_realizacji'), true);
+            assert.strictEqual(aWysylka.some(a => a.typ === 'wysylka' && a.na_status === 'zakończone'), true);
+
+            const aZakonczone = wyznacz(admin, { id: 1, status: 'zakończone' });
+            assert.strictEqual(aZakonczone.length, 3);
+            assert.strictEqual(aZakonczone.every(a => a.typ === 'cofnij'), true);
+        });
+
+        it('GET /api/zgloszenia i GET /api/zgloszenia/:id zwracają dozwolone_akcje obliczone per rola', async () => {
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
+
+            // Pracownik (ID: 1) pobiera listę i widzi akcję naprawy
+            const resListP = await request(app).get('/api/zgloszenia').set('Authorization', `Bearer ${pracownikToken}`);
+            assert.strictEqual(resListP.status, 200);
+            assert.ok(Array.isArray(resListP.body.data[0].dozwolone_akcje));
+            assert.strictEqual(resListP.body.data[0].dozwolone_akcje[0].akcja, 'naprawione');
+
+            // Szczegóły GET /api/zgloszenia/1
+            const resDetailsP = await request(app).get('/api/zgloszenia/1').set('Authorization', `Bearer ${pracownikToken}`);
+            assert.strictEqual(resDetailsP.status, 200);
+            assert.ok(Array.isArray(resDetailsP.body.dozwolone_akcje));
+            assert.strictEqual(resDetailsP.body.dozwolone_akcje[0].akcja, 'naprawione');
+
+            // Admin widzi cofnięcie oraz naprawę
+            const resDetailsA = await request(app).get('/api/zgloszenia/1').set('Authorization', `Bearer ${adminToken}`);
+            assert.strictEqual(resDetailsA.status, 200);
+            assert.strictEqual(resDetailsA.body.dozwolone_akcje.length, 2);
         });
     });
 

@@ -433,6 +433,183 @@ app.get('/api/pracownicy', authenticateToken, requireAdminOrSerwisant,
         return res.json(rows);
     }));
 
+// Mapa dozwolonych przejść statusów i ról uprawnionych do ich wykonania:
+// - nowe -> w_realizacji: automatycznie przy przypisaniu lub rozpoczęciu (admin, serwisant)
+// - w_realizacji -> do_wysylki: przypisany pracownik, serwisant, admin (tylko z opisem naprawy)
+// - do_wysylki -> zakończone: magazynier, admin
+// - cofanie statusu: tylko admin
+const ALLOWED_STATUSES = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
+const STATUS_ORDER = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
+
+const STATUS_LABELS = {
+    nowe: 'Nowe',
+    w_realizacji: 'W realizacji',
+    do_wysylki: 'Do wysyłki',
+    'zakończone': 'Zakończone'
+};
+
+const PRZEJSCIA = {
+    nowe: { w_realizacji: ['admin', 'serwisant'] },
+    w_realizacji: { do_wysylki: ['admin', 'serwisant', 'pracownik'] },
+    do_wysylki: { 'zakończone': ['admin', 'magazynier'] }
+};
+
+/**
+ * Sprawdza, czy użytkownik o danej roli może zmienić status zgłoszenia.
+ * - Niedozwolone przejście w cyklu życia -> 409 Conflict z komunikatem: Nie można zmienić statusu z »${zStatusu}« na »${naStatus}«.
+ * - Brak uprawnień roli do danego przejścia lub cofania statusu -> 403 Forbidden.
+ * @param {string} rola
+ * @param {string} zStatusu
+ * @param {string} naStatus
+ * @returns {{ allowed: boolean, status?: number, error?: string, isRollback?: boolean }}
+ */
+function czyMoznaZmienic(rola, zStatusu, naStatus) {
+    if (zStatusu === naStatus) {
+        return { allowed: true };
+    }
+
+    const currentIndex = STATUS_ORDER.indexOf(zStatusu);
+    const targetIndex = STATUS_ORDER.indexOf(naStatus);
+
+    if (currentIndex === -1 || targetIndex === -1) {
+        return {
+            allowed: false,
+            status: 409,
+            error: `Nie można zmienić statusu z »${zStatusu}« na »${naStatus}«.`
+        };
+    }
+
+    // Cofanie statusu (indeks maleje) - wyłącznie dla admina
+    if (targetIndex < currentIndex) {
+        if (rola !== 'admin') {
+            return {
+                allowed: false,
+                status: 403,
+                error: 'Cofanie statusu zgłoszenia jest dozwolone wyłącznie dla administratora.'
+            };
+        }
+        return { allowed: true, isRollback: true };
+    }
+
+    // Przejście w przód - weryfikacja zdefiniowanego kroku w cyklu życia
+    const dozwoloneRole = PRZEJSCIA[zStatusu]?.[naStatus];
+    if (!dozwoloneRole) {
+        return {
+            allowed: false,
+            status: 409,
+            error: `Nie można zmienić statusu z »${zStatusu}« na »${naStatus}«.`
+        };
+    }
+
+    // Przejście istnieje w procesie, ale sprawdzamy czy rola ma uprawnienia
+    if (!dozwoloneRole.includes(rola)) {
+        return {
+            allowed: false,
+            status: 403,
+            error: `Brak uprawnień do zmiany statusu ze statusu "${zStatusu}" na "${naStatus}".`
+        };
+    }
+
+    return { allowed: true };
+}
+
+/**
+ * Wyznacza listę dozwolonych akcji/przejść dla danego użytkownika i zgłoszenia na podstawie czyMoznaZmienic i PRZEJSCIA.
+ * Frontend korzysta z tej listy jako jedynego źródła prawdy o dostępnych przyciskach/kontrolkach.
+ *
+ * @param {object} user - obiekt req.user { id, role, ... }
+ * @param {object} ticket - obiekt zgłoszenia { id, status, przypisany_pracownik_id, ... }
+ * @returns {Array<{ akcja: string, na_status: string, etykieta: string, typ: string }>}
+ */
+function wyznaczDozwoloneAkcje(user, ticket) {
+    if (!user || !user.role || !ticket || !ticket.status) {
+        return [];
+    }
+
+    const { role, id: userId } = user;
+    const currentStatus = ticket.status;
+    const currentIndex = STATUS_ORDER.indexOf(currentStatus);
+    if (currentIndex === -1) {
+        return [];
+    }
+
+    const akcje = [];
+
+    for (const targetStatus of STATUS_ORDER) {
+        if (targetStatus === currentStatus) {
+            continue;
+        }
+
+        const check = czyMoznaZmienic(role, currentStatus, targetStatus);
+        if (!check.allowed) {
+            continue;
+        }
+
+        const targetIndex = STATUS_ORDER.indexOf(targetStatus);
+
+        // 1. Cofanie statusu (wyłącznie admin, targetIndex < currentIndex)
+        if (check.isRollback || targetIndex < currentIndex) {
+            akcje.push({
+                akcja: 'cofnij',
+                na_status: targetStatus,
+                etykieta: `Cofnij do: ${STATUS_LABELS[targetStatus] || targetStatus}`,
+                typ: 'cofnij'
+            });
+            continue;
+        }
+
+        // 2. Przejście w przód:
+        // A. w_realizacji -> do_wysylki (wymaga opisu naprawy przez /naprawione)
+        if (targetStatus === 'do_wysylki') {
+            // Pracownik może oznaczyć jako naprawione wyłącznie zlecenie przypisane do siebie
+            if (role === 'pracownik' && Number(ticket.przypisany_pracownik_id) !== Number(userId)) {
+                continue;
+            }
+            // Dla serwisanta i admina akcja jest zawsze dostępna na statusie w_realizacji.
+            // Gdy serwisant oznacza zlecenie jako naprawione, zostaje ono do niego automatycznie przypisane.
+            akcje.push({
+                akcja: 'naprawione',
+                na_status: 'do_wysylki',
+                etykieta: 'Oznacz jako naprawione',
+                typ: 'naprawa'
+            });
+            continue;
+        }
+
+        // B. do_wysylki -> zakończone (wymaga wysyłki z numerem listu)
+        if (targetStatus === 'zakończone') {
+            akcje.push({
+                akcja: 'wyslij',
+                na_status: 'zakończone',
+                etykieta: 'Wyślij / Zakończ',
+                typ: 'wysylka'
+            });
+            continue;
+        }
+
+        // C. nowe -> w_realizacji (rozpoczęcie realizacji)
+        if (targetStatus === 'w_realizacji' && currentStatus === 'nowe') {
+            akcje.push({
+                akcja: 'rozpocznij_realizacje',
+                na_status: 'w_realizacji',
+                etykieta: 'Rozpocznij realizację',
+                typ: 'status'
+            });
+            continue;
+        }
+
+        // D. Inne dozwolone zmiany statusu
+        akcje.push({
+            akcja: 'zmien_status',
+            na_status: targetStatus,
+            etykieta: `Zmień na: ${STATUS_LABELS[targetStatus] || targetStatus}`,
+            typ: 'status'
+        });
+    }
+
+    return akcje;
+}
+
 // 5. GET /api/zgloszenia - Pobieranie zgłoszeń w zależności od roli użytkownika oraz parametrów filtrowania/paginacji:
 // Parametry query: ?szukaj=, ?status=, ?pracownik=, ?strona= (domyślnie 1), ?limit= (domyślnie 25), ?sort= ('asc' lub 'desc')
 // Odpowiedź: { total: number, page: number, limit: number, totalPages: number, data: Array, zgloszenia: Array }
@@ -538,6 +715,11 @@ app.get('/api/zgloszenia', authenticateToken,
         const dataParams = [...params, limit, offset];
         const [rows] = await currentPool.query(dataQuery, dataParams);
 
+        const rowsWithActions = rows.map((t) => ({
+            ...t,
+            dozwolone_akcje: wyznaczDozwoloneAkcje(req.user, t)
+        }));
+
         // Zwracamy obiekt paginacji z metadanymi i danymi.
         // Dla zachowania wstecznej kompatybilności udostępniamy pola: data, zgloszenia, total, page, limit, totalPages.
         return res.json({
@@ -545,8 +727,8 @@ app.get('/api/zgloszenia', authenticateToken,
             page,
             limit,
             totalPages,
-            data: rows,
-            zgloszenia: rows
+            data: rowsWithActions,
+            zgloszenia: rowsWithActions
         });
     }));
 
@@ -600,85 +782,18 @@ app.get('/api/zgloszenia/:id', authenticateToken,
             ORDER BY h.id ASC
         `, [id]);
 
-        return res.json({
+        const dozwolone_akcje = wyznaczDozwoloneAkcje(req.user, ticket);
+        const ticketWithActions = {
             ...ticket,
+            dozwolone_akcje
+        };
+
+        return res.json({
+            ...ticketWithActions,
             historia,
-            zgloszenie: ticket
+            zgloszenie: ticketWithActions
         });
     }));
-
-// Mapa dozwolonych przejść statusów i ról uprawnionych do ich wykonania:
-// - nowe -> w_realizacji: automatycznie przy przypisaniu (admin, serwisant)
-// - w_realizacji -> do_wysylki: przypisany pracownik, serwisant, admin (tylko z opisem naprawy)
-// - do_wysylki -> zakończone: magazynier, admin
-// - cofanie statusu: tylko admin
-const PRZEJSCIA = {
-    nowe: { w_realizacji: ['admin', 'serwisant'] },
-    w_realizacji: { do_wysylki: ['admin', 'serwisant', 'pracownik'] },
-    do_wysylki: { 'zakończone': ['admin', 'magazynier'] }
-};
-
-const ALLOWED_STATUSES = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
-const STATUS_ORDER = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
-
-/**
- * Sprawdza, czy użytkownik o danej roli może zmienić status zgłoszenia.
- * - Niedozwolone przejście w cyklu życia -> 409 Conflict z komunikatem: Nie można zmienić statusu z »${zStatusu}« na »${naStatus}«.
- * - Brak uprawnień roli do danego przejścia lub cofania statusu -> 403 Forbidden.
- * @param {string} rola
- * @param {string} zStatusu
- * @param {string} naStatus
- * @returns {{ allowed: boolean, status?: number, error?: string, isRollback?: boolean }}
- */
-function czyMoznaZmienic(rola, zStatusu, naStatus) {
-    if (zStatusu === naStatus) {
-        return { allowed: true };
-    }
-
-    const currentIndex = STATUS_ORDER.indexOf(zStatusu);
-    const targetIndex = STATUS_ORDER.indexOf(naStatus);
-
-    if (currentIndex === -1 || targetIndex === -1) {
-        return {
-            allowed: false,
-            status: 409,
-            error: `Nie można zmienić statusu z »${zStatusu}« na »${naStatus}«.`
-        };
-    }
-
-    // Cofanie statusu (indeks maleje) - wyłącznie dla admina
-    if (targetIndex < currentIndex) {
-        if (rola !== 'admin') {
-            return {
-                allowed: false,
-                status: 403,
-                error: 'Cofanie statusu zgłoszenia jest dozwolone wyłącznie dla administratora.'
-            };
-        }
-        return { allowed: true, isRollback: true };
-    }
-
-    // Przejście w przód - weryfikacja zdefiniowanego kroku w cyklu życia
-    const dozwoloneRole = PRZEJSCIA[zStatusu]?.[naStatus];
-    if (!dozwoloneRole) {
-        return {
-            allowed: false,
-            status: 409,
-            error: `Nie można zmienić statusu z »${zStatusu}« na »${naStatus}«.`
-        };
-    }
-
-    // Przejście istnieje w procesie, ale sprawdzamy czy rola ma uprawnienia
-    if (!dozwoloneRole.includes(rola)) {
-        return {
-            allowed: false,
-            status: 403,
-            error: `Brak uprawnień do zmiany statusu ze statusu "${zStatusu}" na "${naStatus}".`
-        };
-    }
-
-    return { allowed: true };
-}
 
 // 6. PATCH /api/zgloszenia/:id/przypisz - Przypisanie zlecenia pracownikowi (admin i serwisant)
 app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwisant,
@@ -758,7 +873,12 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
             id,
             przypisany_pracownik_id: assignedId,
             przypisany_pracownik_username: assignedUsername,
-            status: targetStatus
+            status: targetStatus,
+            dozwolone_akcje: wyznaczDozwoloneAkcje(req.user, {
+                id,
+                status: targetStatus,
+                przypisany_pracownik_id: assignedId
+            })
         });
     }));
 
@@ -793,10 +913,28 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
             return fail(res, 'Możesz oznaczyć jako naprawione tylko zlecenie przypisane do Ciebie.', 403);
         }
 
+        // Gdy serwisant oznacza zlecenie jako naprawione, automatycznie zostaje przypisane do serwisanta
+        let newAssignedId = ticket.przypisany_pracownik_id;
+        if (req.user.role === 'serwisant') {
+            newAssignedId = req.user.id;
+        }
+
         await currentPool.query(
-            "UPDATE zgloszenia SET opis_naprawy = ?, opis_naprawy_data = NOW(), status = 'do_wysylki' WHERE id = ?",
-            [opis_naprawy.trim(), id]
+            "UPDATE zgloszenia SET opis_naprawy = ?, opis_naprawy_data = NOW(), status = 'do_wysylki', przypisany_pracownik_id = ? WHERE id = ?",
+            [opis_naprawy.trim(), newAssignedId, id]
         );
+
+        // Jeśli zlecenie nie było wcześniej przypisane do tego użytkownika i serwisant je naprawił, odnotowujemy automatyczne przypisanie w historii
+        if (ticket.przypisany_pracownik_id !== newAssignedId) {
+            await dodajWpisHistorii(
+                id,
+                req.user.id,
+                'przypisanie',
+                ticket.status,
+                ticket.status,
+                `Automatycznie przypisano serwisanta: ${req.user.username}`
+            );
+        }
 
         await dodajWpisHistorii(
             id,
@@ -811,7 +949,14 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
             message: 'Zlecenie zostało opisane i przekazane do magazynu ze statusem "Do wysyłki".',
             id,
             status: 'do_wysylki',
-            opis_naprawy: opis_naprawy.trim()
+            przypisany_pracownik_id: newAssignedId,
+            przypisany_pracownik_username: req.user.role === 'serwisant' ? req.user.username : undefined,
+            opis_naprawy: opis_naprawy.trim(),
+            dozwolone_akcje: wyznaczDozwoloneAkcje(req.user, {
+                id,
+                status: 'do_wysylki',
+                przypisany_pracownik_id: newAssignedId
+            })
         });
     }));
 
@@ -955,7 +1100,12 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
     return res.json({
         message: 'Status zgłoszenia został zaktualizowany.',
         id: Number(id),
-        status
+        status,
+        dozwolone_akcje: wyznaczDozwoloneAkcje(req.user, {
+            id: Number(id),
+            status,
+            przypisany_pracownik_id: ticket.przypisany_pracownik_id
+        })
     });
 });
 
@@ -1254,7 +1404,10 @@ app.use('/api', (req, res) => {
 });
 
 app.czyMoznaZmienic = czyMoznaZmienic;
+app.wyznaczDozwoloneAkcje = wyznaczDozwoloneAkcje;
 app.PRZEJSCIA = PRZEJSCIA;
+app.STATUS_ORDER = STATUS_ORDER;
+app.STATUS_LABELS = STATUS_LABELS;
 app.dodajWpisHistorii = dodajWpisHistorii;
 app.loginLimiter = loginLimiter;
 app.zgloszeniaLimiter = zgloszeniaLimiter;

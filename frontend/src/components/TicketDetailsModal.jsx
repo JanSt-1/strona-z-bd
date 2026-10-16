@@ -12,6 +12,11 @@ export default function TicketDetailsModal({
 }) {
   const [history, setHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(true);
+  const [detailsTicket, setDetailsTicket] = useState(ticket);
+
+  useEffect(() => {
+    setDetailsTicket(ticket);
+  }, [ticket]);
 
   useEffect(() => {
     const originalOverflow = document.body.style.overflow;
@@ -22,14 +27,17 @@ export default function TicketDetailsModal({
     }
     window.addEventListener('keydown', handleKeyDown);
 
-    // Pobranie historii zgłoszenia z backendu
+    // Pobranie historii i świeżych danych zgłoszenia z backendu
     let isMounted = true;
     if (ticket?.id) {
       ticketApi
         .getTicketById(ticket.id)
         .then((res) => {
-          if (isMounted && res?.historia) {
-            setHistory(res.historia);
+          if (isMounted && res) {
+            if (res.historia) {
+              setHistory(res.historia);
+            }
+            setDetailsTicket((prev) => ({ ...prev, ...res }));
           }
         })
         .catch(() => {
@@ -50,6 +58,7 @@ export default function TicketDetailsModal({
   }, [ticket?.id, onClose]);
 
   if (!ticket) return null;
+  const currentTicket = detailsTicket || ticket;
 
   return createPortal(
     <div
@@ -166,16 +175,14 @@ export default function TicketDetailsModal({
               <h4 className="text-xs font-bold text-muted uppercase tracking-wider">
                 4. Raport z naprawy
               </h4>
-              {(!ticket.opis_naprawy &&
-                ((user?.role === 'pracownik' && ticket.status === 'w_realizacji') ||
-                  user?.role === 'admin') &&
-                ticket.status !== 'zakończone') && (
+              {(!currentTicket.opis_naprawy &&
+                currentTicket.dozwolone_akcje?.some((a) => a.typ === 'naprawa')) && (
                 <button
                   type="button"
                   className="btn-primary py-1 px-3 text-xs"
                   onClick={() => {
                     onClose();
-                    onOpenRepairModal(ticket);
+                    onOpenRepairModal(currentTicket);
                   }}
                 >
                   Opisz naprawę
