@@ -5,6 +5,15 @@ import LoginForm from './pages/LoginForm';
 import Dashboard from './pages/Dashboard';
 import { authApi, onUnauthorized } from './api';
 
+const ADMIN_URL_KEYS = ['status', 'pracownik', 'worker', 'szukaj', 'search', 'strona', 'page'];
+
+function resolveTabFromUrl(fallbackTab) {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('tab') === 'public') return 'public';
+  if (params.get('tab') === 'admin' || ADMIN_URL_KEYS.some((k) => params.has(k))) return 'admin';
+  return fallbackTab;
+}
+
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -60,50 +69,22 @@ class ErrorBoundary extends React.Component {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('tab') === 'public') return 'public';
-    if (
-      params.get('tab') === 'admin' ||
-      params.has('status') ||
-      params.has('pracownik') ||
-      params.has('worker') ||
-      params.has('szukaj') ||
-      params.has('search') ||
-      params.has('strona') ||
-      params.has('page')
-    ) {
-      return 'admin';
-    }
-    return authApi.getToken() ? 'admin' : 'public';
-  });
+  const [activeTab, setActiveTab] = useState(() =>
+    resolveTabFromUrl(authApi.getToken() ? 'admin' : 'public')
+  );
   const [token, setToken] = useState(() => authApi.getToken());
   const [user, setUser] = useState(() => authApi.getUser());
 
   useEffect(() => {
-    // Automatyczne wylogowanie przy 401 Unauthorized z backendu
-    const unsubscribe = onUnauthorized(() => {
+    return onUnauthorized(() => {
       setToken(null);
       setUser(null);
     });
-    return unsubscribe;
   }, []);
 
   useEffect(() => {
-    function handlePopState() {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('tab') === 'public') {
-        setActiveTab('public');
-      } else if (
-        params.get('tab') === 'admin' ||
-        params.has('status') ||
-        params.has('pracownik') ||
-        params.has('szukaj') ||
-        params.has('strona')
-      ) {
-        setActiveTab('admin');
-      }
-    }
+    const handlePopState = () =>
+      setActiveTab((prev) => resolveTabFromUrl(prev));
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
@@ -118,11 +99,6 @@ export default function App() {
     }
     const query = url.searchParams.toString();
     window.history.pushState({}, '', url.pathname + (query ? `?${query}` : ''));
-  }
-
-  function handleLoginSuccess(newToken, newUser) {
-    setToken(newToken);
-    setUser(newUser);
   }
 
   function handleLogout() {
@@ -150,7 +126,12 @@ export default function App() {
           ) : token ? (
             <Dashboard user={user} token={token} onLogout={handleLogout} />
           ) : (
-            <LoginForm onLoginSuccess={handleLoginSuccess} />
+            <LoginForm
+              onLoginSuccess={(newToken, newUser) => {
+                setToken(newToken);
+                setUser(newUser);
+              }}
+            />
           )}
         </ErrorBoundary>
       </main>

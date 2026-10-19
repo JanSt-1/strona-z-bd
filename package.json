@@ -14,7 +14,7 @@
     "build:frontend": "npm --prefix frontend run build",
     "dev:frontend": "npm --prefix frontend run dev",
     "seed": "node seed.js",
-    "seed:zgloszenia": "node seed-zgloszenia.js",
+    "config:testowy": "node config-testowy.js",
     "test": "node --test"
   },
   "keywords": [],

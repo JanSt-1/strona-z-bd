@@ -6,8 +6,7 @@ import RepairModal from '../components/RepairModal';
 import AssignWorkerModal from '../components/AssignWorkerModal';
 import ShipModal from '../components/ShipModal';
 import RollbackStatusModal from '../components/RollbackStatusModal';
-import TrackingNumberModal from '../components/TrackingNumberModal';
-import ChangeOwnPasswordModal from '../components/ChangeOwnPasswordModal';
+import PasswordModal from '../components/PasswordModal';
 import AdminUsersPanel from '../components/AdminUsersPanel';
 import TicketDetailsDrawer from '../components/TicketDetailsDrawer';
 import StatusBadge from '../components/StatusBadge';
@@ -30,53 +29,23 @@ function syncUrlWithFilters({ status, worker, search, page, sort }, replace = fa
   const url = new URL(window.location.href);
   const sp = url.searchParams;
 
-  if (status) {
-    sp.set('status', status);
-  } else {
-    sp.delete('status');
-  }
+  const setOrDel = (key, val, legacyKeys = []) => {
+    legacyKeys.forEach((k) => sp.delete(k));
+    if (val) sp.set(key, String(val));
+    else sp.delete(key);
+  };
 
-  if (worker) {
-    sp.set('pracownik', worker);
-    sp.delete('worker');
-  } else {
-    sp.delete('pracownik');
-    sp.delete('worker');
-  }
-
-  if (search && search.trim()) {
-    sp.set('szukaj', search.trim());
-    sp.delete('search');
-    sp.delete('q');
-  } else {
-    sp.delete('szukaj');
-    sp.delete('search');
-    sp.delete('q');
-  }
-
-  if (page && page > 1) {
-    sp.set('strona', page.toString());
-    sp.delete('page');
-  } else {
-    sp.delete('strona');
-    sp.delete('page');
-  }
-
-  if (sort && sort === 'asc') {
-    sp.set('sort', 'asc');
-  } else {
-    sp.delete('sort');
-  }
+  setOrDel('status', status);
+  setOrDel('pracownik', worker, ['worker']);
+  setOrDel('szukaj', search?.trim(), ['search', 'q']);
+  setOrDel('strona', page && page > 1 ? page : '', ['page']);
+  setOrDel('sort', sort === 'asc' ? 'asc' : '');
 
   const query = sp.toString();
   const targetUrl = url.pathname + (query ? `?${query}` : '');
 
   if (window.location.pathname + window.location.search !== targetUrl) {
-    if (replace) {
-      window.history.replaceState({}, '', targetUrl);
-    } else {
-      window.history.pushState({}, '', targetUrl);
-    }
+    window.history[replace ? 'replaceState' : 'pushState']({}, '', targetUrl);
   }
 }
 
@@ -85,7 +54,7 @@ const Bar = ({ w, h = 'h-3', tone = 'bg-page', round = 'rounded' }) => (
 );
 
 const LoadingNote = () => (
-  <span className="inline-flex items-center gap-2 text-xs font-semibold text-primary">
+  <span className="inline-flex items-center gap-2 text-xs font-semibold text-primary-dark">
     <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4">
       <circle className="opacity-25" cx="12" cy="12" r="10" />
       <path className="opacity-75" d="M4 12a8 8 0 018-8" strokeLinecap="round" />
@@ -165,6 +134,33 @@ function TicketEmptyState({ hasActiveFilters, onClearFilters, defaultMessage }) 
   );
 }
 
+function DeleteTicketButton({ id, deletingId, onDelete, mobile = false }) {
+  const isDeleting = deletingId === id;
+  return (
+    <button
+      type="button"
+      disabled={isDeleting}
+      onClick={() => onDelete(id)}
+      title={`Usuń zgłoszenie #${id}`}
+      className={`btn-danger text-xs inline-flex items-center gap-1 ${
+        mobile ? 'py-1.5 px-3 justify-center' : 'py-1 px-2'
+      }`}
+    >
+      {isDeleting ? (
+        mobile ? 'Usuwanie...' : '...'
+      ) : (
+        <>
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+          </svg>
+          Usuń
+        </>
+      )}
+    </button>
+  );
+}
+
 export default function Dashboard({ user, token, onLogout }) {
   const initialFilters = readFiltersFromUrl();
   const [tickets, setTickets] = useState([]);
@@ -178,10 +174,9 @@ export default function Dashboard({ user, token, onLogout }) {
   const [rollbackModalData, setRollbackModalData] = useState(null);
   const [trackingModalTicket, setTrackingModalTicket] = useState(null);
   const [detailsDrawerTicket, setDetailsDrawerTicket] = useState(null);
-  const [dashboardTab, setDashboardTab] = useState('tickets'); // 'tickets' | 'users'
+  const [dashboardTab, setDashboardTab] = useState('tickets');
   const [showOwnPasswordModal, setShowOwnPasswordModal] = useState(false);
 
-  // Filtry i paginacja zsynchronizowane z adresem URL
   const [page, setPage] = useState(initialFilters.page);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
@@ -190,18 +185,16 @@ export default function Dashboard({ user, token, onLogout }) {
   const [workerFilter, setWorkerFilter] = useState(initialFilters.worker);
   const [sortOrder, setSortOrder] = useState(initialFilters.sort);
 
-  function showAlert(message, type = 'success') {
+  const showAlert = useCallback((message, type = 'success') => {
     setAlert({ message, type });
     setTimeout(() => setAlert(null), 5000);
-  }
+  }, []);
 
   const fetchWorkers = useCallback(async () => {
     if (user?.role !== 'admin' && user?.role !== 'serwisant') return;
     try {
       const data = await workerApi.getWorkers();
-      if (Array.isArray(data)) {
-        setWorkers(data);
-      }
+      if (Array.isArray(data)) setWorkers(data);
     } catch (err) {
       console.error('Błąd pobierania pracowników:', err);
     }
@@ -209,25 +202,17 @@ export default function Dashboard({ user, token, onLogout }) {
 
   const fetchTickets = useCallback(
     async (overrides = {}) => {
-      if (!overrides.initial) {
-        setLoading(true);
-      }
+      if (!overrides.initial) setLoading(true);
       try {
-        const currentPage = overrides.page !== undefined ? overrides.page : page;
-        const currentSearch = overrides.search !== undefined ? overrides.search : searchQuery;
-        const currentStatus = overrides.status !== undefined ? overrides.status : statusFilter;
-        const currentWorker = overrides.worker !== undefined ? overrides.worker : workerFilter;
-        const currentSort = overrides.sort !== undefined ? overrides.sort : sortOrder;
+        const current = {
+          page: overrides.page ?? page,
+          search: overrides.search ?? searchQuery,
+          status: overrides.status ?? statusFilter,
+          worker: overrides.worker ?? workerFilter,
+          sort: overrides.sort ?? sortOrder
+        };
 
-        const data = await ticketApi.getTickets({
-          page: currentPage,
-          limit: 25,
-          search: currentSearch,
-          status: currentStatus,
-          worker: currentWorker,
-          sort: currentSort
-        });
-
+        const data = await ticketApi.getTickets({ ...current, limit: 25 });
         if (!data) return;
 
         const list = Array.isArray(data) ? data : data.data || data.zgloszenia || [];
@@ -235,19 +220,10 @@ export default function Dashboard({ user, token, onLogout }) {
 
         if (data && typeof data === 'object' && !Array.isArray(data)) {
           setTotal(typeof data.total === 'number' ? data.total : list.length);
-          const resolvedPage = data.page || currentPage || 1;
+          const resolvedPage = data.page || current.page || 1;
           setPage(resolvedPage);
           setTotalPages(data.totalPages || 1);
-          syncUrlWithFilters(
-            {
-              status: currentStatus,
-              worker: currentWorker,
-              search: currentSearch,
-              page: resolvedPage,
-              sort: currentSort
-            },
-            true
-          );
+          syncUrlWithFilters({ ...current, page: resolvedPage }, true);
         } else {
           setTotal(list.length);
           setTotalPages(1);
@@ -258,7 +234,7 @@ export default function Dashboard({ user, token, onLogout }) {
         setLoading(false);
       }
     },
-    [page, searchQuery, statusFilter, workerFilter, sortOrder]
+    [page, searchQuery, statusFilter, workerFilter, sortOrder, showAlert]
   );
 
   useEffect(() => {
@@ -274,251 +250,130 @@ export default function Dashboard({ user, token, onLogout }) {
       setStatusFilter(fromUrl.status);
       setWorkerFilter(fromUrl.worker);
       setSortOrder(fromUrl.sort);
-      fetchTickets({
-        page: fromUrl.page,
-        search: fromUrl.search,
-        status: fromUrl.status,
-        worker: fromUrl.worker,
-        sort: fromUrl.sort
-      });
+      fetchTickets(fromUrl);
     }
-
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, [fetchTickets]);
 
-  const handleSearchSubmit = useCallback(() => {
-    setPage(1);
-    syncUrlWithFilters({
-      status: statusFilter,
-      worker: workerFilter,
-      search: searchQuery,
-      page: 1,
-      sort: sortOrder
-    });
-    fetchTickets({ page: 1, search: searchQuery });
-  }, [fetchTickets, searchQuery, sortOrder, statusFilter, workerFilter]);
-
-  const handleClearSearch = useCallback(() => {
-    setSearchQuery('');
-    setPage(1);
-    syncUrlWithFilters({
-      status: statusFilter,
-      worker: workerFilter,
-      search: '',
-      page: 1,
-      sort: sortOrder
-    });
-    fetchTickets({ page: 1, search: '' });
-  }, [fetchTickets, sortOrder, statusFilter, workerFilter]);
-
-  const handleStatusChange = useCallback(
-    (e) => {
-      const val = e.target.value;
-      setStatusFilter(val);
-      setPage(1);
-      syncUrlWithFilters({
-        status: val,
-        worker: workerFilter,
-        search: searchQuery,
-        page: 1,
-        sort: sortOrder
-      });
-      fetchTickets({ page: 1, status: val });
-    },
-    [fetchTickets, searchQuery, sortOrder, workerFilter]
-  );
-
-  const handleWorkerChange = useCallback(
-    (e) => {
-      const val = e.target.value;
-      setWorkerFilter(val);
-      setPage(1);
-      syncUrlWithFilters({
-        status: statusFilter,
-        worker: val,
-        search: searchQuery,
-        page: 1,
-        sort: sortOrder
-      });
-      fetchTickets({ page: 1, worker: val });
-    },
-    [fetchTickets, searchQuery, sortOrder, statusFilter]
-  );
-
-  const handleSortChange = useCallback(
-    (e) => {
-      const val = e.target.value;
-      setSortOrder(val);
-      setPage(1);
-      syncUrlWithFilters({
+  const applyFilters = useCallback(
+    (patch) => {
+      const next = {
         status: statusFilter,
         worker: workerFilter,
         search: searchQuery,
+        sort: sortOrder,
         page: 1,
-        sort: val
-      });
-      fetchTickets({ page: 1, sort: val });
+        ...patch
+      };
+      setStatusFilter(next.status);
+      setWorkerFilter(next.worker);
+      setSearchQuery(next.search);
+      setSortOrder(next.sort);
+      setPage(next.page);
+      syncUrlWithFilters(next);
+      fetchTickets(next);
     },
-    [fetchTickets, searchQuery, statusFilter, workerFilter]
+    [fetchTickets, searchQuery, sortOrder, statusFilter, workerFilter]
   );
 
   const handleClearAllFilters = useCallback(() => {
-    setSearchQuery('');
-    setStatusFilter('');
-    setWorkerFilter('');
-    setSortOrder('desc');
-    setPage(1);
-    syncUrlWithFilters({
-      status: '',
-      worker: '',
-      search: '',
-      page: 1,
-      sort: 'desc'
-    });
-    fetchTickets({ page: 1, search: '', status: '', worker: '', sort: 'desc' });
-  }, [fetchTickets]);
+    applyFilters({ status: '', worker: '', search: '', sort: 'desc', page: 1 });
+  }, [applyFilters]);
 
   const handlePageChange = useCallback(
     (newPage) => {
       if (newPage < 1 || (totalPages && newPage > totalPages) || newPage === page) return;
-      setPage(newPage);
-      syncUrlWithFilters({
-        status: statusFilter,
-        worker: workerFilter,
-        search: searchQuery,
-        page: newPage,
-        sort: sortOrder
-      });
-      fetchTickets({ page: newPage });
+      applyFilters({ page: newPage });
     },
-    [fetchTickets, page, searchQuery, sortOrder, statusFilter, totalPages, workerFilter]
+    [applyFilters, page, totalPages]
   );
 
   async function refreshDrawerTicket(ticketId) {
-    if (!ticketId) return;
+    if (!ticketId || detailsDrawerTicket?.id !== ticketId) return;
     try {
       const updated = await ticketApi.getTicketById(ticketId);
-      if (updated) {
-        setDetailsDrawerTicket(updated);
-      }
+      if (updated) setDetailsDrawerTicket(updated);
     } catch (err) {
       console.error('Błąd odświeżania szczegółów w panelu:', err);
     }
   }
 
-  async function handleAssignWorker(ticketId, pracownikId) {
+  async function runTicketMutation(ticketId, apiCall, getSuccessMsg, closeFn, refreshOnErr = false) {
     try {
-      const assignedId = pracownikId === '' || pracownikId === null ? null : Number(pracownikId);
-      const data = await ticketApi.assignWorker(ticketId, assignedId);
+      const data = await apiCall();
       if (!data) return;
-
-      showAlert(data.message, 'success');
-      setAssignModalTicket(null);
+      showAlert(getSuccessMsg(data), 'success');
+      if (closeFn) closeFn();
       fetchTickets();
-      if (detailsDrawerTicket?.id === ticketId) {
-        refreshDrawerTicket(ticketId);
-      }
+      refreshDrawerTicket(ticketId);
     } catch (err) {
       showAlert(err.message, 'error');
+      if (refreshOnErr) fetchTickets();
       throw err;
     }
   }
 
-  async function handleRepairSubmit(ticketId, opisNaprawy) {
-    try {
-      const data = await ticketApi.submitRepair(ticketId, opisNaprawy);
-      if (!data) return;
+  const handleAssignWorker = (ticketId, pracownikId) =>
+    runTicketMutation(
+      ticketId,
+      () =>
+        ticketApi.assignWorker(
+          ticketId,
+          pracownikId === '' || pracownikId === null ? null : Number(pracownikId)
+        ),
+      (data) => data.message,
+      () => setAssignModalTicket(null)
+    );
 
-      showAlert(
-        `Zgłoszenie #${ticketId} zostało opisane i przekazane do magazynu jako "Do wysyłki"!`,
-        'success'
-      );
-      setRepairModalTicket(null);
-      fetchTickets();
-      if (detailsDrawerTicket?.id === ticketId) {
-        refreshDrawerTicket(ticketId);
-      }
-    } catch (err) {
-      showAlert(err.message, 'error');
-      fetchTickets();
-      throw err;
-    }
-  }
+  const handleRepairSubmit = (ticketId, opisNaprawy) =>
+    runTicketMutation(
+      ticketId,
+      () => ticketApi.submitRepair(ticketId, opisNaprawy),
+      () => `Zgłoszenie #${ticketId} zostało opisane i przekazane do magazynu jako "Do wysyłki"!`,
+      () => setRepairModalTicket(null),
+      true
+    );
 
-  async function handleShipSubmit(ticketId, numerListu) {
-    try {
-      const data = await ticketApi.updateStatus(ticketId, 'zakończone', { numer_listu: numerListu });
-      if (!data) return;
+  const handleShipSubmit = (ticketId, numerListu) =>
+    runTicketMutation(
+      ticketId,
+      () => ticketApi.updateStatus(ticketId, 'zakończone', { numer_listu: numerListu }),
+      () => `Zgłoszenie #${ticketId} zostało oznaczone jako wysłane.`,
+      () => setShipModalTicket(null)
+    );
 
-      showAlert(`Zgłoszenie #${ticketId} zostało oznaczone jako wysłane.`, 'success');
-      setShipModalTicket(null);
-      fetchTickets();
-      if (detailsDrawerTicket?.id === ticketId) {
-        refreshDrawerTicket(ticketId);
-      }
-    } catch (err) {
-      showAlert(err.message, 'error');
-      throw err;
-    }
-  }
+  const handleRollbackSubmit = (ticketId, targetStatus) =>
+    runTicketMutation(
+      ticketId,
+      () => ticketApi.updateStatus(ticketId, targetStatus),
+      () => `Status zgłoszenia #${ticketId} został cofnięty do "${targetStatus}".`,
+      () => setRollbackModalData(null)
+    );
 
-  async function handleRollbackSubmit(ticketId, targetStatus) {
-    try {
-      const data = await ticketApi.updateStatus(ticketId, targetStatus);
-      if (!data) return;
-
-      showAlert(`Status zgłoszenia #${ticketId} został cofnięty do "${targetStatus}".`, 'success');
-      setRollbackModalData(null);
-      fetchTickets();
-      if (detailsDrawerTicket?.id === ticketId) {
-        refreshDrawerTicket(ticketId);
-      }
-    } catch (err) {
-      showAlert(err.message, 'error');
-      throw err;
-    }
-  }
-
-
-  async function handleSaveTrackingNumber(id, numerListu) {
-    const targetTicket = tickets.find((t) => t.id === id);
-    const currentStatus = targetTicket?.status || 'zakończone';
-    try {
-      const data = await ticketApi.saveTrackingNumber(id, currentStatus, numerListu);
-      if (!data) return;
-
-      showAlert(
-        `Zgłoszenie #${id}: numer listu przewozowego został pomyślnie zapisany.`,
-        'success'
-      );
-      fetchTickets();
-      if (detailsDrawerTicket?.id === id) {
-        refreshDrawerTicket(id);
-      }
-    } catch (err) {
-      showAlert(err.message, 'error');
-    }
-  }
+  const handleSaveTrackingNumber = (id, numerListu) => {
+    const currentStatus = tickets.find((t) => t.id === id)?.status || 'zakończone';
+    return runTicketMutation(
+      id,
+      () => ticketApi.saveTrackingNumber(id, currentStatus, numerListu),
+      () => `Zgłoszenie #${id}: numer listu przewozowego został pomyślnie zapisany.`,
+      () => setTrackingModalTicket(null)
+    );
+  };
 
   async function handleDeleteTicket(id) {
     if (user?.role !== 'admin') {
-      showAlert('Brak uprawnień do usuwania zgłoszeń (wymagana rola: admin).', 'error');
-      return;
+      return showAlert('Brak uprawnień do usuwania zgłoszeń (wymagana rola: admin).', 'error');
     }
-    const confirmed = window.confirm(`Czy na pewno chcesz bezpowrotnie usunąć zgłoszenie #${id}?`);
-    if (!confirmed) return;
+    if (!window.confirm(`Czy na pewno chcesz bezpowrotnie usunąć zgłoszenie #${id}?`)) return;
 
     setDeletingId(id);
     try {
       const data = await ticketApi.deleteTicket(id);
       if (!data) return;
-
       showAlert(`Zgłoszenie #${id} zostało pomyślnie usunięte.`, 'success');
       setTickets((prev) => prev.filter((t) => t.id !== id));
-      if (detailsDrawerTicket?.id === id) {
-        setDetailsDrawerTicket(null);
-      }
+      if (detailsDrawerTicket?.id === id) setDetailsDrawerTicket(null);
     } catch (err) {
       showAlert(err.message, 'error');
     } finally {
@@ -526,25 +381,25 @@ export default function Dashboard({ user, token, onLogout }) {
     }
   }
 
-  const getEmptyMessage = () => {
-    if (user?.role === 'pracownik') {
-      return 'Brak przypisanych zleceń. Zlecenia pojawią się tutaj po przypisaniu ich przez serwisanta lub administratora.';
-    }
-    if (user?.role === 'magazynier') {
-      return 'Brak zleceń oczekujących na wysyłkę. Zlecenia pojawią się tutaj ze statusem "Do wysyłki", gdy pracownik zakończy i opisze naprawę.';
-    }
-    return 'Brak zgłoszeń w bazie danych.';
-  };
+  const emptyMessage =
+    user?.role === 'pracownik'
+      ? 'Brak przypisanych zleceń. Zlecenia pojawią się tutaj po przypisaniu ich przez serwisanta lub administratora.'
+      : user?.role === 'magazynier'
+      ? 'Brak zleceń oczekujących na wysyłkę. Zlecenia pojawią się tutaj ze statusem "Do wysyłki", gdy pracownik zakończy i opisze naprawę.'
+      : 'Brak zgłoszeń w bazie danych.';
 
   const hasActiveFilters = Boolean(
-    searchQuery.trim() ||
-    statusFilter ||
-    workerFilter ||
-    sortOrder !== 'desc' ||
-    page > 1
+    searchQuery.trim() || statusFilter || workerFilter || sortOrder !== 'desc' || page > 1
   );
 
   const currentTab = user?.role === 'admin' ? dashboardTab : 'tickets';
+
+  const modalHandlers = {
+    onOpenAssignModal: setAssignModalTicket,
+    onOpenRepairModal: setRepairModalTicket,
+    onOpenShipModal: setShipModalTicket,
+    onOpenRollbackModal: (ticket, actions) => setRollbackModalData({ ticket, actions })
+  };
 
   return (
     <div className="app-card">
@@ -577,7 +432,7 @@ export default function Dashboard({ user, token, onLogout }) {
           <button
             type="button"
             className="btn-secondary py-1.5 px-3 text-xs inline-flex items-center gap-1.5"
-            onClick={currentTab === 'users' ? () => { } : () => fetchTickets()}
+            onClick={currentTab === 'users' ? () => {} : () => fetchTickets()}
             title="Odśwież listę zgłoszeń"
           >
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
@@ -603,39 +458,47 @@ export default function Dashboard({ user, token, onLogout }) {
 
       {/* Zakładki pod-nawigacji dla administratora */}
       {user?.role === 'admin' && (
-        <div className="flex gap-2 bg-page p-1.5 rounded-xl border border-line mb-6">
-          <button
-            type="button"
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${currentTab === 'tickets'
-                ? 'bg-[var(--primary)] text-[var(--text-white)] shadow-sm'
-                : 'text-ink hover:bg-line'
+        <div className="flex flex-col sm:flex-row gap-2 bg-page p-1.5 rounded-xl border border-line mb-6">
+          {[
+            {
+              id: 'tickets',
+              label: `Zgłoszenia serwisowe (${total !== undefined ? total : tickets.length})`,
+              icon: (
+                <>
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                </>
+              )
+            },
+            {
+              id: 'users',
+              label: 'Zarządzanie użytkownikami (Admin)',
+              icon: (
+                <>
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                </>
+              )
+            }
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={`flex items-center justify-center sm:justify-start gap-2 px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+                currentTab === tab.id ? 'bg-primary text-inverse shadow-sm' : 'text-ink hover:bg-line'
               }`}
-            onClick={() => setDashboardTab('tickets')}
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="16" y1="13" x2="8" y2="13" />
-              <line x1="16" y1="17" x2="8" y2="17" />
-            </svg>
-            Zgłoszenia serwisowe ({total !== undefined ? total : tickets.length})
-          </button>
-          <button
-            type="button"
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all cursor-pointer ${currentTab === 'users'
-                ? 'bg-[var(--primary)] text-[var(--text-white)] shadow-sm'
-                : 'text-ink hover:bg-line'
-              }`}
-            onClick={() => setDashboardTab('users')}
-          >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-              <circle cx="9" cy="7" r="4" />
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-            </svg>
-            Zarządzanie użytkownikami (Admin)
-          </button>
+              onClick={() => setDashboardTab(tab.id)}
+            >
+              <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                {tab.icon}
+              </svg>
+              <span>{tab.label}</span>
+            </button>
+          ))}
         </div>
       )}
 
@@ -648,12 +511,11 @@ export default function Dashboard({ user, token, onLogout }) {
           {/* Pasek kontrolny filtrów i stronicowania nad listą */}
           <div className="flex flex-wrap gap-3 items-center justify-between mb-4 bg-page p-3 rounded-xl border border-line">
             <div className="flex flex-wrap gap-2.5 items-center flex-1">
-              {/* Wyszukiwarka */}
               <form
                 className="flex items-center gap-1.5 flex-1 min-w-[220px] max-w-sm"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  handleSearchSubmit();
+                  applyFilters({ search: searchQuery });
                 }}
               >
                 <div className="relative flex-1">
@@ -667,7 +529,7 @@ export default function Dashboard({ user, token, onLogout }) {
                   {searchQuery && (
                     <button
                       type="button"
-                      onClick={handleClearSearch}
+                      onClick={() => applyFilters({ search: '' })}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink text-xs font-bold p-0.5 cursor-pointer"
                       title="Wyczyść szukanie"
                     >
@@ -684,10 +546,9 @@ export default function Dashboard({ user, token, onLogout }) {
                 </button>
               </form>
 
-              {/* Filtr statusu */}
               <select
                 value={statusFilter}
-                onChange={handleStatusChange}
+                onChange={(e) => applyFilters({ status: e.target.value })}
                 className="app-select py-1.5 text-xs w-auto cursor-pointer"
                 title="Filtruj według statusu zgłoszenia"
               >
@@ -698,11 +559,10 @@ export default function Dashboard({ user, token, onLogout }) {
                 <option value="zakończone">Zakończone</option>
               </select>
 
-              {/* Filtr pracownika */}
               {(user?.role === 'admin' || user?.role === 'serwisant') && (
                 <select
                   value={workerFilter}
-                  onChange={handleWorkerChange}
+                  onChange={(e) => applyFilters({ worker: e.target.value })}
                   className="app-select py-1.5 text-xs w-auto min-w-[180px] cursor-pointer"
                   title="Filtruj według przypisanego pracownika"
                 >
@@ -716,10 +576,9 @@ export default function Dashboard({ user, token, onLogout }) {
                 </select>
               )}
 
-              {/* Sortowanie po dacie */}
               <select
                 value={sortOrder}
-                onChange={handleSortChange}
+                onChange={(e) => applyFilters({ sort: e.target.value })}
                 className="app-select py-1.5 text-xs w-auto cursor-pointer"
                 title="Kolejność sortowania po dacie"
               >
@@ -739,11 +598,10 @@ export default function Dashboard({ user, token, onLogout }) {
               )}
             </div>
 
-            {/* Stronicowanie w pasku nad listą */}
             <div className="flex items-center gap-2 text-xs text-ink ml-auto shrink-0">
               <span className="text-muted text-[0.75rem]">
                 Strona <strong>{page}</strong> z <strong>{totalPages || 1}</strong>
-                <span className="hidden sm:inline text-muted/70 ml-1">({total} wyników)</span>
+                <span className="hidden sm:inline text-muted ml-1">({total} wyników)</span>
               </span>
               <div className="flex items-center gap-1">
                 <button
@@ -768,7 +626,7 @@ export default function Dashboard({ user, token, onLogout }) {
             </div>
           </div>
 
-          {/* Tabela zgłoszeń (Widok DESKTOP: 6 kolumn: Nr, Klient, Produkt, Przypisany, Status, Data) */}
+          {/* Tabela zgłoszeń (Widok DESKTOP: 6 kolumn) */}
           <div className="hidden md:block overflow-x-auto bg-card rounded-xl shadow-sm border border-line">
             <table>
               <thead>
@@ -790,7 +648,7 @@ export default function Dashboard({ user, token, onLogout }) {
                       <TicketEmptyState
                         hasActiveFilters={hasActiveFilters}
                         onClearFilters={handleClearAllFilters}
-                        defaultMessage={getEmptyMessage()}
+                        defaultMessage={emptyMessage}
                       />
                     </td>
                   </tr>
@@ -803,9 +661,7 @@ export default function Dashboard({ user, token, onLogout }) {
                       title="Kliknij, aby otworzyć panel boczny ze szczegółami"
                     >
                       <td className="text-center font-bold text-ink">
-                        <span className="font-bold text-ink hover:text-[var(--primary)]">
-                          #{t.id}
-                        </span>
+                        <span className="font-bold text-ink hover:text-primary">#{t.id}</span>
                       </td>
                       <td>
                         <div className="font-semibold text-ink">
@@ -850,45 +706,30 @@ export default function Dashboard({ user, token, onLogout }) {
                         </div>
                       </td>
                       <td onClick={(e) => e.stopPropagation()}>
-                        <StatusControl
-                          ticket={t}
-                          user={user}
-                          onOpenAssignModal={(ticketToAssign) => setAssignModalTicket(ticketToAssign)}
-                          onOpenRepairModal={(ticketToRepair) => setRepairModalTicket(ticketToRepair)}
-                          onOpenShipModal={(ticketToShip) => setShipModalTicket(ticketToShip)}
-                          onOpenRollbackModal={(ticketToRollback, actions) =>
-                            setRollbackModalData({ ticket: ticketToRollback, actions })
-                          }
-                        />
+                        <StatusControl ticket={t} user={user} {...modalHandlers} />
                       </td>
                       <td>
                         <div className="text-xs text-ink font-medium whitespace-nowrap">
                           {t.created_at ? new Date(t.created_at).toLocaleDateString('pl-PL') : '-'}
                         </div>
                         <div className="text-[0.7rem] text-muted">
-                          {t.created_at ? new Date(t.created_at).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : ''}
+                          {t.created_at
+                            ? new Date(t.created_at).toLocaleTimeString('pl-PL', {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })
+                            : ''}
                         </div>
                         {user?.role === 'admin' && (
-                          <div className="mt-2 flex items-center gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              type="button"
-                              disabled={deletingId === t.id}
-                              onClick={() => handleDeleteTicket(t.id)}
-                              title={`Usuń zgłoszenie #${t.id}`}
-                              className="btn-danger text-xs py-1 px-2 inline-flex items-center gap-1"
-                            >
-                              {deletingId === t.id ? (
-                                '...'
-                              ) : (
-                                <>
-                                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                                    <polyline points="3 6 5 6 21 6" />
-                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                  </svg>
-                                  Usuń
-                                </>
-                              )}
-                            </button>
+                          <div
+                            className="mt-2 flex items-center gap-1.5 flex-wrap"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <DeleteTicketButton
+                              id={t.id}
+                              deletingId={deletingId}
+                              onDelete={handleDeleteTicket}
+                            />
                           </div>
                         )}
                       </td>
@@ -899,7 +740,7 @@ export default function Dashboard({ user, token, onLogout }) {
             </table>
           </div>
 
-          {/* Karty zgłoszeń (Widok MOBILE / TELEFON: jedna karta pod drugą) */}
+          {/* Karty zgłoszeń (Widok MOBILE / TELEFON) */}
           <div className="block md:hidden space-y-3">
             {loading ? (
               <CardsSkeleton count={3} />
@@ -908,7 +749,7 @@ export default function Dashboard({ user, token, onLogout }) {
                 <TicketEmptyState
                   hasActiveFilters={hasActiveFilters}
                   onClearFilters={handleClearAllFilters}
-                  defaultMessage={getEmptyMessage()}
+                  defaultMessage={emptyMessage}
                 />
               </div>
             ) : (
@@ -919,12 +760,9 @@ export default function Dashboard({ user, token, onLogout }) {
                   className="bg-card rounded-xl border border-line p-4 shadow-xs space-y-3 hover:border-primary/50 transition-colors cursor-pointer"
                   title="Kliknij, aby otworzyć panel boczny ze szczegółami"
                 >
-                  {/* Górny wiersz karty: ID, Data i Status */}
                   <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-line">
                     <div>
-                      <span className="text-base font-bold text-ink">
-                        #{t.id}
-                      </span>
+                      <span className="text-base font-bold text-ink">#{t.id}</span>
                       <div className="text-[0.7rem] text-muted mt-0.5">
                         {t.created_at ? new Date(t.created_at).toLocaleString('pl-PL') : '-'}
                       </div>
@@ -932,42 +770,44 @@ export default function Dashboard({ user, token, onLogout }) {
                     <StatusBadge status={t.status} />
                   </div>
 
-                  {/* Dane klienta */}
                   <div className="text-xs space-y-0.5">
                     <span className="text-[0.7rem] text-muted uppercase font-semibold block">Klient</span>
                     <div className="font-semibold text-ink text-sm">
                       {t.imie} {t.nazwisko}
                     </div>
                     {t.nazwa_firmy && (
-                      <div className="text-primary-dark font-semibold">
-                        Firma: {t.nazwa_firmy}
-                      </div>
+                      <div className="text-primary-dark font-semibold">Firma: {t.nazwa_firmy}</div>
                     )}
-                    <div className="text-muted">{t.numer_telefonu} &bull; {t.email}</div>
+                    <div className="text-muted">
+                      {t.numer_telefonu} &bull; {t.email}
+                    </div>
                   </div>
 
-                  {/* Produkt i usterka */}
                   <div className="text-xs bg-page p-2.5 rounded-lg border border-line">
-                    <span className="text-[0.7rem] text-muted uppercase font-semibold block mb-0.5">Produkt</span>
+                    <span className="text-[0.7rem] text-muted uppercase font-semibold block mb-0.5">
+                      Produkt
+                    </span>
                     <div className="font-semibold text-primary-dark">
                       {t.przedmiot_zgloszenia || '—'}
                     </div>
                     {t.numer_seryjny && (
-                      <div className="text-ink font-medium mt-0.5">
-                        SN: {t.numer_seryjny}
-                      </div>
+                      <div className="text-ink font-medium mt-0.5">SN: {t.numer_seryjny}</div>
                     )}
                     {t.opis_usterki && (
-                      <div className="text-muted mt-1.5 pt-1.5 border-t border-line/60 ticket-excerpt" title={t.opis_usterki}>
+                      <div
+                        className="text-muted mt-1.5 pt-1.5 border-t border-line/60 ticket-excerpt"
+                        title={t.opis_usterki}
+                      >
                         <span className="font-semibold text-ink">Usterka: </span>
                         {t.opis_usterki}
                       </div>
                     )}
                   </div>
 
-                  {/* Przypisany pracownik */}
                   <div className="text-xs">
-                    <span className="text-[0.7rem] text-muted uppercase font-semibold block mb-1">Przypisany</span>
+                    <span className="text-[0.7rem] text-muted uppercase font-semibold block mb-1">
+                      Przypisany
+                    </span>
                     <div className="flex items-center gap-2">
                       {t.przypisany_pracownik_username ? (
                         <span className="font-semibold text-primary-dark">
@@ -979,45 +819,21 @@ export default function Dashboard({ user, token, onLogout }) {
                     </div>
                   </div>
 
-                  {/* Kontrolki statusu i akcji */}
                   <div className="pt-1" onClick={(e) => e.stopPropagation()}>
-                    <StatusControl
-                      ticket={t}
-                      user={user}
-                      onOpenAssignModal={(ticketToAssign) => setAssignModalTicket(ticketToAssign)}
-                      onOpenRepairModal={(ticketToRepair) => setRepairModalTicket(ticketToRepair)}
-                      onOpenShipModal={(ticketToShip) => setShipModalTicket(ticketToShip)}
-                      onOpenRollbackModal={(ticketToRollback, actions) =>
-                        setRollbackModalData({ ticket: ticketToRollback, actions })
-                      }
-                    />
+                    <StatusControl ticket={t} user={user} {...modalHandlers} />
                   </div>
 
-                  {/* Dolny pasek dla admina - usunięcie zgłoszenia */}
                   {user?.role === 'admin' && (
                     <div
                       className="pt-2 border-t border-line flex items-center justify-end"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <button
-                        type="button"
-                        disabled={deletingId === t.id}
-                        onClick={() => handleDeleteTicket(t.id)}
-                        title={`Usuń zgłoszenie #${t.id}`}
-                        className="btn-danger py-1.5 px-3 text-xs inline-flex items-center gap-1 justify-center"
-                      >
-                        {deletingId === t.id ? (
-                          'Usuwanie...'
-                        ) : (
-                          <>
-                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                              <polyline points="3 6 5 6 21 6" />
-                              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                            </svg>
-                            Usuń
-                          </>
-                        )}
-                      </button>
+                      <DeleteTicketButton
+                        id={t.id}
+                        deletingId={deletingId}
+                        onDelete={handleDeleteTicket}
+                        mobile
+                      />
                     </div>
                   )}
                 </div>
@@ -1025,7 +841,7 @@ export default function Dashboard({ user, token, onLogout }) {
             )}
           </div>
 
-          {/* Paginacja */}
+          {/* Paginacja dolna */}
           <div className="flex flex-wrap justify-between items-center gap-3 mt-4 p-3 bg-page rounded-xl border border-line text-xs text-ink">
             <div>
               <span>
@@ -1063,11 +879,8 @@ export default function Dashboard({ user, token, onLogout }) {
               ticket={detailsDrawerTicket}
               user={user}
               onClose={() => setDetailsDrawerTicket(null)}
-              onOpenAssignModal={(t) => setAssignModalTicket(t)}
-              onOpenRepairModal={(t) => setRepairModalTicket(t)}
-              onOpenShipModal={(t) => setShipModalTicket(t)}
-              onOpenRollbackModal={(t, actions) => setRollbackModalData({ ticket: t, actions })}
-              onOpenTrackingModal={(t) => setTrackingModalTicket(t)}
+              {...modalHandlers}
+              onOpenTrackingModal={setTrackingModalTicket}
             />
           )}
 
@@ -1094,6 +907,7 @@ export default function Dashboard({ user, token, onLogout }) {
             <ShipModal
               key={shipModalTicket.id}
               ticket={shipModalTicket}
+              mode="ship"
               onClose={() => setShipModalTicket(null)}
               onShip={handleShipSubmit}
             />
@@ -1110,8 +924,10 @@ export default function Dashboard({ user, token, onLogout }) {
           )}
 
           {trackingModalTicket && (
-            <TrackingNumberModal
+            <ShipModal
+              key={`edit-${trackingModalTicket.id}`}
               ticket={trackingModalTicket}
+              mode="edit"
               onClose={() => setTrackingModalTicket(null)}
               onSave={handleSaveTrackingNumber}
             />
@@ -1120,7 +936,7 @@ export default function Dashboard({ user, token, onLogout }) {
       )}
 
       {showOwnPasswordModal && (
-        <ChangeOwnPasswordModal
+        <PasswordModal
           onClose={() => setShowOwnPasswordModal(false)}
           showAlert={showAlert}
         />

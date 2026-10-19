@@ -59,16 +59,16 @@ npm run seed
 ```
 *(Skrypt ten aplikuje pełną strukturę tabel `uzytkownicy`, `zgloszenia` oraz `historia_zgloszen` z pliku `schemat.sql`, w tym pola `telefon_stacjonarny`, `numer_listu`, `data_wyslania`, `opis_naprawy` itp.).*
 
-### Krok 3a: Generowanie danych testowych (200 zgłoszeń)
-Aby wypełnić bazę 200 zgłoszeniami serwisowymi (z różnymi statusami, danymi klientów, usterkami, opisami napraw, listami przewozowymi i powiązaną historią zdarzeń), uruchom:
+### Krok 3a: Konfiguracja środowiska testowego (konta + 200 nowych zgłoszeń)
+Aby utworzyć 4 konta testowe (`admin`, `pracownik`, `serwisant`, `magazynier` z hasłem `admin123`) oraz wypełnić bazę 200 zgłoszeniami serwisowymi ze statusem `"nowe"`, uruchom lokalny skrypt (ignorowany przez Git):
 ```bash
-npm run seed:zgloszenia
+npm run config:testowy
 # lub bezpośrednio:
-node seed-zgloszenia.js
+node config-testowy.js
 ```
 Opcjonalnie:
-- `node seed-zgloszenia.js 50` – wygenerowanie innej liczby zgłoszeń (np. 50)
-- `node seed-zgloszenia.js --clean` – wyczyszczenie tabel `zgloszenia` i `historia_zgloszen` przed wygenerowaniem nowych rekordów
+- `node config-testowy.js 50` – wygenerowanie innej liczby zgłoszeń (np. 50)
+- `node config-testowy.js --clean` – wyczyszczenie tabel `zgloszenia` i `historia_zgloszen` przed wygenerowaniem nowych rekordów
 
 
 ### Krok 4: Utworzenie pierwszych kont użytkowników

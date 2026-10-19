@@ -69,7 +69,8 @@
 }
 
 @media (max-width: 640px) {
-  .app-card {
+  .app-card,
+  .form-section {
     padding: var(--space-16);
     border-radius: 12px;
   }

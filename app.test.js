@@ -579,14 +579,24 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(response.body.error, 'Możesz oznaczyć jako naprawione tylko zlecenie przypisane do Ciebie.');
         });
 
-        it('Serwisant może oznaczyć jako naprawione przypisane zlecenie w_realizacji (200)', async () => {
-            setMockTicket({ status: 'w_realizacji', przypisany_pracownik_id: 1 });
+        it('Serwisant może oznaczyć jako naprawione zlecenie w_realizacji przypisane do siebie (200)', async () => {
+            setMockTicket({ status: 'w_realizacji', przypisany_pracownik_id: 50 });
             const response = await request(app)
                 .patch('/api/zgloszenia/1/naprawione')
                 .set('Authorization', `Bearer ${serwisantToken}`)
                 .send({ opis_naprawy: 'Serwisant naprawił płytę główną.' });
             assert.strictEqual(response.status, 200);
             assert.strictEqual(response.body.status, 'do_wysylki');
+        });
+
+        it('Serwisant NIE może oznaczyć jako naprawione zlecenia przypisanego do innego pracownika (403)', async () => {
+            setMockTicket({ status: 'w_realizacji', przypisany_pracownik_id: 1 });
+            const response = await request(app)
+                .patch('/api/zgloszenia/1/naprawione')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ opis_naprawy: 'Próba opisania cudzego zlecenia przez serwisanta' });
+            assert.strictEqual(response.status, 403);
+            assert.strictEqual(response.body.error, 'Serwisant nie może opisać zlecenia przypisanego do innego pracownika.');
         });
 
         it('Serwisant oznaczając nieprzypisane zlecenie jako naprawione zostaje do niego automatycznie przypisany (200)', async () => {
@@ -1075,11 +1085,12 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(sRealizacjiUnassigned[0].akcja, 'naprawione');
             assert.strictEqual(sRealizacjiUnassigned[0].na_status, 'do_wysylki');
 
-            // Dla zlecenia przypisanego serwisant również widzi akcję 'naprawione'
-            const sRealizacji = wyznacz(serwisant, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 5 });
-            assert.strictEqual(sRealizacji.length, 1);
-            assert.strictEqual(sRealizacji[0].akcja, 'naprawione');
-            assert.strictEqual(sRealizacji[0].na_status, 'do_wysylki');
+            // Dla zlecenia przypisanego do siebie serwisant widzi akcję 'naprawione', ale dla przypisanego komuś innemu - brak akcji
+            const sRealizacjiOwn = wyznacz(serwisant, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 20 });
+            assert.strictEqual(sRealizacjiOwn.length, 1);
+            assert.strictEqual(sRealizacjiOwn[0].akcja, 'naprawione');
+            assert.strictEqual(sRealizacjiOwn[0].na_status, 'do_wysylki');
+            assert.deepStrictEqual(wyznacz(serwisant, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 5 }), []);
 
             assert.deepStrictEqual(wyznacz(serwisant, { id: 1, status: 'do_wysylki', przypisany_pracownik_id: 5 }), []);
             assert.deepStrictEqual(wyznacz(serwisant, { id: 1, status: 'zakończone', przypisany_pracownik_id: 5 }), []);
@@ -1506,6 +1517,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
         });
 
         it('GET /api/zgloszenia/:id/historia zwraca listę wpisów historii zgłoszenia', async () => {
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
             const resp = await request(app)
                 .get('/api/zgloszenia/1/historia')
                 .set('Authorization', `Bearer ${pracownikToken}`);
@@ -1516,6 +1528,21 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(resp.body[0].akcja, 'utworzenie');
             assert.strictEqual(resp.body[1].akcja, 'przypisanie');
             assert.strictEqual(resp.body[1].username, 'admin_testowy');
+        });
+
+        it('GET /api/zgloszenia/:id/historia blokuje dostęp (403) pracownikowi do cudzego zlecenia i magazynierowi do zlecenia w realizacji', async () => {
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 20 });
+            const respPracownik = await request(app)
+                .get('/api/zgloszenia/1/historia')
+                .set('Authorization', `Bearer ${pracownikToken}`);
+            assert.strictEqual(respPracownik.status, 403);
+            assert.strictEqual(respPracownik.body.error, 'Brak uprawnień do przeglądania tego zgłoszenia.');
+
+            const respMagazynier = await request(app)
+                .get('/api/zgloszenia/1/historia')
+                .set('Authorization', `Bearer ${magazynierToken}`);
+            assert.strictEqual(respMagazynier.status, 403);
+            assert.strictEqual(respMagazynier.body.error, 'Brak uprawnień do przeglądania tego zgłoszenia.');
         });
     });
 

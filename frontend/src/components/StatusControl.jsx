@@ -5,6 +5,8 @@ import { getTicketActionState } from '../constants';
 export default function StatusControl({
   ticket,
   user,
+  hideBadge = false,
+  barLayout = false,
   onOpenAssignModal,
   onOpenRepairModal,
   onOpenShipModal,
@@ -19,55 +21,53 @@ export default function StatusControl({
     hasForwardButton
   } = getTicketActionState(ticket, user);
 
+  const forwardBtn = isAssignAction ? (
+    <button
+      type="button"
+      onClick={() => onOpenAssignModal?.(ticket)}
+      title="Przypisz zlecenie pracownikowi, aby rozpocząć realizację"
+      className="btn-primary py-1 px-2.5 text-xs inline-flex items-center gap-1"
+    >
+      <span>👤</span>
+      <span>Przypisz</span>
+    </button>
+  ) : isRepairAction ? (
+    <button
+      type="button"
+      onClick={() => onOpenRepairModal?.(ticket)}
+      title="Opisz wykonane prace i przekaż do magazynu jako Do wysyłki"
+      className="btn-primary py-1 px-2.5 text-xs inline-flex items-center gap-1"
+    >
+      <span>🔧</span>
+      <span>Oznacz jako naprawione</span>
+    </button>
+  ) : isShipAction ? (
+    <button
+      type="button"
+      onClick={() => onOpenShipModal?.(ticket)}
+      title="Wprowadź numer listu przewozowego i oznacz zlecenie jako wysłane"
+      className="btn-primary py-1 px-2.5 text-xs inline-flex items-center gap-1"
+    >
+      <span>📦</span>
+      <span>Oznacz jako wysłane</span>
+    </button>
+  ) : null;
+
   return (
-    <div className="flex flex-col gap-2 items-start">
-      <StatusBadge status={curStatus} />
+    <div className={barLayout ? 'w-full' : 'flex flex-col gap-2 items-start'}>
+      {!hideBadge && <StatusBadge status={curStatus} />}
 
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {/* Jedna główna akcja kroku w jednym miejscu */}
-        {isAssignAction && (
-          <button
-            type="button"
-            onClick={() => onOpenAssignModal(ticket)}
-            title="Przypisz zlecenie pracownikowi, aby rozpocząć realizację"
-            className="btn-primary py-1 px-2.5 text-xs inline-flex items-center gap-1"
-          >
-            <span>👤</span>
-            <span>Przypisz</span>
-          </button>
-        )}
+      <div
+        className={`flex items-center gap-1.5 flex-wrap ${
+          barLayout ? 'justify-between w-full gap-3' : ''
+        }`}
+      >
+        {forwardBtn}
 
-        {isRepairAction && (
-          <button
-            type="button"
-            onClick={() => onOpenRepairModal(ticket)}
-            title="Opisz wykonane prace i przekaż do magazynu jako Do wysyłki"
-            className="btn-primary py-1 px-2.5 text-xs inline-flex items-center gap-1"
-          >
-            <span>🔧</span>
-            <span>Oznacz jako naprawione</span>
-          </button>
-        )}
-
-        {isShipAction && (
-          <button
-            type="button"
-            onClick={() => onOpenShipModal(ticket)}
-            title="Wprowadź numer listu przewozowego i oznacz zlecenie jako wysłane"
-            className="btn-primary py-1 px-2.5 text-xs inline-flex items-center gap-1"
-          >
-            <span>📦</span>
-            <span>Oznacz jako wysłane</span>
-          </button>
-        )}
-
-        {/* Informacje, gdy zalogowana rola nie wykonuje kroku w przód */}
         {!hasForwardButton && (
           <>
             {curStatus === 'nowe' && (
-              <span className="text-xs text-muted italic">
-                Oczekuje na przypisanie
-              </span>
+              <span className="text-xs text-muted italic">Oczekuje na przypisanie</span>
             )}
             {curStatus === 'w_realizacji' && (
               <span className="text-xs text-muted italic">
@@ -89,8 +89,7 @@ export default function StatusControl({
           </>
         )}
 
-        {/* U admina osobno przycisk „Cofnij status” (z potwierdzeniem w dedykowanym modalu) */}
-        {user?.role === 'admin' && rollbackActions.length > 0 && (
+        {user?.role === 'admin' && rollbackActions.length > 0 && onOpenRollbackModal && (
           <button
             type="button"
             onClick={() => onOpenRollbackModal(ticket, rollbackActions)}
@@ -105,4 +104,3 @@ export default function StatusControl({
     </div>
   );
 }
-
