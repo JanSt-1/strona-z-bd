@@ -3,32 +3,192 @@ import { ticketApi, workerApi } from '../api';
 import Alert from '../components/Alert';
 import StatusControl from '../components/StatusControl';
 import RepairModal from '../components/RepairModal';
+import AssignWorkerModal from '../components/AssignWorkerModal';
+import ShipModal from '../components/ShipModal';
+import RollbackStatusModal from '../components/RollbackStatusModal';
 import TrackingNumberModal from '../components/TrackingNumberModal';
 import ChangeOwnPasswordModal from '../components/ChangeOwnPasswordModal';
 import AdminUsersPanel from '../components/AdminUsersPanel';
-import TicketDetailsModal from '../components/TicketDetailsModal';
+import TicketDetailsDrawer from '../components/TicketDetailsDrawer';
 import StatusBadge from '../components/StatusBadge';
 
+function readFiltersFromUrl() {
+  const sp = new URLSearchParams(window.location.search);
+  let status = sp.get('status') || '';
+  if (status === 'zakonczone') status = 'zakończone';
+
+  const worker = sp.get('pracownik') || sp.get('worker') || '';
+  const search = sp.get('szukaj') || sp.get('search') || sp.get('q') || '';
+  const pageRaw = sp.get('strona') || sp.get('page') || '1';
+  const page = Math.max(1, parseInt(pageRaw, 10) || 1);
+  const sort = sp.get('sort') === 'asc' ? 'asc' : 'desc';
+
+  return { status, worker, search, page, sort };
+}
+
+function syncUrlWithFilters({ status, worker, search, page, sort }, replace = false) {
+  const url = new URL(window.location.href);
+  const sp = url.searchParams;
+
+  if (status) {
+    sp.set('status', status);
+  } else {
+    sp.delete('status');
+  }
+
+  if (worker) {
+    sp.set('pracownik', worker);
+    sp.delete('worker');
+  } else {
+    sp.delete('pracownik');
+    sp.delete('worker');
+  }
+
+  if (search && search.trim()) {
+    sp.set('szukaj', search.trim());
+    sp.delete('search');
+    sp.delete('q');
+  } else {
+    sp.delete('szukaj');
+    sp.delete('search');
+    sp.delete('q');
+  }
+
+  if (page && page > 1) {
+    sp.set('strona', page.toString());
+    sp.delete('page');
+  } else {
+    sp.delete('strona');
+    sp.delete('page');
+  }
+
+  if (sort && sort === 'asc') {
+    sp.set('sort', 'asc');
+  } else {
+    sp.delete('sort');
+  }
+
+  const query = sp.toString();
+  const targetUrl = url.pathname + (query ? `?${query}` : '');
+
+  if (window.location.pathname + window.location.search !== targetUrl) {
+    if (replace) {
+      window.history.replaceState({}, '', targetUrl);
+    } else {
+      window.history.pushState({}, '', targetUrl);
+    }
+  }
+}
+
+const Bar = ({ w, h = 'h-3', tone = 'bg-page', round = 'rounded' }) => (
+  <div className={`${h} ${w} ${tone} ${round}`} />
+);
+
+const LoadingNote = () => (
+  <span className="inline-flex items-center gap-2 text-xs font-semibold text-primary">
+    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4">
+      <circle className="opacity-25" cx="12" cy="12" r="10" />
+      <path className="opacity-75" d="M4 12a8 8 0 018-8" strokeLinecap="round" />
+    </svg>
+    Ładowanie zgłoszeń...
+  </span>
+);
+
+const SKELETON_COLUMNS = [
+  ['w-9', null],
+  ['w-32', 'w-40'],
+  ['w-36', 'w-48'],
+  ['w-28', 'w-20'],
+  ['w-24', null],
+  ['w-20', 'w-16']
+];
+
+function TableSkeleton({ rows = 5 }) {
+  return (
+    <>
+      <tr>
+        <td colSpan={6} className="py-3 text-center border-b border-line">
+          <LoadingNote />
+        </td>
+      </tr>
+      {Array.from({ length: rows }, (_, i) => (
+        <tr key={i} className="animate-pulse">
+          {SKELETON_COLUMNS.map(([a, b], c) => (
+            <td key={c} className="py-4 px-3 space-y-2">
+              <Bar w={a} h="h-4" tone="bg-line" round={c === 4 ? 'rounded-full' : 'rounded'} />
+              {b && <Bar w={b} />}
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+}
+
+function CardsSkeleton({ count = 3 }) {
+  return (
+    <div className="space-y-3">
+      <div className="text-center py-2">
+        <LoadingNote />
+      </div>
+      {Array.from({ length: count }, (_, i) => (
+        <div key={i} className="bg-card rounded-xl border border-line p-4 space-y-3 animate-pulse">
+          <div className="flex justify-between items-center">
+            <Bar w="w-12" h="h-4" tone="bg-line" />
+            <Bar w="w-20" h="h-6" tone="bg-line" round="rounded-full" />
+          </div>
+          <Bar w="w-36" h="h-4" tone="bg-line" />
+          <Bar w="w-48" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TicketEmptyState({ hasActiveFilters, onClearFilters, defaultMessage }) {
+  return (
+    <div className="flex flex-col items-center max-w-md mx-auto text-center py-6 px-4 gap-2">
+      {hasActiveFilters ? (
+        <>
+          <h3 className="text-base font-bold text-ink">Brak zgłoszeń dla wybranych filtrów</h3>
+          <p className="text-xs text-muted">
+            Żadne zgłoszenie nie spełnia wybranych kryteriów wyszukiwania ani filtrów.
+          </p>
+          <button type="button" className="btn-secondary py-1.5 px-4 text-xs mt-1" onClick={onClearFilters}>
+            Wyczyść filtry
+          </button>
+        </>
+      ) : (
+        <p className="text-sm font-medium text-muted">{defaultMessage}</p>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard({ user, token, onLogout }) {
+  const initialFilters = readFiltersFromUrl();
   const [tickets, setTickets] = useState([]);
   const [workers, setWorkers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState(null);
   const [alert, setAlert] = useState(null);
+  const [assignModalTicket, setAssignModalTicket] = useState(null);
   const [repairModalTicket, setRepairModalTicket] = useState(null);
+  const [shipModalTicket, setShipModalTicket] = useState(null);
+  const [rollbackModalData, setRollbackModalData] = useState(null);
   const [trackingModalTicket, setTrackingModalTicket] = useState(null);
-  const [detailsModalTicket, setDetailsModalTicket] = useState(null);
+  const [detailsDrawerTicket, setDetailsDrawerTicket] = useState(null);
   const [dashboardTab, setDashboardTab] = useState('tickets'); // 'tickets' | 'users'
   const [showOwnPasswordModal, setShowOwnPasswordModal] = useState(false);
 
-  // Filtry i paginacja
-  const [page, setPage] = useState(1);
+  // Filtry i paginacja zsynchronizowane z adresem URL
+  const [page, setPage] = useState(initialFilters.page);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [workerFilter, setWorkerFilter] = useState('');
-  const [sortOrder, setSortOrder] = useState('desc');
+  const [searchQuery, setSearchQuery] = useState(initialFilters.search);
+  const [statusFilter, setStatusFilter] = useState(initialFilters.status);
+  const [workerFilter, setWorkerFilter] = useState(initialFilters.worker);
+  const [sortOrder, setSortOrder] = useState(initialFilters.sort);
 
   function showAlert(message, type = 'success') {
     setAlert({ message, type });
@@ -49,7 +209,9 @@ export default function Dashboard({ user, token, onLogout }) {
 
   const fetchTickets = useCallback(
     async (overrides = {}) => {
-      setLoading(true);
+      if (!overrides.initial) {
+        setLoading(true);
+      }
       try {
         const currentPage = overrides.page !== undefined ? overrides.page : page;
         const currentSearch = overrides.search !== undefined ? overrides.search : searchQuery;
@@ -73,8 +235,19 @@ export default function Dashboard({ user, token, onLogout }) {
 
         if (data && typeof data === 'object' && !Array.isArray(data)) {
           setTotal(typeof data.total === 'number' ? data.total : list.length);
-          setPage(data.page || currentPage || 1);
+          const resolvedPage = data.page || currentPage || 1;
+          setPage(resolvedPage);
           setTotalPages(data.totalPages || 1);
+          syncUrlWithFilters(
+            {
+              status: currentStatus,
+              worker: currentWorker,
+              search: currentSearch,
+              page: resolvedPage,
+              sort: currentSort
+            },
+            true
+          );
         } else {
           setTotal(list.length);
           setTotalPages(1);
@@ -89,19 +262,166 @@ export default function Dashboard({ user, token, onLogout }) {
   );
 
   useEffect(() => {
-    fetchTickets();
+    fetchTickets({ initial: true });
     fetchWorkers();
   }, [fetchTickets, fetchWorkers, token]);
 
+  useEffect(() => {
+    function handlePopState() {
+      const fromUrl = readFiltersFromUrl();
+      setPage(fromUrl.page);
+      setSearchQuery(fromUrl.search);
+      setStatusFilter(fromUrl.status);
+      setWorkerFilter(fromUrl.worker);
+      setSortOrder(fromUrl.sort);
+      fetchTickets({
+        page: fromUrl.page,
+        search: fromUrl.search,
+        status: fromUrl.status,
+        worker: fromUrl.worker,
+        sort: fromUrl.sort
+      });
+    }
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [fetchTickets]);
+
+  const handleSearchSubmit = useCallback(() => {
+    setPage(1);
+    syncUrlWithFilters({
+      status: statusFilter,
+      worker: workerFilter,
+      search: searchQuery,
+      page: 1,
+      sort: sortOrder
+    });
+    fetchTickets({ page: 1, search: searchQuery });
+  }, [fetchTickets, searchQuery, sortOrder, statusFilter, workerFilter]);
+
+  const handleClearSearch = useCallback(() => {
+    setSearchQuery('');
+    setPage(1);
+    syncUrlWithFilters({
+      status: statusFilter,
+      worker: workerFilter,
+      search: '',
+      page: 1,
+      sort: sortOrder
+    });
+    fetchTickets({ page: 1, search: '' });
+  }, [fetchTickets, sortOrder, statusFilter, workerFilter]);
+
+  const handleStatusChange = useCallback(
+    (e) => {
+      const val = e.target.value;
+      setStatusFilter(val);
+      setPage(1);
+      syncUrlWithFilters({
+        status: val,
+        worker: workerFilter,
+        search: searchQuery,
+        page: 1,
+        sort: sortOrder
+      });
+      fetchTickets({ page: 1, status: val });
+    },
+    [fetchTickets, searchQuery, sortOrder, workerFilter]
+  );
+
+  const handleWorkerChange = useCallback(
+    (e) => {
+      const val = e.target.value;
+      setWorkerFilter(val);
+      setPage(1);
+      syncUrlWithFilters({
+        status: statusFilter,
+        worker: val,
+        search: searchQuery,
+        page: 1,
+        sort: sortOrder
+      });
+      fetchTickets({ page: 1, worker: val });
+    },
+    [fetchTickets, searchQuery, sortOrder, statusFilter]
+  );
+
+  const handleSortChange = useCallback(
+    (e) => {
+      const val = e.target.value;
+      setSortOrder(val);
+      setPage(1);
+      syncUrlWithFilters({
+        status: statusFilter,
+        worker: workerFilter,
+        search: searchQuery,
+        page: 1,
+        sort: val
+      });
+      fetchTickets({ page: 1, sort: val });
+    },
+    [fetchTickets, searchQuery, statusFilter, workerFilter]
+  );
+
+  const handleClearAllFilters = useCallback(() => {
+    setSearchQuery('');
+    setStatusFilter('');
+    setWorkerFilter('');
+    setSortOrder('desc');
+    setPage(1);
+    syncUrlWithFilters({
+      status: '',
+      worker: '',
+      search: '',
+      page: 1,
+      sort: 'desc'
+    });
+    fetchTickets({ page: 1, search: '', status: '', worker: '', sort: 'desc' });
+  }, [fetchTickets]);
+
+  const handlePageChange = useCallback(
+    (newPage) => {
+      if (newPage < 1 || (totalPages && newPage > totalPages) || newPage === page) return;
+      setPage(newPage);
+      syncUrlWithFilters({
+        status: statusFilter,
+        worker: workerFilter,
+        search: searchQuery,
+        page: newPage,
+        sort: sortOrder
+      });
+      fetchTickets({ page: newPage });
+    },
+    [fetchTickets, page, searchQuery, sortOrder, statusFilter, totalPages, workerFilter]
+  );
+
+  async function refreshDrawerTicket(ticketId) {
+    if (!ticketId) return;
+    try {
+      const updated = await ticketApi.getTicketById(ticketId);
+      if (updated) {
+        setDetailsDrawerTicket(updated);
+      }
+    } catch (err) {
+      console.error('Błąd odświeżania szczegółów w panelu:', err);
+    }
+  }
+
   async function handleAssignWorker(ticketId, pracownikId) {
     try {
-      const data = await ticketApi.assignWorker(ticketId, pracownikId);
+      const assignedId = pracownikId === '' || pracownikId === null ? null : Number(pracownikId);
+      const data = await ticketApi.assignWorker(ticketId, assignedId);
       if (!data) return;
 
       showAlert(data.message, 'success');
+      setAssignModalTicket(null);
       fetchTickets();
+      if (detailsDrawerTicket?.id === ticketId) {
+        refreshDrawerTicket(ticketId);
+      }
     } catch (err) {
       showAlert(err.message, 'error');
+      throw err;
     }
   }
 
@@ -116,6 +436,9 @@ export default function Dashboard({ user, token, onLogout }) {
       );
       setRepairModalTicket(null);
       fetchTickets();
+      if (detailsDrawerTicket?.id === ticketId) {
+        refreshDrawerTicket(ticketId);
+      }
     } catch (err) {
       showAlert(err.message, 'error');
       fetchTickets();
@@ -123,17 +446,40 @@ export default function Dashboard({ user, token, onLogout }) {
     }
   }
 
-  async function handleUpdateStatus(id, newStatus, extraData = {}) {
+  async function handleShipSubmit(ticketId, numerListu) {
     try {
-      const data = await ticketApi.updateStatus(id, newStatus, extraData);
+      const data = await ticketApi.updateStatus(ticketId, 'zakończone', { numer_listu: numerListu });
       if (!data) return;
 
-      showAlert(`Zgłoszenie #${id}: zmieniono status na "${newStatus}".`, 'success');
+      showAlert(`Zgłoszenie #${ticketId} zostało oznaczone jako wysłane.`, 'success');
+      setShipModalTicket(null);
       fetchTickets();
+      if (detailsDrawerTicket?.id === ticketId) {
+        refreshDrawerTicket(ticketId);
+      }
     } catch (err) {
       showAlert(err.message, 'error');
+      throw err;
     }
   }
+
+  async function handleRollbackSubmit(ticketId, targetStatus) {
+    try {
+      const data = await ticketApi.updateStatus(ticketId, targetStatus);
+      if (!data) return;
+
+      showAlert(`Status zgłoszenia #${ticketId} został cofnięty do "${targetStatus}".`, 'success');
+      setRollbackModalData(null);
+      fetchTickets();
+      if (detailsDrawerTicket?.id === ticketId) {
+        refreshDrawerTicket(ticketId);
+      }
+    } catch (err) {
+      showAlert(err.message, 'error');
+      throw err;
+    }
+  }
+
 
   async function handleSaveTrackingNumber(id, numerListu) {
     const targetTicket = tickets.find((t) => t.id === id);
@@ -147,6 +493,9 @@ export default function Dashboard({ user, token, onLogout }) {
         'success'
       );
       fetchTickets();
+      if (detailsDrawerTicket?.id === id) {
+        refreshDrawerTicket(id);
+      }
     } catch (err) {
       showAlert(err.message, 'error');
     }
@@ -167,6 +516,9 @@ export default function Dashboard({ user, token, onLogout }) {
 
       showAlert(`Zgłoszenie #${id} zostało pomyślnie usunięte.`, 'success');
       setTickets((prev) => prev.filter((t) => t.id !== id));
+      if (detailsDrawerTicket?.id === id) {
+        setDetailsDrawerTicket(null);
+      }
     } catch (err) {
       showAlert(err.message, 'error');
     } finally {
@@ -183,6 +535,14 @@ export default function Dashboard({ user, token, onLogout }) {
     }
     return 'Brak zgłoszeń w bazie danych.';
   };
+
+  const hasActiveFilters = Boolean(
+    searchQuery.trim() ||
+    statusFilter ||
+    workerFilter ||
+    sortOrder !== 'desc' ||
+    page > 1
+  );
 
   const currentTab = user?.role === 'admin' ? dashboardTab : 'tickets';
 
@@ -285,24 +645,36 @@ export default function Dashboard({ user, token, onLogout }) {
         <AdminUsersPanel currentUser={user} showAlert={showAlert} />
       ) : (
         <>
-          {/* Pasek kontrolny filtrów */}
+          {/* Pasek kontrolny filtrów i stronicowania nad listą */}
           <div className="flex flex-wrap gap-3 items-center justify-between mb-4 bg-page p-3 rounded-xl border border-line">
             <div className="flex flex-wrap gap-2.5 items-center flex-1">
+              {/* Wyszukiwarka */}
               <form
                 className="flex items-center gap-1.5 flex-1 min-w-[220px] max-w-sm"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  setPage(1);
-                  fetchTickets({ page: 1, search: searchQuery });
+                  handleSearchSubmit();
                 }}
               >
-                <input
-                  type="text"
-                  placeholder="Szukaj w zgłoszeniach..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="app-input py-1.5 text-xs"
-                />
+                <div className="relative flex-1">
+                  <input
+                    type="text"
+                    placeholder="Szukaj w zgłoszeniach..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="app-input py-1.5 pr-7 text-xs w-full"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={handleClearSearch}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink text-xs font-bold p-0.5 cursor-pointer"
+                      title="Wyczyść szukanie"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
                 <button type="submit" className="btn-secondary py-1.5 px-3 text-xs" title="Szukaj">
                   <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4">
                     <circle cx="11" cy="11" r="8" />
@@ -315,13 +687,9 @@ export default function Dashboard({ user, token, onLogout }) {
               {/* Filtr statusu */}
               <select
                 value={statusFilter}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setStatusFilter(val);
-                  setPage(1);
-                  fetchTickets({ page: 1, status: val });
-                }}
+                onChange={handleStatusChange}
                 className="app-select py-1.5 text-xs w-auto cursor-pointer"
+                title="Filtruj według statusu zgłoszenia"
               >
                 <option value="">Wszystkie statusy</option>
                 {user?.role !== 'magazynier' && <option value="nowe">Nowe</option>}
@@ -334,13 +702,9 @@ export default function Dashboard({ user, token, onLogout }) {
               {(user?.role === 'admin' || user?.role === 'serwisant') && (
                 <select
                   value={workerFilter}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setWorkerFilter(val);
-                    setPage(1);
-                    fetchTickets({ page: 1, worker: val });
-                  }}
-                  className="app-select py-1.5 text-xs w-auto min-w-[190px] cursor-pointer"
+                  onChange={handleWorkerChange}
+                  className="app-select py-1.5 text-xs w-auto min-w-[180px] cursor-pointer"
+                  title="Filtruj według przypisanego pracownika"
                 >
                   <option value="">Wszyscy pracownicy</option>
                   <option value="nieprzypisane">Nieprzypisane</option>
@@ -355,35 +719,52 @@ export default function Dashboard({ user, token, onLogout }) {
               {/* Sortowanie po dacie */}
               <select
                 value={sortOrder}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setSortOrder(val);
-                  setPage(1);
-                  fetchTickets({ page: 1, sort: val });
-                }}
+                onChange={handleSortChange}
                 className="app-select py-1.5 text-xs w-auto cursor-pointer"
+                title="Kolejność sortowania po dacie"
               >
                 <option value="desc">Data: od najnowszych</option>
                 <option value="asc">Data: od najstarszych</option>
               </select>
 
-              {(searchQuery || statusFilter || workerFilter || sortOrder !== 'desc') && (
+              {hasActiveFilters && (
                 <button
                   type="button"
                   className="btn-secondary py-1.5 px-3 text-xs"
-                  onClick={() => {
-                    setSearchQuery('');
-                    setStatusFilter('');
-                    setWorkerFilter('');
-                    setSortOrder('desc');
-                    setPage(1);
-                    fetchTickets({ page: 1, search: '', status: '', worker: '', sort: 'desc' });
-                  }}
-                  title="Zresetuj wszystkie filtry"
+                  onClick={handleClearAllFilters}
+                  title="Zresetuj wszystkie filtry i wyszukiwanie"
                 >
                   Wyczyść filtry
                 </button>
               )}
+            </div>
+
+            {/* Stronicowanie w pasku nad listą */}
+            <div className="flex items-center gap-2 text-xs text-ink ml-auto shrink-0">
+              <span className="text-muted text-[0.75rem]">
+                Strona <strong>{page}</strong> z <strong>{totalPages || 1}</strong>
+                <span className="hidden sm:inline text-muted/70 ml-1">({total} wyników)</span>
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  className="btn-secondary py-1 px-2.5 text-xs disabled:opacity-40"
+                  disabled={page <= 1 || loading}
+                  onClick={() => handlePageChange(page - 1)}
+                  title="Poprzednia strona"
+                >
+                  &laquo;
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary py-1 px-2.5 text-xs disabled:opacity-40"
+                  disabled={page >= totalPages || loading}
+                  onClick={() => handlePageChange(page + 1)}
+                  title="Następna strona"
+                >
+                  &raquo;
+                </button>
+              </div>
             </div>
           </div>
 
@@ -402,29 +783,29 @@ export default function Dashboard({ user, token, onLogout }) {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr>
-                    <td colSpan={6} className="text-center py-10 text-muted font-medium">
-                      Ładowanie danych z bazy MySQL...
-                    </td>
-                  </tr>
+                  <TableSkeleton rows={5} />
                 ) : tickets.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="text-center py-12 text-muted font-medium">
-                      {getEmptyMessage()}
+                    <td colSpan={6} className="text-center py-10 px-4">
+                      <TicketEmptyState
+                        hasActiveFilters={hasActiveFilters}
+                        onClearFilters={handleClearAllFilters}
+                        defaultMessage={getEmptyMessage()}
+                      />
                     </td>
                   </tr>
                 ) : (
                   tickets.map((t) => (
-                    <tr key={t.id} className="hover:bg-page transition-colors">
+                    <tr
+                      key={t.id}
+                      onClick={() => setDetailsDrawerTicket(t)}
+                      className="hover:bg-page transition-colors cursor-pointer"
+                      title="Kliknij, aby otworzyć panel boczny ze szczegółami"
+                    >
                       <td className="text-center font-bold text-ink">
-                        <button
-                          type="button"
-                          onClick={() => setDetailsModalTicket(t)}
-                          className="font-bold text-ink hover:text-[var(--primary)] hover:underline cursor-pointer"
-                          title="Kliknij, aby otworzyć szczegóły"
-                        >
+                        <span className="font-bold text-ink hover:text-[var(--primary)]">
                           #{t.id}
-                        </button>
+                        </span>
                       </td>
                       <td>
                         <div className="font-semibold text-ink">
@@ -458,40 +839,26 @@ export default function Dashboard({ user, token, onLogout }) {
                         )}
                       </td>
                       <td>
-                        <div className="min-w-[210px]">
-                          {user?.role === 'admin' || user?.role === 'serwisant' ? (
-                            <select
-                              value={t.przypisany_pracownik_id || ''}
-                              onChange={(e) => handleAssignWorker(t.id, e.target.value)}
-                              title="Przypisz to zlecenie pracownikowi"
-                              className="w-full min-w-[200px] bg-card border border-line text-ink rounded px-2.5 py-1.5 text-xs outline-none focus:border-primary/30 cursor-pointer font-medium"
-                            >
-                              <option value="">— Nieprzypisane —</option>
-                              {workers.map((w) => (
-                                <option key={w.id} value={w.id}>
-                                  {w.username} ({w.role})
-                                </option>
-                              ))}
-                            </select>
+                        <div className="min-w-[150px]">
+                          {t.przypisany_pracownik_username ? (
+                            <span className="font-semibold text-primary-dark text-xs whitespace-normal break-words">
+                              👤 {t.przypisany_pracownik_username}
+                            </span>
                           ) : (
-                            <div>
-                              {t.przypisany_pracownik_username ? (
-                                <span className="font-semibold text-primary-dark text-xs whitespace-normal break-words">
-                                  👤 {t.przypisany_pracownik_username}
-                                </span>
-                              ) : (
-                                <span className="text-muted text-xs">Nieprzypisane</span>
-                              )}
-                            </div>
+                            <span className="text-muted text-xs italic">— Nieprzypisane —</span>
                           )}
                         </div>
                       </td>
-                      <td>
+                      <td onClick={(e) => e.stopPropagation()}>
                         <StatusControl
                           ticket={t}
                           user={user}
-                          onUpdateStatus={handleUpdateStatus}
+                          onOpenAssignModal={(ticketToAssign) => setAssignModalTicket(ticketToAssign)}
                           onOpenRepairModal={(ticketToRepair) => setRepairModalTicket(ticketToRepair)}
+                          onOpenShipModal={(ticketToShip) => setShipModalTicket(ticketToShip)}
+                          onOpenRollbackModal={(ticketToRollback, actions) =>
+                            setRollbackModalData({ ticket: ticketToRollback, actions })
+                          }
                         />
                       </td>
                       <td>
@@ -501,16 +868,8 @@ export default function Dashboard({ user, token, onLogout }) {
                         <div className="text-[0.7rem] text-muted">
                           {t.created_at ? new Date(t.created_at).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : ''}
                         </div>
-                        <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                          <button
-                            type="button"
-                            className="btn-secondary py-1 px-2.5 text-xs"
-                            onClick={() => setDetailsModalTicket(t)}
-                            title="Zobacz pełne szczegóły zgłoszenia (adres, NIP, FV, usterka, raport)"
-                          >
-                            Szczegóły
-                          </button>
-                          {user?.role === 'admin' && (
+                        {user?.role === 'admin' && (
+                          <div className="mt-2 flex items-center gap-1.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
                             <button
                               type="button"
                               disabled={deletingId === t.id}
@@ -530,8 +889,8 @@ export default function Dashboard({ user, token, onLogout }) {
                                 </>
                               )}
                             </button>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))
@@ -543,29 +902,29 @@ export default function Dashboard({ user, token, onLogout }) {
           {/* Karty zgłoszeń (Widok MOBILE / TELEFON: jedna karta pod drugą) */}
           <div className="block md:hidden space-y-3">
             {loading ? (
-              <div className="bg-card rounded-xl border border-line p-8 text-center text-muted font-medium">
-                Ładowanie danych z bazy MySQL...
-              </div>
+              <CardsSkeleton count={3} />
             ) : tickets.length === 0 ? (
-              <div className="bg-card rounded-xl border border-line p-8 text-center text-muted font-medium">
-                {getEmptyMessage()}
+              <div className="bg-card rounded-xl border border-line p-6 text-center">
+                <TicketEmptyState
+                  hasActiveFilters={hasActiveFilters}
+                  onClearFilters={handleClearAllFilters}
+                  defaultMessage={getEmptyMessage()}
+                />
               </div>
             ) : (
               tickets.map((t) => (
                 <div
                   key={t.id}
-                  className="bg-card rounded-xl border border-line p-4 shadow-xs space-y-3 hover:border-line transition-colors"
+                  onClick={() => setDetailsDrawerTicket(t)}
+                  className="bg-card rounded-xl border border-line p-4 shadow-xs space-y-3 hover:border-primary/50 transition-colors cursor-pointer"
+                  title="Kliknij, aby otworzyć panel boczny ze szczegółami"
                 >
                   {/* Górny wiersz karty: ID, Data i Status */}
                   <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-line">
                     <div>
-                      <button
-                        type="button"
-                        onClick={() => setDetailsModalTicket(t)}
-                        className="text-base font-bold text-ink hover:text-[var(--primary)] hover:underline cursor-pointer"
-                      >
+                      <span className="text-base font-bold text-ink">
                         #{t.id}
-                      </button>
+                      </span>
                       <div className="text-[0.7rem] text-muted mt-0.5">
                         {t.created_at ? new Date(t.created_at).toLocaleString('pl-PL') : '-'}
                       </div>
@@ -609,53 +968,37 @@ export default function Dashboard({ user, token, onLogout }) {
                   {/* Przypisany pracownik */}
                   <div className="text-xs">
                     <span className="text-[0.7rem] text-muted uppercase font-semibold block mb-1">Przypisany</span>
-                    {user?.role === 'admin' || user?.role === 'serwisant' ? (
-                      <select
-                        value={t.przypisany_pracownik_id || ''}
-                        onChange={(e) => handleAssignWorker(t.id, e.target.value)}
-                        title="Przypisz to zlecenie pracownikowi"
-                        className="w-full bg-card border border-line text-ink rounded px-2.5 py-1.5 text-xs outline-none focus:border-primary/30 cursor-pointer"
-                      >
-                        <option value="">— Nieprzypisane —</option>
-                        {workers.map((w) => (
-                          <option key={w.id} value={w.id}>
-                            {w.username} ({w.role})
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <div className="font-medium text-ink">
-                        {t.przypisany_pracownik_username ? (
-                          <span className="font-semibold text-primary-dark">
-                            👤 {t.przypisany_pracownik_username}
-                          </span>
-                        ) : (
-                          <span className="text-muted">Nieprzypisane</span>
-                        )}
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {t.przypisany_pracownik_username ? (
+                        <span className="font-semibold text-primary-dark">
+                          👤 {t.przypisany_pracownik_username}
+                        </span>
+                      ) : (
+                        <span className="text-muted italic">— Nieprzypisane —</span>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Kontrolki zmiany statusu */}
-                  <div className="pt-1">
+                  {/* Kontrolki statusu i akcji */}
+                  <div className="pt-1" onClick={(e) => e.stopPropagation()}>
                     <StatusControl
                       ticket={t}
                       user={user}
-                      onUpdateStatus={handleUpdateStatus}
+                      onOpenAssignModal={(ticketToAssign) => setAssignModalTicket(ticketToAssign)}
                       onOpenRepairModal={(ticketToRepair) => setRepairModalTicket(ticketToRepair)}
+                      onOpenShipModal={(ticketToShip) => setShipModalTicket(ticketToShip)}
+                      onOpenRollbackModal={(ticketToRollback, actions) =>
+                        setRollbackModalData({ ticket: ticketToRollback, actions })
+                      }
                     />
                   </div>
 
-                  {/* Dolne przyciski karty */}
-                  <div className="pt-2 border-t border-line flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      className="btn-secondary py-1.5 px-3 text-xs flex-1 justify-center"
-                      onClick={() => setDetailsModalTicket(t)}
+                  {/* Dolny pasek dla admina - usunięcie zgłoszenia */}
+                  {user?.role === 'admin' && (
+                    <div
+                      className="pt-2 border-t border-line flex items-center justify-end"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      Szczegóły
-                    </button>
-                    {user?.role === 'admin' && (
                       <button
                         type="button"
                         disabled={deletingId === t.id}
@@ -675,8 +1018,8 @@ export default function Dashboard({ user, token, onLogout }) {
                           </>
                         )}
                       </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </div>
               ))
             )}
@@ -695,39 +1038,46 @@ export default function Dashboard({ user, token, onLogout }) {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                className="btn-secondary py-1 px-3 text-xs"
+                className="btn-secondary py-1 px-3 text-xs disabled:opacity-40"
                 disabled={page <= 1 || loading}
-                onClick={() => {
-                  const prev = Math.max(1, page - 1);
-                  setPage(prev);
-                  fetchTickets({ page: prev });
-                }}
+                onClick={() => handlePageChange(page - 1)}
+                title="Poprzednia strona"
               >
                 &laquo; Poprzednia
               </button>
               <button
                 type="button"
-                className="btn-secondary py-1 px-3 text-xs"
+                className="btn-secondary py-1 px-3 text-xs disabled:opacity-40"
                 disabled={page >= totalPages || loading}
-                onClick={() => {
-                  const next = page + 1;
-                  setPage(next);
-                  fetchTickets({ page: next });
-                }}
+                onClick={() => handlePageChange(page + 1)}
+                title="Następna strona"
               >
                 Następna &raquo;
               </button>
             </div>
           </div>
 
-          {detailsModalTicket && (
-            <TicketDetailsModal
-              key={detailsModalTicket.id}
-              ticket={detailsModalTicket}
+          {detailsDrawerTicket && (
+            <TicketDetailsDrawer
+              key={detailsDrawerTicket.id}
+              ticket={detailsDrawerTicket}
               user={user}
-              onClose={() => setDetailsModalTicket(null)}
+              onClose={() => setDetailsDrawerTicket(null)}
+              onOpenAssignModal={(t) => setAssignModalTicket(t)}
               onOpenRepairModal={(t) => setRepairModalTicket(t)}
+              onOpenShipModal={(t) => setShipModalTicket(t)}
+              onOpenRollbackModal={(t, actions) => setRollbackModalData({ ticket: t, actions })}
               onOpenTrackingModal={(t) => setTrackingModalTicket(t)}
+            />
+          )}
+
+          {assignModalTicket && (
+            <AssignWorkerModal
+              key={assignModalTicket.id}
+              ticket={assignModalTicket}
+              workers={workers}
+              onClose={() => setAssignModalTicket(null)}
+              onAssign={handleAssignWorker}
             />
           )}
 
@@ -737,6 +1087,25 @@ export default function Dashboard({ user, token, onLogout }) {
               ticket={repairModalTicket}
               onClose={() => setRepairModalTicket(null)}
               onSubmit={handleRepairSubmit}
+            />
+          )}
+
+          {shipModalTicket && (
+            <ShipModal
+              key={shipModalTicket.id}
+              ticket={shipModalTicket}
+              onClose={() => setShipModalTicket(null)}
+              onShip={handleShipSubmit}
+            />
+          )}
+
+          {rollbackModalData && (
+            <RollbackStatusModal
+              key={rollbackModalData.ticket.id}
+              ticket={rollbackModalData.ticket}
+              rollbackActions={rollbackModalData.actions}
+              onClose={() => setRollbackModalData(null)}
+              onConfirm={handleRollbackSubmit}
             />
           )}
 

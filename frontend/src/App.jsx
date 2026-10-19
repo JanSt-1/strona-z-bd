@@ -60,7 +60,23 @@ class ErrorBoundary extends React.Component {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('public');
+  const [activeTab, setActiveTab] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('tab') === 'public') return 'public';
+    if (
+      params.get('tab') === 'admin' ||
+      params.has('status') ||
+      params.has('pracownik') ||
+      params.has('worker') ||
+      params.has('szukaj') ||
+      params.has('search') ||
+      params.has('strona') ||
+      params.has('page')
+    ) {
+      return 'admin';
+    }
+    return authApi.getToken() ? 'admin' : 'public';
+  });
   const [token, setToken] = useState(() => authApi.getToken());
   const [user, setUser] = useState(() => authApi.getUser());
 
@@ -72,6 +88,37 @@ export default function App() {
     });
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    function handlePopState() {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('tab') === 'public') {
+        setActiveTab('public');
+      } else if (
+        params.get('tab') === 'admin' ||
+        params.has('status') ||
+        params.has('pracownik') ||
+        params.has('szukaj') ||
+        params.has('strona')
+      ) {
+        setActiveTab('admin');
+      }
+    }
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  function handleTabChange(newTab) {
+    setActiveTab(newTab);
+    const url = new URL(window.location.href);
+    if (newTab === 'public') {
+      url.searchParams.set('tab', 'public');
+    } else {
+      url.searchParams.delete('tab');
+    }
+    const query = url.searchParams.toString();
+    window.history.pushState({}, '', url.pathname + (query ? `?${query}` : ''));
+  }
 
   function handleLoginSuccess(newToken, newUser) {
     setToken(newToken);
@@ -88,7 +135,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-page">
-      <Header activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Header activeTab={activeTab} setActiveTab={handleTabChange} />
 
       <main
         className={`w-full transition-all duration-300 ${

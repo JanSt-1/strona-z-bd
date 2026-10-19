@@ -125,21 +125,6 @@ export const STATUS_LABELS = {
   zakończone: 'zakończone'
 };
 
-export const STATUS_LIST = [
-  { value: 'nowe', label: 'Nowe' },
-  { value: 'w_realizacji', label: 'W realizacji' },
-  { value: 'do_wysylki', label: 'Do wysyłki' },
-  { value: 'zakończone', label: 'Zakończone' }
-];
-
-// Role w systemie i ich etykiety
-export const ROLES = [
-  { value: 'pracownik', label: 'pracownik (wyłącznie przypisane zadania)' },
-  { value: 'serwisant', label: 'serwisant (przypisywanie i naprawa)' },
-  { value: 'magazynier', label: 'magazynier (wysyłka i listy przewozowe)' },
-  { value: 'admin', label: 'admin (pełny dostęp do systemu)' }
-];
-
 // Pusty stan formularza zgłoszenia
 export const EMPTY_TICKET_FORM = {
   imie: '',
@@ -161,3 +146,45 @@ export const EMPTY_TICKET_FORM = {
   website: '',
   zgoda_rodo: false
 };
+
+/**
+ * Zunifikowane określanie pojedynczej akcji głównej oraz akcji cofnięcia
+ * dla zlecenia w zależności od statusu i uprawnień użytkownika.
+ */
+export function getTicketActionState(ticket, user) {
+  const curStatus = ticket?.status || 'nowe';
+  const actions = Array.isArray(ticket?.dozwolone_akcje) ? ticket.dozwolone_akcje : [];
+  const forwardAction = actions.find((a) => a.typ !== 'cofnij');
+  const rollbackActions = actions.filter((a) => a.typ === 'cofnij');
+  const canAssign = user?.role === 'admin' || user?.role === 'serwisant';
+
+  const isAssignAction =
+    curStatus === 'nowe' &&
+    (canAssign ||
+      forwardAction?.typ === 'przypisanie' ||
+      forwardAction?.akcja === 'przypisz' ||
+      forwardAction?.akcja === 'rozpocznij_realizacje');
+
+  const isRepairAction =
+    curStatus === 'w_realizacji' &&
+    (forwardAction?.typ === 'naprawa' ||
+      forwardAction?.akcja === 'naprawione' ||
+      forwardAction?.na_status === 'do_wysylki');
+
+  const isShipAction =
+    curStatus === 'do_wysylki' &&
+    (forwardAction?.typ === 'wysylka' ||
+      forwardAction?.akcja === 'wyslij' ||
+      forwardAction?.na_status === 'zakończone');
+
+  return {
+    curStatus,
+    actions,
+    forwardAction,
+    rollbackActions,
+    isAssignAction,
+    isRepairAction,
+    isShipAction,
+    hasForwardButton: isAssignAction || isRepairAction || isShipAction
+  };
+}

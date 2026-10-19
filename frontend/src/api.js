@@ -2,7 +2,7 @@
 // API CLIENT - Obsługa wszystkich wywołań sieciowych REST API
 // =========================================================================
 
-export const API_BASE = '/api';
+const API_BASE = '/api';
 
 // Rejestr słuchaczy wylogowania przy 401 Unauthorized
 let unauthorizedHandlers = [];
@@ -67,6 +67,22 @@ export async function apiJson(endpoint, options = {}, fallbackError = 'Wystąpi�
   }
 
   return data;
+}
+
+export async function apiPatch(endpoint, body, fallbackError) {
+  return apiJson(endpoint, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }, fallbackError);
+}
+
+export async function apiPost(endpoint, body, fallbackError) {
+  return apiJson(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }, fallbackError);
 }
 
 // =========================================================================
@@ -145,40 +161,22 @@ export const ticketApi = {
 
   // Przypisanie pracownika do zgłoszenia
   async assignWorker(ticketId, pracownikId) {
-    return apiJson(`/zgloszenia/${ticketId}/przypisz`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pracownik_id: pracownikId || null })
-    }, 'Nie udało się przypisać pracownika.');
+    return apiPatch(`/zgloszenia/${ticketId}/przypisz`, { pracownik_id: pracownikId || null }, 'Nie udało się przypisać pracownika.');
   },
 
   // Zatwierdzenie naprawy (przekazanie do statusu 'do_wysylki')
   async submitRepair(ticketId, opisNaprawy) {
-    return apiJson(`/zgloszenia/${ticketId}/naprawione`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ opis_naprawy: opisNaprawy })
-    }, 'Nie udało się zatwierdzić naprawy.');
+    return apiPatch(`/zgloszenia/${ticketId}/naprawione`, { opis_naprawy: opisNaprawy }, 'Nie udało się zatwierdzić naprawy.');
   },
 
   // Zmiana statusu zgłoszenia
   async updateStatus(ticketId, status, extraData = {}) {
-    const body = { status, ...extraData };
-    return apiJson(`/zgloszenia/${ticketId}/status`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    }, 'Nie udało się zaktualizować statusu.');
+    return apiPatch(`/zgloszenia/${ticketId}/status`, { status, ...extraData }, 'Nie udało się zaktualizować statusu.');
   },
 
   // Zapisanie lub zmiana numeru listu przewozowego
   async saveTrackingNumber(ticketId, currentStatus, numerListu) {
-    const body = { status: currentStatus, numer_listu: numerListu };
-    return apiJson(`/zgloszenia/${ticketId}/status`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    }, 'Nie udało się zapisać numeru listu przewozowego.');
+    return this.updateStatus(ticketId, currentStatus, { numer_listu: numerListu });
   },
 
   // Usunięcie zgłoszenia (admin)
@@ -206,49 +204,22 @@ export const userApi = {
   },
 
   async createUser({ username, password, role }) {
-    return apiJson('/admin/users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, role })
-    }, 'Nie udało się utworzyć użytkownika.');
+    return apiPost('/admin/users', { username, password, role }, 'Nie udało się utworzyć użytkownika.');
   },
 
   async updateRole(userId, role) {
-    return apiJson(`/admin/users/${userId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role })
-    }, 'Nie udało się zmienić roli użytkownika.');
+    return apiPatch(`/admin/users/${userId}`, { role }, 'Nie udało się zmienić roli użytkownika.');
   },
 
   async toggleStatus(userId, aktywny) {
-    return apiJson(`/admin/users/${userId}/status`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ aktywny })
-    }, 'Nie udało się zmienić statusu konta.');
+    return apiPatch(`/admin/users/${userId}/status`, { aktywny }, 'Nie udało się zmienić statusu konta.');
   },
 
   async resetPassword(userId, password) {
-    return apiJson(`/admin/users/${userId}/haslo`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password })
-    }, 'Nie udało się zmienić hasła użytkownika.');
+    return apiPatch(`/admin/users/${userId}/haslo`, { password }, 'Nie udało się zmienić hasła użytkownika.');
   },
 
   async changeOwnPassword({ currentPassword, newPassword }) {
-    return apiJson('/profil/haslo', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ currentPassword, newPassword })
-    }, 'Nie udało się zmienić własnego hasła.');
-  }
-};
-
-export const healthApi = {
-  async check() {
-    const response = await fetch(`${API_BASE}/health`);
-    return response.json();
+    return apiPatch('/profil/haslo', { currentPassword, newPassword }, 'Nie udało się zmienić własnego hasła.');
   }
 };

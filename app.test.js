@@ -424,6 +424,57 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(insertQueries.length, 1);
         });
 
+        it('POST /api/zgloszenia z poprawnym opcjonalnym telefonem stacjonarnym zapisuje go w bazie', async () => {
+            allExecutedQueries = [];
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    telefon_stacjonarny: '221234567',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Brak obrazu',
+                    zgoda_rodo: true
+                });
+
+            assert.strictEqual(response.status, 201);
+            const insertQuery = allExecutedQueries.find(q => q.sql.includes('INSERT INTO zgloszenia'));
+            assert.ok(insertQuery);
+            assert.ok(insertQuery.values.includes('+48221234567'));
+        });
+
+        it('POST /api/zgloszenia z niepoprawnym telefonem stacjonarnym (mniej niż 9 cyfr) zwraca błąd 400', async () => {
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    telefon_stacjonarny: '22123',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Brak obrazu',
+                    zgoda_rodo: true
+                });
+
+            assert.strictEqual(response.status, 400);
+            assert.ok(response.body.error.includes('telefon_stacjonarny'));
+        });
+
         it('GET /api/zgloszenia bez tokenu powinien zwrócić status 401', async () => {
             const response = await request(app).get('/api/zgloszenia');
             assert.strictEqual(response.status, 401);
@@ -793,15 +844,14 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(respMagazynier.status, 403);
         });
 
-        it('Admin może przypisać zlecenie do użytkownika o roli magazynier w /przypisz (200)', async () => {
+        it('Próba przypisania zlecenia do użytkownika o roli magazynier w /przypisz zwraca 400', async () => {
             setMockTicket({ status: 'do_wysylki' });
             const response = await request(app)
                 .patch('/api/zgloszenia/1/przypisz')
                 .set('Authorization', `Bearer ${adminToken}`)
                 .send({ pracownik_id: 2 }); // ID 2 to magazynier
-            assert.strictEqual(response.status, 200);
-            assert.strictEqual(response.body.przypisany_pracownik_id, 2);
-            assert.strictEqual(response.body.przypisany_pracownik_username, 'magazynier_testowy');
+            assert.strictEqual(response.status, 400);
+            assert.strictEqual(response.body.error, 'Zlecenie można przypisać wyłącznie do pracownika lub serwisanta.');
         });
 
         it('Próba przypisania zablokowanego użytkownika w /przypisz zwraca 400', async () => {
@@ -934,7 +984,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             // Upewniamy się, że ciąg 'Warszawa' NIE został wklejony do zapytania SQL
             assert.ok(!lastExecutedQuery.includes('Warszawa'));
             // I że znajduje się wyłącznie w parametrach jako '%Warszawa%'
-            assert.strictEqual(lastExecutedParams.filter(p => p === '%Warszawa%').length, 13);
+            assert.strictEqual(lastExecutedParams.filter(p => p === '%Warszawa%').length, 14);
 
             // Łączenie reguły roli pracownika z filtrem statusu i szukaj
             await request(app)
@@ -1014,7 +1064,9 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             // 2. Rola: SERWISANT
             const sNowe = wyznacz(serwisant, { id: 1, status: 'nowe' });
             assert.strictEqual(sNowe.length, 1);
-            assert.strictEqual(sNowe[0].akcja, 'rozpocznij_realizacje');
+            assert.strictEqual(sNowe[0].akcja, 'przypisz');
+            assert.strictEqual(sNowe[0].typ, 'przypisanie');
+            assert.strictEqual(sNowe[0].etykieta, 'Przypisz');
             assert.strictEqual(sNowe[0].na_status, 'w_realizacji');
 
             // Serwisant na 'w_realizacji': dla zlecenia nieprzypisanego widzi akcję 'naprawione' (automatycznie przypisze go przy naprawie)
@@ -1039,13 +1091,16 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(mWysylka.length, 1);
             assert.strictEqual(mWysylka[0].akcja, 'wyslij');
             assert.strictEqual(mWysylka[0].typ, 'wysylka');
+            assert.strictEqual(mWysylka[0].etykieta, 'Oznacz jako wysłane');
             assert.strictEqual(mWysylka[0].na_status, 'zakończone');
             assert.deepStrictEqual(wyznacz(magazynier, { id: 1, status: 'zakończone' }), []);
 
             // 4. Rola: ADMIN (zawiera akcje w przód oraz cofanie do wcześniejszych etapów)
             const aNowe = wyznacz(admin, { id: 1, status: 'nowe' });
             assert.strictEqual(aNowe.length, 1);
-            assert.strictEqual(aNowe[0].akcja, 'rozpocznij_realizacje');
+            assert.strictEqual(aNowe[0].akcja, 'przypisz');
+            assert.strictEqual(aNowe[0].typ, 'przypisanie');
+            assert.strictEqual(aNowe[0].etykieta, 'Przypisz');
 
             const aRealizacji = wyznacz(admin, { id: 1, status: 'w_realizacji' });
             assert.strictEqual(aRealizacji.length, 2);
@@ -1749,7 +1804,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(response.body.message, 'Zgłoszenie serwisowe zostało pomyślnie przyjęte.');
             const insertZgloszenie = allExecutedQueries.find(q => q.sql.includes('INSERT INTO zgloszenia'));
             assert.ok(insertZgloszenie, 'Powinno wykonać INSERT do tabeli zgloszenia');
-            assert.strictEqual(insertZgloszenie.values[11].length, 65535);
+            assert.strictEqual(insertZgloszenie.values[12].length, 65535);
         });
 
         it('Żądanie JSON przekraczające limit express.json (np. 80KB) zwraca błąd 413 Payload Too Large', async () => {

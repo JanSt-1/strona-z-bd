@@ -242,9 +242,19 @@ const zgloszeniaLimiter = rateLimit({
     skip: () => process.env.NODE_ENV === 'test'
 });
 
+const REQUIRED_FIELDS = [
+    'imie', 'nazwisko', 'adres', 'kod_pocztowy', 'miasto', 'numer_telefonu',
+    'email', 'przedmiot_zgloszenia', 'data_zakupu', 'opis_usterki', 'numer_fv', 'nip'
+];
+const FIELD_MAX_LENGTHS = {
+    imie: 50, nazwisko: 50, adres: 65535, kod_pocztowy: 6, miasto: 100,
+    numer_telefonu: 20, email: 100, przedmiot_zgloszenia: 100, data_zakupu: 10,
+    opis_usterki: 65535, numer_fv: 50, nip: 10
+};
+
 // 2. POST /api/zgloszenia - Publiczne dodawanie nowego zgłoszenia serwisowego
 app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
-    const { website, nazwa_firmy, numer_seryjny, przedmiot_zgloszenia, zgoda_rodo } = req.body || {};
+    const { website, nazwa_firmy, numer_seryjny, przedmiot_zgloszenia, zgoda_rodo, telefon_stacjonarny } = req.body || {};
 
     // Zabezpieczenie Honeypot: ukryte pole website przeciwko botom spamującym
     const isHoneypotTriggered = typeof website === 'string' ? website.trim().length > 0 : Boolean(website);
@@ -256,24 +266,14 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
         });
     }
 
-    const requiredFields = [
-        'imie', 'nazwisko', 'adres', 'kod_pocztowy', 'miasto', 'numer_telefonu',
-        'email', 'przedmiot_zgloszenia', 'data_zakupu', 'opis_usterki', 'numer_fv', 'nip'
-    ];
-    const maxLengths = {
-        imie: 50, nazwisko: 50, adres: 65535, kod_pocztowy: 6, miasto: 100,
-        numer_telefonu: 20, email: 100, przedmiot_zgloszenia: 100, data_zakupu: 10,
-        opis_usterki: 65535, numer_fv: 50, nip: 10
-    };
-
     // 1. Sprawdzenie typu tekstowego, obecności oraz limitu długości dla wymaganych pól
     const c = {}; // wartości wymaganych pól po .trim()
-    for (const name of requiredFields) {
+    for (const name of REQUIRED_FIELDS) {
         const value = (req.body || {})[name];
         const error = typeof value !== 'string' ? 'musi być tekstem.'
             : value.trim().length === 0 ? 'nie może być puste.'
-                : value.trim().length > maxLengths[name]
-                    ? `przekracza maksymalną dozwoloną długość (${maxLengths[name]} znaków).`
+                : value.trim().length > FIELD_MAX_LENGTHS[name]
+                    ? `przekracza maksymalną dozwoloną długość (${FIELD_MAX_LENGTHS[name]} znaków).`
                     : null;
         if (error) return fail(res, `Pole "${name}" ${error}`);
         c[name] = value.trim();
@@ -321,6 +321,25 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
         cleanNumerSeryjny = serial;
     }
 
+    // 11a. Walidacja opcjonalnego telefonu stacjonarnego (jeśli podano)
+    let cleanTelefonStacjonarny = null;
+    const stacjonarnyProvided = telefon_stacjonarny !== undefined && telefon_stacjonarny !== null && String(telefon_stacjonarny).trim() !== '';
+    if (stacjonarnyProvided) {
+        if (typeof telefon_stacjonarny !== 'string') {
+            return fail(res, 'Pole "telefon_stacjonarny" musi być tekstem.');
+        }
+        const trimmedStacjonarny = telefon_stacjonarny.trim();
+        if (trimmedStacjonarny.length > 20) {
+            return fail(res, 'Pole "telefon_stacjonarny" przekracza maksymalną dozwoloną długość (20 znaków).');
+        }
+        const digitsOnly = trimmedStacjonarny.replace(/\D/g, '');
+        const digits = digitsOnly.startsWith('48') && digitsOnly.length === 11 ? digitsOnly.slice(2) : digitsOnly;
+        if (digits.length !== 9) {
+            return fail(res, 'Pole "telefon_stacjonarny" musi zawierać 9 cyfr numeru stacjonarnego (np. 22 123 45 67 lub z prefiksem +48).');
+        }
+        cleanTelefonStacjonarny = `+48${digits}`;
+    }
+
     // 12. Walidacja akceptacji klauzuli RODO (wymagany checkbox)
     const isZgodaRodo = zgoda_rodo === true || zgoda_rodo === 'true' || zgoda_rodo === 1 || zgoda_rodo === '1';
     if (!isZgodaRodo) {
@@ -329,8 +348,8 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
 
     try {
         const query = `
-            INSERT INTO zgloszenia (imie, nazwisko, nazwa_firmy, adres, kod_pocztowy, miasto, numer_telefonu, email, przedmiot_zgloszenia, numer_seryjny, data_zakupu, zgoda_rodo_data, opis_usterki, numer_fv, nip, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, 'nowe')
+            INSERT INTO zgloszenia (imie, nazwisko, nazwa_firmy, adres, kod_pocztowy, miasto, numer_telefonu, telefon_stacjonarny, email, przedmiot_zgloszenia, numer_seryjny, data_zakupu, zgoda_rodo_data, opis_usterki, numer_fv, nip, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, 'nowe')
         `;
         const values = [
             c.imie,
@@ -340,6 +359,7 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
             c.kod_pocztowy,
             c.miasto,
             c.numer_telefonu,
+            cleanTelefonStacjonarny,
             c.email,
             c.przedmiot_zgloszenia,
             cleanNumerSeryjny,
@@ -428,7 +448,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
 app.get('/api/pracownicy', authenticateToken, requireAdminOrSerwisant,
     safe('Błąd podczas pobierania listy pracowników:', 'Błąd serwera podczas pobierania listy pracowników.', async (req, res) => {
         const [rows] = await currentPool.query(
-            "SELECT id, username, role FROM uzytkownicy WHERE role IN ('pracownik', 'serwisant', 'magazynier') AND (aktywny IS NULL OR aktywny = 1) ORDER BY username ASC"
+            "SELECT id, username, role FROM uzytkownicy WHERE role IN ('pracownik', 'serwisant') AND (aktywny IS NULL OR aktywny = 1) ORDER BY username ASC"
         );
         return res.json(rows);
     }));
@@ -438,8 +458,8 @@ app.get('/api/pracownicy', authenticateToken, requireAdminOrSerwisant,
 // - w_realizacji -> do_wysylki: przypisany pracownik, serwisant, admin (tylko z opisem naprawy)
 // - do_wysylki -> zakończone: magazynier, admin
 // - cofanie statusu: tylko admin
-const ALLOWED_STATUSES = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
 const STATUS_ORDER = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
+const ALLOWED_STATUSES = STATUS_ORDER;
 
 const STATUS_LABELS = {
     nowe: 'Nowe',
@@ -581,19 +601,19 @@ function wyznaczDozwoloneAkcje(user, ticket) {
             akcje.push({
                 akcja: 'wyslij',
                 na_status: 'zakończone',
-                etykieta: 'Wyślij / Zakończ',
+                etykieta: 'Oznacz jako wysłane',
                 typ: 'wysylka'
             });
             continue;
         }
 
-        // C. nowe -> w_realizacji (rozpoczęcie realizacji)
+        // C. nowe -> w_realizacji (przypisanie pracownika i rozpoczęcie realizacji)
         if (targetStatus === 'w_realizacji' && currentStatus === 'nowe') {
             akcje.push({
-                akcja: 'rozpocznij_realizacje',
+                akcja: 'przypisz',
                 na_status: 'w_realizacji',
-                etykieta: 'Rozpocznij realizację',
-                typ: 'status'
+                etykieta: 'Przypisz',
+                typ: 'przypisanie'
             });
             continue;
         }
@@ -608,6 +628,37 @@ function wyznaczDozwoloneAkcje(user, ticket) {
     }
 
     return akcje;
+}
+
+const TICKET_SELECT_FIELDS = `
+    z.id, z.imie, z.nazwisko, z.nazwa_firmy, z.adres, z.kod_pocztowy, z.miasto, 
+    z.numer_telefonu, z.telefon_stacjonarny, z.email, z.przedmiot_zgloszenia, z.numer_seryjny, 
+    DATE_FORMAT(z.data_zakupu, '%Y-%m-%d') AS data_zakupu, 
+    z.opis_usterki, z.numer_fv, z.nip, z.status, z.created_at,
+    z.przypisany_pracownik_id,
+    u.username AS przypisany_pracownik_username,
+    z.opis_naprawy,
+    DATE_FORMAT(z.opis_naprawy_data, '%Y-%m-%d %H:%i:%s') AS opis_naprawy_data,
+    DATE_FORMAT(z.data_wyslania, '%Y-%m-%d %H:%i:%s') AS data_wyslania,
+    z.numer_listu
+`;
+
+const SEARCH_COLUMNS = [
+    'z.imie', 'z.nazwisko', 'z.nazwa_firmy', 'z.email', 'z.numer_telefonu',
+    'z.telefon_stacjonarny', 'z.przedmiot_zgloszenia', 'z.numer_seryjny',
+    'z.numer_fv', 'z.nip', 'z.miasto', 'z.opis_usterki', 'z.numer_listu', 'u.username'
+];
+
+async function pobierzHistorieZgloszenia(zgloszenieId) {
+    const [rows] = await currentPool.query(`
+        SELECT h.id, h.zgloszenie_id, h.uzytkownik_id, u.username, h.akcja, h.z_statusu, h.na_status, h.szczegoly,
+                DATE_FORMAT(h.created_at, '%Y-%m-%d %H:%i:%s') AS created_at
+        FROM historia_zgloszen h
+        LEFT JOIN uzytkownicy u ON h.uzytkownik_id = u.id
+        WHERE h.zgloszenie_id = ?
+        ORDER BY h.id ASC
+    `, [zgloszenieId]);
+    return rows;
 }
 
 // 5. GET /api/zgloszenia - Pobieranie zgłoszeń w zależności od roli użytkownika oraz parametrów filtrowania/paginacji:
@@ -652,24 +703,8 @@ app.get('/api/zgloszenia', authenticateToken,
         const szukajQuery = typeof req.query.szukaj === 'string' ? req.query.szukaj.trim() : '';
         if (szukajQuery) {
             const likePattern = `%${szukajQuery}%`;
-            whereConditions.push(`(
-                z.imie LIKE ? OR 
-                z.nazwisko LIKE ? OR 
-                z.nazwa_firmy LIKE ? OR 
-                z.email LIKE ? OR 
-                z.numer_telefonu LIKE ? OR 
-                z.przedmiot_zgloszenia LIKE ? OR 
-                z.numer_seryjny LIKE ? OR 
-                z.numer_fv LIKE ? OR 
-                z.nip LIKE ? OR 
-                z.miasto LIKE ? OR 
-                z.opis_usterki LIKE ? OR 
-                z.numer_listu LIKE ? OR
-                u.username LIKE ?
-            )`);
-            for (let i = 0; i < 13; i++) {
-                params.push(likePattern);
-            }
+            whereConditions.push(`(${SEARCH_COLUMNS.map(col => `${col} LIKE ?`).join(' OR ')})`);
+            SEARCH_COLUMNS.forEach(() => params.push(likePattern));
         }
 
         const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
@@ -694,17 +729,7 @@ app.get('/api/zgloszenia', authenticateToken,
         const sortDirection = String(req.query.sort || '').trim().toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
         const dataQuery = `
-            SELECT 
-                z.id, z.imie, z.nazwisko, z.nazwa_firmy, z.adres, z.kod_pocztowy, z.miasto, 
-                z.numer_telefonu, z.email, z.przedmiot_zgloszenia, z.numer_seryjny, 
-                DATE_FORMAT(z.data_zakupu, '%Y-%m-%d') AS data_zakupu, 
-                z.opis_usterki, z.numer_fv, z.nip, z.status, z.created_at,
-                z.przypisany_pracownik_id,
-                u.username AS przypisany_pracownik_username,
-                z.opis_naprawy,
-                DATE_FORMAT(z.opis_naprawy_data, '%Y-%m-%d %H:%i:%s') AS opis_naprawy_data,
-                DATE_FORMAT(z.data_wyslania, '%Y-%m-%d %H:%i:%s') AS data_wyslania,
-                z.numer_listu
+            SELECT ${TICKET_SELECT_FIELDS}
             FROM zgloszenia z
             LEFT JOIN uzytkownicy u ON z.przypisany_pracownik_id = u.id
             ${whereClause}
@@ -741,17 +766,7 @@ app.get('/api/zgloszenia/:id', authenticateToken,
         }
 
         const [tickets] = await currentPool.query(`
-            SELECT 
-                z.id, z.imie, z.nazwisko, z.nazwa_firmy, z.adres, z.kod_pocztowy, z.miasto, 
-                z.numer_telefonu, z.email, z.przedmiot_zgloszenia, z.numer_seryjny, 
-                DATE_FORMAT(z.data_zakupu, '%Y-%m-%d') AS data_zakupu, 
-                z.opis_usterki, z.numer_fv, z.nip, z.status, z.created_at,
-                z.przypisany_pracownik_id,
-                u.username AS przypisany_pracownik_username,
-                z.opis_naprawy,
-                DATE_FORMAT(z.opis_naprawy_data, '%Y-%m-%d %H:%i:%s') AS opis_naprawy_data,
-                DATE_FORMAT(z.data_wyslania, '%Y-%m-%d %H:%i:%s') AS data_wyslania,
-                z.numer_listu
+            SELECT ${TICKET_SELECT_FIELDS}
             FROM zgloszenia z
             LEFT JOIN uzytkownicy u ON z.przypisany_pracownik_id = u.id
             WHERE z.id = ?
@@ -773,14 +788,7 @@ app.get('/api/zgloszenia/:id', authenticateToken,
             return fail(res, 'Brak uprawnień do przeglądania tego zgłoszenia.', 403);
         }
 
-        const [historia] = await currentPool.query(`
-            SELECT h.id, h.zgloszenie_id, h.uzytkownik_id, u.username, h.akcja, h.z_statusu, h.na_status, h.szczegoly,
-                    DATE_FORMAT(h.created_at, '%Y-%m-%d %H:%i:%s') AS created_at
-            FROM historia_zgloszen h
-            LEFT JOIN uzytkownicy u ON h.uzytkownik_id = u.id
-            WHERE h.zgloszenie_id = ?
-            ORDER BY h.id ASC
-        `, [id]);
+        const historia = await pobierzHistorieZgloszenia(id);
 
         const dozwolone_akcje = wyznaczDozwoloneAkcje(req.user, ticket);
         const ticketWithActions = {
@@ -822,10 +830,10 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
             }
             const candidate = users[0];
             const allowedRoles = req.user.role === 'admin'
-                ? ['pracownik', 'serwisant', 'magazynier', 'admin']
-                : ['pracownik', 'serwisant', 'magazynier'];
+                ? ['pracownik', 'serwisant', 'admin']
+                : ['pracownik', 'serwisant'];
             if (!allowedRoles.includes(candidate.role)) {
-                return fail(res, 'Zlecenie można przypisać wyłącznie do pracownika, serwisanta lub magazyniera.', 400);
+                return fail(res, 'Zlecenie można przypisać wyłącznie do pracownika lub serwisanta.', 400);
             }
             if (candidate.aktywny === 0 || candidate.aktywny === false) {
                 return fail(res, 'Nie można przypisać zlecenia do zablokowanego pracownika.', 400);
@@ -1157,17 +1165,7 @@ app.get('/api/zgloszenia/:id/historia', authenticateToken,
         if (isNaN(id)) {
             return fail(res, ID_ERR_INT);
         }
-
-        const [rows] = await currentPool.query(
-            `SELECT h.id, h.zgloszenie_id, h.uzytkownik_id, u.username, h.akcja, h.z_statusu, h.na_status, h.szczegoly,
-                    DATE_FORMAT(h.created_at, '%Y-%m-%d %H:%i:%s') AS created_at
-             FROM historia_zgloszen h
-             LEFT JOIN uzytkownicy u ON h.uzytkownik_id = u.id
-             WHERE h.zgloszenie_id = ?
-             ORDER BY h.id ASC`,
-            [id]
-        );
-
+        const rows = await pobierzHistorieZgloszenia(id);
         return res.json(rows);
     }));
 

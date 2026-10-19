@@ -17,8 +17,10 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
 
-  const fetchUsers = useCallback(async () => {
-    setLoading(true);
+  const fetchUsers = useCallback(async (opts = {}) => {
+    if (opts.showLoading) {
+      setLoading(true);
+    }
     try {
       const data = await userApi.getUsers();
       if (Array.isArray(data)) {
@@ -107,7 +109,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
       setNewPassword('');
       setNewRole('pracownik');
       setShowCreateForm(false);
-      fetchUsers();
+      fetchUsers({ showLoading: true });
     } catch (err) {
       setCreateError(err.message);
     } finally {

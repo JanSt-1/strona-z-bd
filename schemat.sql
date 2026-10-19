@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS zgloszenia (
     kod_pocztowy VARCHAR(6) NOT NULL,
     miasto VARCHAR(100) NOT NULL,
     numer_telefonu VARCHAR(20) NOT NULL,
+    telefon_stacjonarny VARCHAR(20) NULL,
     email VARCHAR(100) NOT NULL,
     opis_usterki TEXT NOT NULL,
     numer_fv VARCHAR(50) NOT NULL,

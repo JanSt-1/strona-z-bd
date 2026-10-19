@@ -15,10 +15,27 @@ export default function PublicTicketForm() {
   const [formData, setFormData] = useState(EMPTY_TICKET_FORM);
   const [loading, setLoading] = useState(false);
   const [alert, setAlert] = useState(null);
+  const [submittedTicket, setSubmittedTicket] = useState(() => {
+    try {
+      const stored = sessionStorage.getItem('serwis_last_submitted');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
 
   function showAlert(message, type = 'success') {
     setAlert({ message, type });
     setTimeout(() => setAlert(null), 6000);
+  }
+
+  function handleNewSubmission() {
+    try {
+      sessionStorage.removeItem('serwis_last_submitted');
+    } catch {}
+    setSubmittedTicket(null);
+    setFormData({ ...EMPTY_TICKET_FORM, numer_telefonu: '+48 ' });
+    setAlert(null);
   }
 
   // Obsługa wpisywania numeru telefonu (i wyłącznie cyfry po +48)
@@ -122,8 +139,14 @@ export default function PublicTicketForm() {
       [Boolean(validatePurchaseDate(formData.data_zakupu)), validatePurchaseDate(formData.data_zakupu)],
       [!formData.numer_fv.trim(), 'Pole "Numer faktury / paragonu" jest wymagane.'],
       [!/^\d{10}$/.test(formData.nip.trim()), 'Pole "NIP" jest wymagane i musi składać się z dokładnie 10 cyfr (bez myślników).'],
-      [!formData.telefon_kierunkowy, 'Proszę wybrać 2-cyfrowy numer kierunkowy dla telefonu firmowego.'],
-      [formData.telefon_firmowy_7.length < 7, 'Dla telefonu firmowego należy podać pełne 7 cyfr po numerze kierunkowym.'],
+      [
+        Boolean(formData.telefon_kierunkowy || formData.telefon_firmowy_7) && !formData.telefon_kierunkowy,
+        'Proszę wybrać 2-cyfrowy numer kierunkowy dla telefonu stacjonarnego.'
+      ],
+      [
+        Boolean(formData.telefon_kierunkowy || formData.telefon_firmowy_7) && formData.telefon_firmowy_7.length < 7,
+        'Dla telefonu stacjonarnego należy podać pełne 7 cyfr po numerze kierunkowym.'
+      ],
       [!formData.zgoda_rodo, 'Wymagane jest potwierdzenie zapoznania się z informacją o przetwarzaniu danych osobowych.']
     ].find(([invalid]) => invalid);
 
@@ -134,12 +157,17 @@ export default function PublicTicketForm() {
 
     setLoading(true);
     try {
+      const stacjonarnyFormatted = (formData.telefon_kierunkowy && formData.telefon_firmowy_7.length === 7)
+        ? `+48${formData.telefon_kierunkowy}${formData.telefon_firmowy_7}`
+        : null;
+
       const payload = {
         website: formData.website || '',
         imie: formData.imie,
         nazwisko: formData.nazwisko,
         nazwa_firmy: formData.nazwa_firmy ? formData.nazwa_firmy.trim() : null,
         numer_telefonu: formData.numer_telefonu.replace(/\s+/g, ''),
+        telefon_stacjonarny: stacjonarnyFormatted,
         email: formData.email,
         adres: formData.adres,
         kod_pocztowy: formData.kod_pocztowy.trim(),
@@ -157,7 +185,20 @@ export default function PublicTicketForm() {
       };
 
       const data = await ticketApi.createTicket(payload);
-      showAlert(`Dziękujemy! ${data.message} Numer zgłoszenia: #${data.id}`, 'success');
+      const ticketInfo = {
+        id: data.id,
+        imie: payload.imie,
+        nazwisko: payload.nazwisko,
+        email: payload.email,
+        numer_telefonu: formData.numer_telefonu,
+        telefon_stacjonarny: stacjonarnyFormatted,
+        przedmiot_zgloszenia: payload.przedmiot_zgloszenia,
+        createdAt: new Date().toLocaleString('pl-PL')
+      };
+      try {
+        sessionStorage.setItem('serwis_last_submitted', JSON.stringify(ticketInfo));
+      } catch {}
+      setSubmittedTicket(ticketInfo);
       setFormData({ ...EMPTY_TICKET_FORM, numer_telefonu: '+48 ' });
     } catch (err) {
       showAlert(err.message, 'error');
@@ -167,6 +208,110 @@ export default function PublicTicketForm() {
   }
 
   const isSnActive = isSerialNumberAllowed(formData.przedmiot_zgloszenia);
+
+  if (submittedTicket) {
+    return (
+      <main className="app-card max-w-2xl mx-auto my-4 sm:my-8 p-6 sm:p-10 space-y-6">
+        <div className="text-center space-y-3">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary mx-auto shadow-sm">
+            <svg
+              className="w-9 h-9"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <h2 className="text-2xl sm:text-3xl font-bold text-ink">
+            Zgłoszenie nr {submittedTicket.id} przyjęte
+          </h2>
+          <p className="text-sm sm:text-base text-muted max-w-md mx-auto">
+            Dziękujemy! Twoje zgłoszenie serwisowe zostało pomyślnie zarejestrowane w naszym systemie.
+          </p>
+        </div>
+
+        {/* Sekcja: Co dalej? */}
+        <section className="form-section space-y-4" aria-label="Informacje o kolejnych krokach">
+          <div className="flex items-center gap-2 border-b border-line pb-3">
+            <span className="font-semibold text-lg text-ink">Co dalej?</span>
+          </div>
+
+          <div className="p-4 rounded-lg bg-primary/5 border border-primary/20 text-sm text-ink space-y-1">
+            <p className="font-semibold text-primary-dark">
+              ⏱️ Czas reakcji serwisu:
+            </p>
+            <p>
+              Skontaktujemy się w ciągu <strong className="font-bold underline decoration-primary">[X] dni roboczych</strong> (zazwyczaj do 2 dni roboczych) pod wskazanym adresem e-mail lub numerem telefonu.
+            </p>
+          </div>
+
+          <ol className="space-y-3 text-sm text-ink list-decimal list-inside pl-1">
+            <li>
+              <strong>Weryfikacja zgłoszenia:</strong> Serwisant zapozna się ze zgłoszonym problemem dotyczącym sprzętu: <em>{submittedTicket.przedmiot_zgloszenia}</em>.
+            </li>
+            <li>
+              <strong>Kontakt i decyzja:</strong> Skontaktujemy się w ciągu [X] dni roboczych, aby potwierdzić przyjęcie sprzętu lub uzgodnić sposób wysyłki/odbioru.
+            </li>
+            <li>
+              <strong>Bieżący monitoring:</strong> Zachowaj numer zgłoszenia <strong>#{submittedTicket.id}</strong> do ewentualnego kontaktu z obsługą serwisu.
+            </li>
+          </ol>
+        </section>
+
+        {/* Podsumowanie zgłoszenia */}
+        <section className="form-section space-y-3 text-sm" aria-label="Podsumowanie zgłoszenia">
+          <div className="flex items-center justify-between border-b border-line pb-2">
+            <span className="font-semibold text-ink">Podsumowanie zgłoszenia</span>
+            <span className="text-xs text-muted">ID: #{submittedTicket.id}</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-ink">
+            <div>
+              <span className="text-muted block text-xs">Klient:</span>
+              <span className="font-medium">{submittedTicket.imie} {submittedTicket.nazwisko}</span>
+            </div>
+            <div>
+              <span className="text-muted block text-xs">Przedmiot serwisu:</span>
+              <span className="font-medium">{submittedTicket.przedmiot_zgloszenia}</span>
+            </div>
+            <div>
+              <span className="text-muted block text-xs">Adres e-mail:</span>
+              <span className="font-medium">{submittedTicket.email}</span>
+            </div>
+            <div>
+              <span className="text-muted block text-xs">Telefon komórkowy:</span>
+              <span className="font-medium">{submittedTicket.numer_telefonu}</span>
+            </div>
+            {submittedTicket.telefon_stacjonarny && (
+              <div>
+                <span className="text-muted block text-xs">Telefon stacjonarny:</span>
+                <span className="font-medium">{submittedTicket.telefon_stacjonarny}</span>
+              </div>
+            )}
+            {submittedTicket.createdAt && (
+              <div className="sm:col-span-2">
+                <span className="text-muted block text-xs">Data złożenia:</span>
+                <span className="font-medium">{submittedTicket.createdAt}</span>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Przyciski akcji */}
+        <div className="flex justify-center pt-2">
+          <button
+            type="button"
+            onClick={handleNewSubmission}
+            className="btn-primary"
+            title="Wypełnij nowe zgłoszenie serwisowe"
+          >
+            ➕ Złóż kolejne zgłoszenie
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="app-card">
@@ -331,8 +476,9 @@ export default function PublicTicketForm() {
               />
             </div>
             <div className="w-full md:col-span-2">
-              <label htmlFor="telefon_kierunkowy" className="app-label">
-                Telefon firmowy / stacjonarny *
+              <label htmlFor="telefon_kierunkowy" className="app-label flex items-center justify-between">
+                <span>Telefon stacjonarny</span>
+                <span className="font-normal text-muted text-xs">opcjonalnie</span>
               </label>
               <div className="flex flex-col md:flex-row gap-3">
                 <div className="w-full md:w-1/3">

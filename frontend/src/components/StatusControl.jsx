@@ -1,97 +1,72 @@
 import React from 'react';
 import StatusBadge from './StatusBadge';
-import ShipControl from './ShipControl';
+import { getTicketActionState } from '../constants';
 
 export default function StatusControl({
   ticket,
   user,
-  onUpdateStatus,
-  onOpenRepairModal
+  onOpenAssignModal,
+  onOpenRepairModal,
+  onOpenShipModal,
+  onOpenRollbackModal
 }) {
-  const curStatus = ticket?.status || 'nowe';
-  const actions = Array.isArray(ticket?.dozwolone_akcje) ? ticket.dozwolone_akcje : [];
-
-  const forwardActions = actions.filter((a) => a.typ !== 'cofnij');
-  const rollbackActions = actions.filter((a) => a.typ === 'cofnij');
+  const {
+    curStatus,
+    rollbackActions,
+    isAssignAction,
+    isRepairAction,
+    isShipAction,
+    hasForwardButton
+  } = getTicketActionState(ticket, user);
 
   return (
     <div className="flex flex-col gap-2 items-start">
       <StatusBadge status={curStatus} />
 
       <div className="flex items-center gap-1.5 flex-wrap">
-        {/* Akcje przejścia w przód / specjalne (naprawa, wysyłka, rozpoczęcie) */}
-        {forwardActions.map((akcja) => {
-          if (akcja.typ === 'wysylka') {
-            return (
-              <ShipControl
-                key={`wysylka-${ticket.id}`}
-                ticket={ticket}
-                onUpdateStatus={onUpdateStatus}
-              />
-            );
-          }
-
-          if (akcja.typ === 'naprawa') {
-            return (
-              <button
-                key={`naprawa-${ticket.id}`}
-                type="button"
-                onClick={() => onOpenRepairModal(ticket)}
-                title="Opisz wykonane prace i przekaż do magazynu jako Do wysyłki"
-                className="btn-primary py-1 px-2.5 text-xs"
-              >
-                {akcja.etykieta}
-              </button>
-            );
-          }
-
-          return (
-            <button
-              key={`${akcja.akcja}-${akcja.na_status}-${ticket.id}`}
-              type="button"
-              onClick={() => onUpdateStatus(ticket.id, akcja.na_status)}
-              title={akcja.etykieta}
-              className="btn-primary py-1 px-2.5 text-xs"
-            >
-              {akcja.etykieta}
-            </button>
-          );
-        })}
-
-        {/* Akcje cofania (wyłącznie gdy dozwolone w dozwolone_akcje, np. dla admina) */}
-        {rollbackActions.length > 0 && (
-          <select
-            value=""
-            onChange={(e) => {
-              if (e.target.value) {
-                onUpdateStatus(ticket.id, e.target.value);
-              }
-            }}
-            title="Cofnij status zgłoszenia"
-            className="bg-card border border-line text-ink rounded px-2 py-1 text-xs outline-none focus:border-primary/30 cursor-pointer"
+        {/* Jedna główna akcja kroku w jednym miejscu */}
+        {isAssignAction && (
+          <button
+            type="button"
+            onClick={() => onOpenAssignModal(ticket)}
+            title="Przypisz zlecenie pracownikowi, aby rozpocząć realizację"
+            className="btn-primary py-1 px-2.5 text-xs inline-flex items-center gap-1"
           >
-            <option value="" disabled>
-              Cofnij status...
-            </option>
-            {rollbackActions.map((rb) => (
-              <option key={rb.na_status} value={rb.na_status}>
-                {rb.etykieta}
-              </option>
-            ))}
-          </select>
+            <span>👤</span>
+            <span>Przypisz</span>
+          </button>
         )}
 
-        {/* Informacja gdy dla użytkownika brak dostępnych akcji na danym etapie */}
-        {actions.length === 0 && (
+        {isRepairAction && (
+          <button
+            type="button"
+            onClick={() => onOpenRepairModal(ticket)}
+            title="Opisz wykonane prace i przekaż do magazynu jako Do wysyłki"
+            className="btn-primary py-1 px-2.5 text-xs inline-flex items-center gap-1"
+          >
+            <span>🔧</span>
+            <span>Oznacz jako naprawione</span>
+          </button>
+        )}
+
+        {isShipAction && (
+          <button
+            type="button"
+            onClick={() => onOpenShipModal(ticket)}
+            title="Wprowadź numer listu przewozowego i oznacz zlecenie jako wysłane"
+            className="btn-primary py-1 px-2.5 text-xs inline-flex items-center gap-1"
+          >
+            <span>📦</span>
+            <span>Oznacz jako wysłane</span>
+          </button>
+        )}
+
+        {/* Informacje, gdy zalogowana rola nie wykonuje kroku w przód */}
+        {!hasForwardButton && (
           <>
-            {curStatus === 'zakończone' && (
-              <span className="text-xs text-status-zakonczone font-semibold bg-status-zakonczone/10 px-2 py-0.5 rounded">
-                ✔ Zakończone
-              </span>
-            )}
-            {curStatus === 'do_wysylki' && (
-              <span className="text-xs text-status-wysylki font-semibold bg-status-wysylki/10 px-2 py-0.5 rounded">
-                Przekazano do wysyłki
+            {curStatus === 'nowe' && (
+              <span className="text-xs text-muted italic">
+                Oczekuje na przypisanie
               </span>
             )}
             {curStatus === 'w_realizacji' && (
@@ -101,12 +76,30 @@ export default function StatusControl({
                   : 'Wymaga przypisania pracownika'}
               </span>
             )}
-            {curStatus === 'nowe' && (
-              <span className="text-xs text-muted italic">
-                Oczekuje na przypisanie
+            {curStatus === 'do_wysylki' && (
+              <span className="text-xs text-status-wysylki font-semibold bg-status-wysylki/10 px-2 py-0.5 rounded">
+                Oczekuje na wysyłkę
+              </span>
+            )}
+            {curStatus === 'zakończone' && (
+              <span className="text-xs text-status-zakonczone font-semibold bg-status-zakonczone/10 px-2 py-0.5 rounded">
+                ✔ Zakończone
               </span>
             )}
           </>
+        )}
+
+        {/* U admina osobno przycisk „Cofnij status” (z potwierdzeniem w dedykowanym modalu) */}
+        {user?.role === 'admin' && rollbackActions.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onOpenRollbackModal(ticket, rollbackActions)}
+            title="Cofnij status zgłoszenia do wcześniejszego etapu (wymaga potwierdzenia)"
+            className="btn-secondary py-1 px-2 text-xs text-muted hover:text-danger hover:border-danger/40 inline-flex items-center gap-1 transition-colors"
+          >
+            <span>↩</span>
+            <span>Cofnij status</span>
+          </button>
         )}
       </div>
     </div>
