@@ -135,7 +135,7 @@ Frontend aplikacji został zaprojektowany z dbałością o estetykę, responsywn
   - Zawiera sekcję **„Co dalej?”** z placeholderem czasu reakcji (**„skontaktujemy się w ciągu [X] dni roboczych”**) oraz czytelnym opisem kolejnych kroków weryfikacji i kontaktu,
   - Prezentuje podsumowanie przesłanych danych (klient, sprzęt, email, telefon, data przyjęcia),
   - Stan potwierdzenia jest zachowywany w `sessionStorage` (zapobiega utracie widoku przy przypadkowym odświeżeniu strony F5),
-  - Udostępnia akcję: **„Złóż kolejne zgłoszenie”** (czyszczącą formularz i sesję w celu złożenia nowej dyspozycji).
+  - Udostępnia przycisk: **„Powrót na stronę główną”** (czyszczący stan potwierdzenia i przywracający widok główny formularza).
 - **Spójny system tokenów i zmiennych CSS**: Wszystkie kolory oraz odstępy zdefiniowane są w bloku `:root` w `frontend/src/index.css` (`--bg-page`, `--bg-card`, `--text-main`, `--text-muted`, `--text-white`, `--primary`, `--danger`, `--border`, 4 statusy). Karty posiadają pełny, nieprzezroczysty kolor tła (`#ffffff`), co eliminuje artefakty graficzne i zapewnia wysoki współczynnik kontrastu tekstu (>4.5:1, a dla głównych elementów >6:1).
 - **Trzy ujednolicone warianty przycisków**:
   - `.btn-primary` – pełna zieleń (akcje główne: wysłanie zgłoszenia, zapisanie naprawy, logowanie),

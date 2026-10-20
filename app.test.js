@@ -1334,6 +1334,49 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             // Endpoint usunięcia zgłoszenia wymaga roli admin. Skoro w bazie ma pracownik -> 403 Forbidden!
             assert.strictEqual(res.status, 403);
         });
+
+        it('Ochrona przed próbami obejścia walidacji hasła spacjami, koercją typów i błędnymi ID', async () => {
+            // 1. Próba utworzenia użytkownika z hasłem z samych spacji lub krótkim hasłem dopełnionym spacjami
+            const resSpaces = await request(app)
+                .post('/api/admin/users')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ username: 'user_spacje', password: '        ', role: 'pracownik' });
+            assert.strictEqual(resSpaces.status, 400);
+
+            const resPadded = await request(app)
+                .post('/api/admin/users')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ username: 'user_padded', password: '  abc   ', role: 'pracownik' });
+            assert.strictEqual(resPadded.status, 400);
+            assert.strictEqual(resPadded.body.error, 'Hasło musi mieć co najmniej 8 znaków.');
+
+            // 2. Próba zablokowania samego siebie przez admina z użyciem stringów "0" lub "false"
+            const resSelfZero = await request(app)
+                .patch('/api/admin/users/99/status')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ aktywny: '0' });
+            assert.strictEqual(resSelfZero.status, 400);
+            assert.ok(resSelfZero.body.error.includes('własnego konta'));
+
+            const resSelfFalseStr = await request(app)
+                .patch('/api/admin/users/99/status')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ aktywny: 'false' });
+            assert.strictEqual(resSelfFalseStr.status, 400);
+
+            // 3. Częściowo liczbowe ID (np. 99abc) nie przechodzi przez parsePositiveInt
+            const resPartialId = await request(app)
+                .patch('/api/admin/users/99abc/status')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ aktywny: false });
+            assert.strictEqual(resPartialId.status, 400);
+
+            // 4. POST /api/login z nie-tekstowym username/password zwraca 400 zamiast 500
+            const resBadLoginTypes = await request(app)
+                .post('/api/login')
+                .send({ username: ['admin'], password: { $ne: null } });
+            assert.strictEqual(resBadLoginTypes.status, 400);
+        });
     });
 
     describe('10. Zmiana własnego hasła użytkownika (PATCH /api/profil/haslo)', () => {
@@ -1902,9 +1945,16 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(res.headers['x-permitted-cross-domain-policies'], 'none');
         });
 
-        it('Nagłówek Content-Security-Policy jest wyłączony na czas kompilacji JSX w przeglądarce', async () => {
+        it('Nagłówek Content-Security-Policy jest aktywny i zawiera ścisłe dyrektywy bezpieczeństwa', async () => {
             const res = await request(app).get('/api/health');
-            assert.strictEqual(res.headers['content-security-policy'], undefined);
+            const csp = res.headers['content-security-policy'];
+            assert.ok(csp, 'Nagłówek Content-Security-Policy powinien być obecny');
+            assert.ok(csp.includes("default-src 'self'"));
+            assert.ok(csp.includes("script-src 'self'"));
+            assert.ok(!csp.includes("'unsafe-eval'"));
+            assert.ok(csp.includes("object-src 'none'"));
+            assert.ok(csp.includes('https://fonts.googleapis.com'));
+            assert.ok(csp.includes('https://fonts.gstatic.com'));
         });
     });
 

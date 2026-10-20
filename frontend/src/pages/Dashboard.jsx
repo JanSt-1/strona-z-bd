@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ticketApi, workerApi } from '../api';
 import Alert from '../components/Alert';
 import StatusControl from '../components/StatusControl';
@@ -185,31 +185,32 @@ export default function Dashboard({ user, token, onLogout }) {
   const [workerFilter, setWorkerFilter] = useState(initialFilters.worker);
   const [sortOrder, setSortOrder] = useState(initialFilters.sort);
 
+  const filtersRef = useRef(initialFilters);
+  useEffect(() => {
+    filtersRef.current = {
+      page,
+      search: searchQuery,
+      status: statusFilter,
+      worker: workerFilter,
+      sort: sortOrder
+    };
+  }, [page, searchQuery, statusFilter, workerFilter, sortOrder]);
+
   const showAlert = useCallback((message, type = 'success') => {
     setAlert({ message, type });
     setTimeout(() => setAlert(null), 5000);
   }, []);
 
-  const fetchWorkers = useCallback(async () => {
-    if (user?.role !== 'admin' && user?.role !== 'serwisant') return;
-    try {
-      const data = await workerApi.getWorkers();
-      if (Array.isArray(data)) setWorkers(data);
-    } catch (err) {
-      console.error('Błąd pobierania pracowników:', err);
-    }
-  }, [user?.role]);
-
   const fetchTickets = useCallback(
     async (overrides = {}) => {
-      if (!overrides.initial) setLoading(true);
       try {
+        const base = filtersRef.current;
         const current = {
-          page: overrides.page ?? page,
-          search: overrides.search ?? searchQuery,
-          status: overrides.status ?? statusFilter,
-          worker: overrides.worker ?? workerFilter,
-          sort: overrides.sort ?? sortOrder
+          page: overrides.page ?? base.page,
+          search: overrides.search ?? base.search,
+          status: overrides.status ?? base.status,
+          worker: overrides.worker ?? base.worker,
+          sort: overrides.sort ?? base.sort
         };
 
         const data = await ticketApi.getTickets({ ...current, limit: 25 });
@@ -234,13 +235,20 @@ export default function Dashboard({ user, token, onLogout }) {
         setLoading(false);
       }
     },
-    [page, searchQuery, statusFilter, workerFilter, sortOrder, showAlert]
+    [showAlert]
   );
 
   useEffect(() => {
-    fetchTickets({ initial: true });
-    fetchWorkers();
-  }, [fetchTickets, fetchWorkers, token]);
+    fetchTickets();
+    if (user?.role === 'admin' || user?.role === 'serwisant') {
+      workerApi
+        .getWorkers()
+        .then((data) => {
+          if (Array.isArray(data)) setWorkers(data);
+        })
+        .catch((err) => console.error('Błąd pobierania pracowników:', err));
+    }
+  }, [fetchTickets, user?.role, token]);
 
   useEffect(() => {
     function handlePopState() {
@@ -250,6 +258,7 @@ export default function Dashboard({ user, token, onLogout }) {
       setStatusFilter(fromUrl.status);
       setWorkerFilter(fromUrl.worker);
       setSortOrder(fromUrl.sort);
+      setLoading(true);
       fetchTickets(fromUrl);
     }
     window.addEventListener('popstate', handlePopState);
@@ -272,6 +281,7 @@ export default function Dashboard({ user, token, onLogout }) {
       setSortOrder(next.sort);
       setPage(next.page);
       syncUrlWithFilters(next);
+      setLoading(true);
       fetchTickets(next);
     },
     [fetchTickets, searchQuery, sortOrder, statusFilter, workerFilter]
@@ -373,6 +383,7 @@ export default function Dashboard({ user, token, onLogout }) {
       if (!data) return;
       showAlert(`Zgłoszenie #${id} zostało pomyślnie usunięte.`, 'success');
       setTickets((prev) => prev.filter((t) => t.id !== id));
+      setTotal((prev) => Math.max(0, prev - 1));
       if (detailsDrawerTicket?.id === id) setDetailsDrawerTicket(null);
     } catch (err) {
       showAlert(err.message, 'error');
@@ -429,17 +440,22 @@ export default function Dashboard({ user, token, onLogout }) {
             </svg>
             Zmień hasło
           </button>
-          <button
-            type="button"
-            className="btn-secondary py-1.5 px-3 text-xs inline-flex items-center gap-1.5"
-            onClick={currentTab === 'users' ? () => {} : () => fetchTickets()}
-            title="Odśwież listę zgłoszeń"
-          >
-            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-            </svg>
-            Odśwież
-          </button>
+          {currentTab === 'tickets' && (
+            <button
+              type="button"
+              className="btn-secondary py-1.5 px-3 text-xs inline-flex items-center gap-1.5"
+              onClick={() => {
+                setLoading(true);
+                fetchTickets();
+              }}
+              title="Odśwież listę zgłoszeń"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+              </svg>
+              Odśwież
+            </button>
+          )}
           <button
             type="button"
             className="btn-secondary py-1.5 px-3 text-xs inline-flex items-center gap-1.5"

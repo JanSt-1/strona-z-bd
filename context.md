@@ -13,23 +13,23 @@ strona_z_bd/
 ├── app.js                   # Express app: middleware, RBAC, validation, JWT, routes, DB pool, static serving of frontend/dist/
 ├── db.js                    # Centralized MySQL config (DB_PORT, createPool, createConnection)
 ├── index.js                 # Server entrypoint: .env & JWT_SECRET check, DB connection check, app.listen()
-├── app.test.js              # Integration tests (node:test + supertest, 126 tests, mocked DB via app.setPool())
+├── app.test.js              # Integration tests (node:test + supertest, 127 tests, mocked DB via app.setPool())
 ├── schemat.sql              # MySQL schema (tables: uzytkownicy, zgloszenia, historia_zgloszen)
 ├── seed.js                  # DB initialization & schema application (`npm run seed`)
 ├── config-testowy.js        # Local test setup (in .gitignore): seeds 4 accounts (pass: admin123) + 'nowe' tickets (`npm run config:testowy`)
 ├── create-user.js           # CLI user creator with bcrypt hashing (`node create-user.js <user> <pass> [role]`)
 ├── frontend/                # React + Vite + Tailwind CSS v4 SPA
 │   ├── src/                 # App.jsx (with ErrorBoundary), main.jsx, components/, pages/, api.js, constants.js, index.css
-│   ├── .oxlintrc.json       # oxlint config (`npm --prefix frontend run lint`)
+│   ├── .oxlintrc.json       # oxlint config (`npm run lint`)
 │   ├── public/              # Static assets (logo_mentor4.svg, favicon.svg)
 │   ├── dist/                # Production build served by Express (`npm run build`)
 │   └── vite.config.js       # Vite config: /api proxy to backend, outDir: dist, emptyOutDir: true
 └── context.md               # Architectural, security, and business rules for developers and AI agents
 ```
 
-- **Separation of Concerns:** `app.js` exports the Express instance and exposes `app.setPool(pool)` / `app.getPool()`. `index.js` only starts the HTTP server (`app.listen()`).
-- **HTTP Security & Payload Limits:** `helmet({ contentSecurityPolicy: false })` sets security headers (`nosniff`, `SAMEORIGIN`, etc.). `express.json({ limit: '70kb' })` fits the max `opis_usterki` (65,535 chars + JSON overhead) and rejects larger payloads with `413 Payload Too Large`.
-- **Database (`db.js`):** Exports `createPool()` and `createConnection()` shared across `app.js`, `seed.js`, and `create-user.js`. All queries use parameterized `?` placeholders.
+- **Separation of Concerns:** `app.js` exports the Express instance and exposes `app.setPool(pool)` / `app.getPool()`. `index.js` validates `JWT_SECRET`, tests the DB connection, and starts the HTTP server (`app.listen()`).
+- **HTTP Security & Payload Limits:** `helmet` sets security headers (`nosniff`, `SAMEORIGIN`, strict `Content-Security-Policy` with `script-src 'self'`, `object-src 'none'`, and Google Fonts allowlist). `express.json({ limit: '70kb' })` fits the max `opis_usterki` (65,535 chars + JSON overhead) and rejects larger payloads with `413 Payload Too Large`.
+- **Database (`db.js`):** Exports `dbConfig`, `createPool()`, and `createConnection()` shared across `app.js`, `seed.js`, `config-testowy.js`, and `create-user.js`. All queries use parameterized `?` placeholders.
 
 ---
 
@@ -89,21 +89,21 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
 | Method | Endpoint | Access / Role | Description & Validation |
 | :--- | :--- | :--- | :--- |
 | `POST` | `/api/zgloszenia` | Public | Create ticket. Honeypot (`website` field -> returns fake `201` with `id: 0` without DB write). Requires `zgoda_rodo` (`zgoda_rodo_data = NOW()`). Rate limit: 5/1h per IP (skipped in `NODE_ENV === 'test'`). Validates: `imie`/`nazwisko` (letters only, no digits), `nip` (10 digits), `kod_pocztowy` (`XX-XXX`), `numer_telefonu` (`+48` + 9 digits), optional `telefon_stacjonarny` (9 digits, saved with `+48`), `przedmiot_zgloszenia` (from `ALLOWED_PRZEDMIOTY`), `data_zakupu` (`YYYY-MM-DD`, real calendar date, not in future), `numer_seryjny` (required only for interactive monitors/boards, max 100 chars). |
-| `POST` | `/api/login` | Public | Login (`username`, `password`). Rate limit: 10/15m per IP. Bcrypt check. Blocked accounts (`!isUserActive`) get `403`. Returns `{ message, token, user }`. |
+| `POST` | `/api/login` | Public | Login (`username`, `password` verified as strings). Rate limit: 10/15m per IP. Bcrypt check. Blocked accounts (`!isUserActive`) get `403`. Returns `{ message, token, user }`. |
 | `GET` | `/api/pracownicy` | JWT (`admin`, `serwisant`) | Active repair staff (`role IN ('pracownik', 'serwisant')`). |
 | `GET` | `/api/zgloszenia` | JWT (any role) | Paginated ticket list. Query params: `?szukaj=` (parameterized `LIKE ?` across 14 columns), `?status=`, `?pracownik=` (ID or `nieprzypisane`), `?strona=` (default 1), `?limit=` (default 25, max 100), `?sort=` (`asc`/`desc` on `created_at`). Enforces RBAC visibility (`AND`). Each row includes `dozwolone_akcje` computed by `wyznaczDozwoloneAkcje(req.user, t)`. Returns `{ total, page, limit, totalPages, data, zgloszenia }`. |
 | `GET` | `/api/zgloszenia/:id` | JWT (any role) | Ticket details + `historia` + `dozwolone_akcje`. Protected by `canViewTicket(req.user, ticket)` (`404` if missing, `403` if unauthorized). |
 | `GET` | `/api/zgloszenia/:id/historia` | JWT (any role) | Chronological audit history for ticket `:id`. Protected by `canViewTicket(req.user, ticket)` (`404` / `403`). |
 | `PATCH` | `/api/zgloszenia/:id/przypisz` | JWT (`admin`, `serwisant`) | Assign/unassign worker (`{ pracownik_id }`). Target must be active `pracownik`/`serwisant` (or `admin` if caller is `admin`). Auto-transitions `nowe` → `w_realizacji`. |
-| `PATCH` | `/api/zgloszenia/:id/naprawione` | JWT (`pracownik`, `serwisant`, `admin`) | **Only forward path to `do_wysylki`**. Requires non-empty `opis_naprawy`. Blocks `pracownik` on others' tickets (`403`) and `serwisant` on tickets assigned to another worker (`403`). |
+| `PATCH` | `/api/zgloszenia/:id/naprawione` | JWT (`pracownik`, `serwisant`, `admin`) | **Only forward path to `do_wysylki`**. Requires non-empty `opis_naprawy` (max 65,535 chars). Blocks `pracownik` on others' tickets (`403`) and `serwisant` on tickets assigned to another worker (`403`). |
 | `PATCH/PUT` | `/api/zgloszenia/:id/status` | JWT (RBAC) | Status change per `czyMoznaZmienic` (blocks forward `do_wysylki` with `400`). Handles admin rollbacks (with stage data cleanup) and `numer_listu` updates (max 100 chars). |
 | `DELETE` | `/api/zgloszenia/:id` | JWT (`admin`) | Logs `usunięcie` to `historia_zgloszen` and deletes ticket. |
 | `GET` | `/api/admin/users` | JWT (`admin`) | Lists users (`id, username, role, aktywny, created_at`) **without `password_hash`**. |
-| `POST` | `/api/admin/users` | JWT (`admin`) | Create user (`username` max 50, `password` min 8 chars, `role` in `ALLOWED_ROLES`). Bcrypt salt 10. `409` on duplicate username. |
+| `POST` | `/api/admin/users` | JWT (`admin`) | Create user (`username` max 50, `password` min 8 chars after `.trim()`, `role` in `ALLOWED_ROLES`). Bcrypt salt 10. `409` on duplicate username. |
 | `PATCH` | `/api/admin/users/:id` | JWT (`admin`) | Change role (`{ role }`). Admin cannot demote self (`400`). |
 | `PATCH` | `/api/admin/users/:id/haslo` | JWT (`admin`) | Reset user password (`password`/`haslo` min 8 chars after `.trim()`). |
-| `PATCH` | `/api/admin/users/:id/status` | JWT (`admin`) | Toggle/set `aktywny` (alias: `/aktywny`). Admin cannot block self (`400`). |
-| `PATCH` | `/api/profil/haslo` | JWT (any role) | Self-service password change (`currentPassword`, `newPassword` min 8 chars). Verifies old password via bcrypt. |
+| `PATCH` | `/api/admin/users/:id/status` | JWT (`admin`) | Toggle/set `aktywny` via `isUserActive` (alias: `/aktywny`). Admin cannot block self (`400`). |
+| `PATCH` | `/api/profil/haslo` | JWT (any role) | Self-service password change (`currentPassword`, `newPassword` min 8 chars after `.trim()`). Verifies old password via bcrypt. |
 | `GET` | `/api/health` | Public | DB health check: `200 { status: 'ok' }` or `500 { status: 'error' }` (never leaks `err.message`). |
 
 ---
@@ -117,11 +117,11 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
   - `ShipModal.jsx`: Unified modal for shipping (`mode="ship"`) and tracking number editing (`mode="edit"`).
   - `AssignWorkerModal.jsx`, `RepairModal.jsx`, `RollbackStatusModal.jsx`: Stage-specific workflow modals.
   - `StatusControl.jsx`, `StatusBadge.jsx`, `TicketDetailsDrawer.jsx`, `AdminUsersPanel.jsx`, `Header.jsx`, `Alert.jsx`.
-- **Pages (`frontend/src/pages/`):** `PublicTicketForm.jsx` (3-step form, honeypot, RODO, `sessionStorage` confirmation view), `LoginForm.jsx`, `Dashboard.jsx` (URL query sync, desktop table `hidden md:block` + mobile cards `block md:hidden`, skeleton loaders).
+- **Pages (`frontend/src/pages/`):** `PublicTicketForm.jsx` (3-step form, honeypot, RODO, `sessionStorage` confirmation view with `← Powrót na stronę główną` button), `LoginForm.jsx`, `Dashboard.jsx` (URL query sync, stable `fetchTickets` via `filtersRef` so searches fire only on form submit / filter change without duplicate requests, desktop table `hidden md:block` + mobile cards `block md:hidden`, skeleton loaders).
 - **Strict Visual System & Accessibility (`frontend/src/index.css`):**
   - **Colors exclusively from `:root` CSS variables:** `--bg-page`, `--bg-card`, `--text-main`, `--text-muted`, `--text-white`, `--primary`, `--primary-dark`, `--danger`, `--border`, `--status-nowe|w-realizacji|do-wysylki|zakonczone`.
   - **Zero raw hex/RGB outside `:root`:** `grep -E "#[0-9a-fA-F]{3,6}|rgb" -r frontend/src` must match only `:root` in `index.css`. Use semantic classes (`text-ink`, `text-muted`, `text-primary-dark`, `bg-page`, `bg-card`, `border-line`, `text-danger`, `.btn-primary`, `.btn-secondary`, `.btn-danger`) — never default Tailwind palettes (`slate-*`, `red-*`) or inline `style={{}}`.
-  - **WCAG AA & Responsiveness:** Contrast ratio $\ge 4.5:1$ for all text/badges (use `text-primary-dark` for green text on light backgrounds, `text-muted` without opacity modifiers). No horizontal scroll at `375px` (iPhone SE — both `Dashboard.jsx` and `AdminUsersPanel.jsx` switch to mobile card layouts below `md`) or `1366px` desktop.
+  - **WCAG AA, Responsiveness & Linter Cleanliness:** Contrast ratio $\ge 4.5:1$ for all text/badges (use `text-primary-dark` for green text on light backgrounds, `text-muted` without opacity modifiers). No horizontal scroll at `375px` (iPhone SE — both `Dashboard.jsx` and `AdminUsersPanel.jsx` switch to mobile card layouts below `md`) or `1366px` desktop. `npm run lint` (`oxlint`) must report **0 warnings and 0 errors** (no synchronous `setState` in `useEffect`, no ref writes during render).
 
 ---
 
@@ -130,14 +130,14 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
 ```bash
 npm install                                # Install root + frontend workspace dependencies
 npm run build                              # Build Vite SPA into frontend/dist/
-npm --prefix frontend run lint             # Run oxlint on frontend/src/
-npm test                                   # Run 126 integration tests (node --test app.test.js)
+npm run lint                               # Run oxlint on frontend/src/
+npm test                                   # Run 127 integration tests (node --test app.test.js)
 npm run seed && npm run config:testowy     # Initialize schema, 4 test accounts (pass: admin123) & 200 'nowe' tickets
-node create-user.js admin Haslo123 admin   # Create admin account (password min 8 chars)
+node create-user.js admin Haslo123 admin   # Create admin account (password min 8 chars after .trim())
 npm start                                  # Start production server on PORT (default 3000)
 ```
 
 1. **No Fallback Secrets:** Never add a fallback `JWT_SECRET` in `app.js` (missing `process.env.JWT_SECRET` must immediately `throw new Error(...)`). Random test secrets belong only in `app.test.js` prior to importing `app.js`.
 2. **JWT & DB Auth (`authenticateToken`):** Explicitly enforce `algorithms: ['HS256']` in `jwt.sign` and `jwt.verify`. On every request, `authenticateToken` queries `SELECT id, username, role, aktywny FROM uzytkownicy WHERE id = ?` — rejecting inactive/missing users with `401` and taking `req.user.role` strictly from the DB.
 3. **401 vs 403 Separation:** `401` = authentication failure (triggers auto-logout on frontend via `onUnauthorized`). `403` = insufficient RBAC permissions or blocked account on login (displays alert without logging out).
-4. **Never Weaken Validation:** Keep all regexes, field length checks, calendar date validation (`validatePurchaseDate`), and RBAC rules intact.
+4. **Strict Validation & Type Safety:** Keep all regexes, field length checks, calendar date validation (`validatePurchaseDate`), strict integer ID parsing (`parsePositiveInt` requiring `/^\d+$/`), boolean coercion guard (`isUserActive` rejecting `0`/`false`/`'0'`/`'false'`), and password `.trim()` before length checks intact.

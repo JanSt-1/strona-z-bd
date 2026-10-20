@@ -19,7 +19,23 @@ app.setPool = (pool) => { currentPool = pool; };
 app.getPool = () => currentPool;
 
 // --- Middlewares ---
-app.use(helmet({ contentSecurityPolicy: false }));
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+            fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+            imgSrc: ["'self'", 'data:'],
+            connectSrc: ["'self'"],
+            objectSrc: ["'none'"],
+            baseUri: ["'self'"],
+            formAction: ["'self'"],
+            frameAncestors: ["'self'"],
+            upgradeInsecureRequests: null
+        }
+    }
+}));
 app.use(express.json({ limit: '70kb' }));
 
 const isHashedFile = (filePath) => {
@@ -63,7 +79,15 @@ const ID_ERR_INT = 'Nieprawidłowe ID zgłoszenia. Wymagana jest liczba całkowi
 const USER_ID_ERR_INT = 'Nieprawidłowe ID użytkownika. Wymagana jest liczba całkowita.';
 const ALLOWED_ROLES = ['admin', 'pracownik', 'serwisant', 'magazynier'];
 
-const isUserActive = (u) => Boolean(u && u.aktywny !== 0 && u.aktywny !== false && u.aktywny !== '0');
+const isUserActive = (u) => Boolean(u && u.aktywny !== 0 && u.aktywny !== false && u.aktywny !== '0' && u.aktywny !== 'false');
+const parsePositiveInt = (val) => {
+    if (typeof val === 'number') return Number.isInteger(val) && val > 0 ? val : NaN;
+    if (typeof val === 'string' && /^\d+$/.test(val.trim())) {
+        const n = parseInt(val.trim(), 10);
+        return n > 0 ? n : NaN;
+    }
+    return NaN;
+};
 const isAssignedToOther = (ticket, userId) =>
     ticket.przypisany_pracownik_id !== null &&
     ticket.przypisany_pracownik_id !== undefined &&
@@ -383,9 +407,9 @@ const loginLimiter = rateLimit({
 // 3. POST /api/login - Logowanie użytkownika i generowanie tokenu JWT (wyłącznie username, rate limited)
 app.post('/api/login', loginLimiter, async (req, res) => {
     const { username, password } = req.body || {};
-    const loginUsername = (username || '').trim();
+    const loginUsername = typeof username === 'string' ? username.trim() : '';
 
-    if (!loginUsername || !password) {
+    if (!loginUsername || typeof password !== 'string' || !password) {
         return fail(res, 'Podaj nazwę użytkownika oraz hasło.');
     }
 
@@ -718,7 +742,7 @@ app.get('/api/zgloszenia', authenticateToken,
 // 5a. GET /api/zgloszenia/:id - Pobieranie szczegółów wybranego zgłoszenia wraz z historią
 app.get('/api/zgloszenia/:id', authenticateToken,
     safe('Błąd podczas pobierania szczegółów zgłoszenia:', 'Błąd serwera podczas pobierania szczegółów zgłoszenia.', async (req, res) => {
-        const id = parseInt(req.params.id, 10);
+        const id = parsePositiveInt(req.params.id);
         if (isNaN(id)) return fail(res, ID_ERR_INT);
 
         const [tickets] = await currentPool.query(`
@@ -750,7 +774,7 @@ app.get('/api/zgloszenia/:id', authenticateToken,
 // 6. PATCH /api/zgloszenia/:id/przypisz - Przypisanie zlecenia pracownikowi (admin i serwisant)
 app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwisant,
     safe('Błąd podczas przypisywania pracownika:', 'Błąd serwera podczas przypisywania pracownika.', async (req, res) => {
-        const id = parseInt(req.params.id, 10);
+        const id = parsePositiveInt(req.params.id);
         if (isNaN(id)) return fail(res, ID_ERR);
 
         const { pracownik_id } = req.body || {};
@@ -758,7 +782,7 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
         let assignedUsername = null;
 
         if (pracownik_id !== undefined && pracownik_id !== null && pracownik_id !== '') {
-            const parsedPracownikId = parseInt(pracownik_id, 10);
+            const parsedPracownikId = parsePositiveInt(pracownik_id);
             if (isNaN(parsedPracownikId)) return fail(res, 'Nieprawidłowe ID pracownika.');
 
             const [users] = await currentPool.query(
@@ -821,12 +845,16 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
 // 7. PATCH /api/zgloszenia/:id/naprawione - Opisanie naprawy przez przypisanego pracownika, serwisanta lub admina
 app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
     safe('Błąd podczas zatwierdzania naprawy:', 'Błąd serwera podczas zatwierdzania naprawy zgłoszenia.', async (req, res) => {
-        const id = parseInt(req.params.id, 10);
+        const id = parsePositiveInt(req.params.id);
         if (isNaN(id)) return fail(res, ID_ERR);
 
         const { opis_naprawy } = req.body || {};
         if (!opis_naprawy || typeof opis_naprawy !== 'string' || opis_naprawy.trim().length === 0) {
             return fail(res, 'Przed oznaczeniem zlecenia jako naprawione wymagany jest opis wykonanych prac naprawczych (np. co zostało zrobione).');
+        }
+        const cleanOpis = opis_naprawy.trim();
+        if (cleanOpis.length > 65535) {
+            return fail(res, 'Pole "opis_naprawy" przekracza maksymalną dozwoloną długość (65535 znaków).');
         }
 
         const [rows] = await currentPool.query('SELECT id, status, przypisany_pracownik_id FROM zgloszenia WHERE id = ?', [id]);
@@ -836,7 +864,7 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
         const check = czyMoznaZmienic(req.user.role, ticket.status, 'do_wysylki');
         if (!check.allowed) return fail(res, check.error, check.status);
 
-        if (req.user.role === 'pracownik' && ticket.przypisany_pracownik_id !== req.user.id) {
+        if (req.user.role === 'pracownik' && Number(ticket.przypisany_pracownik_id) !== Number(req.user.id)) {
             return fail(res, 'Możesz oznaczyć jako naprawione tylko zlecenie przypisane do Ciebie.', 403);
         }
 
@@ -845,7 +873,6 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
         }
 
         const newAssignedId = req.user.role === 'serwisant' ? req.user.id : ticket.przypisany_pracownik_id;
-        const cleanOpis = opis_naprawy.trim();
 
         await currentPool.query(
             "UPDATE zgloszenia SET opis_naprawy = ?, opis_naprawy_data = NOW(), status = 'do_wysylki', przypisany_pracownik_id = ? WHERE id = ?",
@@ -878,7 +905,7 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
 
 // 8. PATCH/PUT /api/zgloszenia/:id/status - Aktualizacja statusu zgłoszenia
 const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd serwera podczas aktualizacji statusu zgłoszenia.', async (req, res) => {
-    const id = parseInt(req.params.id, 10);
+    const id = parsePositiveInt(req.params.id);
     if (isNaN(id)) return fail(res, ID_ERR_INT);
     const { status, numer_listu } = req.body || {};
 
@@ -935,7 +962,7 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
         return fail(res, 'Zmiana statusu na "do_wysylki" jest dozwolona wyłącznie poprzez zatwierdzenie naprawy (endpoint /api/zgloszenia/:id/naprawione).', 400);
     }
 
-    if (req.user.role === 'pracownik' && ticket.przypisany_pracownik_id !== req.user.id) {
+    if (req.user.role === 'pracownik' && Number(ticket.przypisany_pracownik_id) !== Number(req.user.id)) {
         return fail(res, 'Możesz zmieniać status tylko zlecenia przypisanego do Ciebie.', 403);
     }
 
@@ -997,7 +1024,7 @@ app.put('/api/zgloszenia/:id/status', authenticateToken, handleUpdateStatus);
 // 6. DELETE /api/zgloszenia/:id - Usunięcie zgłoszenia (chroniony, tylko admin)
 app.delete('/api/zgloszenia/:id', authenticateToken, requireAdmin,
     safe('Błąd podczas usuwania zgłoszenia:', 'Błąd serwera podczas usuwania zgłoszenia z bazy danych.', async (req, res) => {
-        const id = parseInt(req.params.id, 10);
+        const id = parsePositiveInt(req.params.id);
         if (isNaN(id)) return fail(res, ID_ERR_INT);
 
         const [tickets] = await currentPool.query('SELECT id, status FROM zgloszenia WHERE id = ?', [id]);
@@ -1015,7 +1042,7 @@ app.delete('/api/zgloszenia/:id', authenticateToken, requireAdmin,
 // GET /api/zgloszenia/:id/historia - Pobieranie historii zgłoszenia (z weryfikacją uprawnień RBAC)
 app.get('/api/zgloszenia/:id/historia', authenticateToken,
     safe('Błąd podczas pobierania historii zgłoszenia:', 'Błąd serwera podczas pobierania historii zgłoszenia.', async (req, res) => {
-        const id = parseInt(req.params.id, 10);
+        const id = parsePositiveInt(req.params.id);
         if (isNaN(id)) return fail(res, ID_ERR_INT);
 
         const [tickets] = await currentPool.query('SELECT id, status, przypisany_pracownik_id FROM zgloszenia WHERE id = ?', [id]);
@@ -1035,10 +1062,11 @@ app.post('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =
         return fail(res, 'Podaj nazwę użytkownika i hasło.');
     }
     const cleanUsername = username.trim();
+    const cleanPassword = password.trim();
 
-    if (!cleanUsername || !password) return fail(res, 'Podaj nazwę użytkownika i hasło.');
+    if (!cleanUsername || !cleanPassword) return fail(res, 'Podaj nazwę użytkownika i hasło.');
     if (cleanUsername.length > 50) return fail(res, 'Pole "username" przekracza maksymalną dozwoloną długość (50 znaków).');
-    if (password.length < 8) return fail(res, 'Hasło musi mieć co najmniej 8 znaków.');
+    if (cleanPassword.length < 8) return fail(res, 'Hasło musi mieć co najmniej 8 znaków.');
     if (!ALLOWED_ROLES.includes(role)) {
         return fail(res, `Nieprawidłowa rola. Dozwolone: ${ALLOWED_ROLES.join(', ')}`);
     }
@@ -1047,7 +1075,7 @@ app.post('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =
         const [existing] = await currentPool.query('SELECT id FROM uzytkownicy WHERE username = ?', [cleanUsername]);
         if (existing.length > 0) return fail(res, 'Użytkownik o tej nazwie już istnieje.', 409);
 
-        const hashedPassword = await bcrypt.hash(password, 10);
+        const hashedPassword = await bcrypt.hash(cleanPassword, 10);
         const [result] = await currentPool.query(
             'INSERT INTO uzytkownicy (username, password_hash, role) VALUES (?, ?, ?)',
             [cleanUsername, hashedPassword, role]
@@ -1079,15 +1107,15 @@ app.get('/api/admin/users', authenticateToken, requireAdmin,
 // 9. PATCH /api/admin/users/:id - Zmiana roli użytkownika (chroniony, tylko admin)
 app.patch('/api/admin/users/:id', authenticateToken, requireAdmin,
     safe('Błąd podczas zmiany roli użytkownika:', 'Błąd serwera podczas zmiany roli użytkownika.', async (req, res) => {
-        const id = parseInt(req.params.id, 10);
-        if (isNaN(id) || id <= 0) return fail(res, USER_ID_ERR_INT);
+        const id = parsePositiveInt(req.params.id);
+        if (isNaN(id)) return fail(res, USER_ID_ERR_INT);
 
         const { role } = req.body || {};
         if (!role || !ALLOWED_ROLES.includes(role)) {
             return fail(res, `Nieprawidłowa rola. Dozwolone: ${ALLOWED_ROLES.join(', ')}`);
         }
 
-        if (req.user.id === id && role !== 'admin') {
+        if (Number(req.user.id) === id && role !== 'admin') {
             return fail(res, 'Nie możesz odebrać uprawnień administratora samemu sobie.', 400);
         }
 
@@ -1106,8 +1134,8 @@ app.patch('/api/admin/users/:id', authenticateToken, requireAdmin,
 // 10. PATCH /api/admin/users/:id/haslo - Administrator ustawia nowe hasło dla konta (chroniony, tylko admin)
 app.patch('/api/admin/users/:id/haslo', authenticateToken, requireAdmin,
     safe('Błąd podczas zmiany hasła użytkownika:', 'Błąd serwera podczas zmiany hasła użytkownika.', async (req, res) => {
-        const id = parseInt(req.params.id, 10);
-        if (isNaN(id) || id <= 0) return fail(res, USER_ID_ERR_INT);
+        const id = parsePositiveInt(req.params.id);
+        if (isNaN(id)) return fail(res, USER_ID_ERR_INT);
 
         const password = (req.body?.password ?? req.body?.haslo ?? '');
         if (typeof password !== 'string' || password.trim().length === 0) {
@@ -1131,17 +1159,19 @@ app.patch('/api/admin/users/:id/haslo', authenticateToken, requireAdmin,
 
 // 11. PATCH /api/admin/users/:id/status (oraz alias /aktywny) - Blokowanie / odblokowywanie użytkownika
 const handleToggleUserStatus = safe('Błąd podczas zmiany statusu konta:', 'Błąd serwera podczas zmiany statusu konta użytkownika.', async (req, res) => {
-    const id = parseInt(req.params.id, 10);
-    if (isNaN(id) || id <= 0) return fail(res, USER_ID_ERR_INT);
+    const id = parsePositiveInt(req.params.id);
+    if (isNaN(id)) return fail(res, USER_ID_ERR_INT);
 
     const [users] = await currentPool.query('SELECT id, username, role, aktywny FROM uzytkownicy WHERE id = ?', [id]);
     if (!users || users.length === 0) return fail(res, `Nie znaleziono użytkownika o ID ${id}.`, 404);
 
     const target = users[0];
     const currentActive = isUserActive(target);
-    const nextActive = req.body && req.body.aktywny !== undefined ? Boolean(req.body.aktywny) : !currentActive;
+    const nextActive = req.body && req.body.aktywny !== undefined
+        ? isUserActive({ aktywny: req.body.aktywny })
+        : !currentActive;
 
-    if (req.user.id === id && !nextActive) {
+    if (Number(req.user.id) === id && !nextActive) {
         return fail(res, 'Nie możesz zablokować własnego konta administratora.', 400);
     }
 

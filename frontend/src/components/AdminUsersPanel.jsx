@@ -18,24 +18,26 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
 
-  const fetchUsers = useCallback(
-    async (opts = {}) => {
-      if (opts.showLoading) setLoading(true);
-      try {
-        const data = await userApi.getUsers();
-        if (Array.isArray(data)) setUsers(data);
-      } catch (err) {
-        showAlert(err.message, 'error');
-      } finally {
-        setLoading(false);
-      }
-    },
-    [showAlert]
-  );
+  const fetchUsers = useCallback(async () => {
+    try {
+      const data = await userApi.getUsers();
+      if (Array.isArray(data)) setUsers(data);
+    } catch (err) {
+      showAlert(err.message, 'error');
+    } finally {
+      setLoading(false);
+    }
+  }, [showAlert]);
 
   useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
+    userApi
+      .getUsers()
+      .then((data) => {
+        if (Array.isArray(data)) setUsers(data);
+      })
+      .catch((err) => showAlert(err.message, 'error'))
+      .finally(() => setLoading(false));
+  }, [showAlert]);
 
   async function handleRoleChange(targetUser, nextRole) {
     if (targetUser.id === currentUser?.id && nextRole !== 'admin') {
@@ -221,7 +223,10 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
           <button
             type="button"
             className="btn-secondary py-2 px-3 text-xs sm:text-sm flex-1 sm:flex-initial"
-            onClick={fetchUsers}
+            onClick={() => {
+              setLoading(true);
+              fetchUsers();
+            }}
             title="Odśwież listę kont"
           >
             Odśwież listę

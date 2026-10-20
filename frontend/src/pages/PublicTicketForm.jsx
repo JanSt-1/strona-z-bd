@@ -265,9 +265,9 @@ export default function PublicTicketForm() {
             type="button"
             onClick={handleNewSubmission}
             className="btn-primary"
-            title="Wypełnij nowe zgłoszenie serwisowe"
+            title="Powrót na stronę główną"
           >
-            ➕ Złóż kolejne zgłoszenie
+            ← Powrót na stronę główną
           </button>
         </div>
       </main>
