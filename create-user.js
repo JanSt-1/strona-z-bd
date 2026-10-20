@@ -18,19 +18,27 @@ const { createConnection } = require('./db');
 
 const [, , username, password, role = 'pracownik'] = process.argv;
 
-if (!username || !password) {
+const cleanUsername = (username || '').trim();
+const cleanPassword = (password || '').trim();
+
+if (!cleanUsername || !cleanPassword) {
     console.error('❌ Użycie: node create-user.js <nazwa_uzytkownika> <haslo> [rola]');
     console.error('   Przykład: node create-user.js janek Haslo123 pracownik');
     process.exit(1);
 }
 
-if (username.trim().length > 50) {
+if (cleanUsername.length > 50) {
     console.error('❌ Błąd: Nazwa użytkownika nie może przekraczać 50 znaków.');
     process.exit(1);
 }
 
-if (password.length < 8) {
+if (cleanPassword.length < 8) {
     console.error('❌ Błąd: Hasło musi mieć co najmniej 8 znaków.');
+    process.exit(1);
+}
+
+if (cleanPassword.length > 72) {
+    console.error('❌ Błąd: Hasło nie może przekraczać 72 znaków.');
     process.exit(1);
 }
 
@@ -48,27 +56,27 @@ async function createUser() {
         // Sprawdź czy username już istnieje
         const [existing] = await conn.query(
             'SELECT id FROM uzytkownicy WHERE username = ?',
-            [username.trim()]
+            [cleanUsername]
         );
 
         if (existing.length > 0) {
-            console.error(`❌ Użytkownik o nazwie "${username}" już istnieje w bazie.`);
+            console.error(`❌ Użytkownik o nazwie "${cleanUsername}" już istnieje w bazie.`);
             process.exit(1);
         }
 
         // Hashowanie hasła
         console.log('🔐 Hashowanie hasła...');
-        const hashedPassword = await bcrypt.hash(password, 10);
+        const hashedPassword = await bcrypt.hash(cleanPassword, 10);
 
         // Zapis do bazy
         const [result] = await conn.query(
             'INSERT INTO uzytkownicy (username, password_hash, role) VALUES (?, ?, ?)',
-            [username.trim(), hashedPassword, role]
+            [cleanUsername, hashedPassword, role]
         );
 
         console.log('✅ Użytkownik utworzony pomyślnie!');
         console.log(`   ID:        ${result.insertId}`);
-        console.log(`   Username:  ${username.trim()}`);
+        console.log(`   Username:  ${cleanUsername}`);
         console.log(`   Rola:      ${role}`);
         console.log('');
         console.log('Możesz teraz zalogować się nazwą użytkownika w panelu pracownika.');

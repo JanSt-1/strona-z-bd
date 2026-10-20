@@ -23,5 +23,11 @@ jobs:
       - name: Zainstaluj zależności
         run: npm ci
 
+      - name: Sprawdź kod linterem (oxlint)
+        run: npm run lint
+
+      - name: Zbuduj aplikację frontendową (Vite)
+        run: npm run build
+
       - name: Uruchom testy
         run: npm test

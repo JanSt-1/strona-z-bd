@@ -5,6 +5,15 @@ import LoginForm from './pages/LoginForm';
 import Dashboard from './pages/Dashboard';
 import { authApi, onUnauthorized } from './api';
 
+const ADMIN_URL_KEYS = ['status', 'pracownik', 'worker', 'szukaj', 'search', 'strona', 'page'];
+
+function resolveTabFromUrl(fallbackTab) {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('tab') === 'public') return 'public';
+  if (params.get('tab') === 'admin' || ADMIN_URL_KEYS.some((k) => params.has(k))) return 'admin';
+  return fallbackTab;
+}
+
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -60,22 +69,36 @@ class ErrorBoundary extends React.Component {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('public');
+  const [activeTab, setActiveTab] = useState(() =>
+    resolveTabFromUrl(authApi.getToken() ? 'admin' : 'public')
+  );
   const [token, setToken] = useState(() => authApi.getToken());
   const [user, setUser] = useState(() => authApi.getUser());
 
   useEffect(() => {
-    // Automatyczne wylogowanie przy 401 Unauthorized z backendu
-    const unsubscribe = onUnauthorized(() => {
+    return onUnauthorized(() => {
       setToken(null);
       setUser(null);
     });
-    return unsubscribe;
   }, []);
 
-  function handleLoginSuccess(newToken, newUser) {
-    setToken(newToken);
-    setUser(newUser);
+  useEffect(() => {
+    const handlePopState = () =>
+      setActiveTab((prev) => resolveTabFromUrl(prev));
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  function handleTabChange(newTab) {
+    setActiveTab(newTab);
+    const url = new URL(window.location.href);
+    if (newTab === 'public') {
+      url.searchParams.set('tab', 'public');
+    } else {
+      url.searchParams.delete('tab');
+    }
+    const query = url.searchParams.toString();
+    window.history.pushState({}, '', url.pathname + (query ? `?${query}` : ''));
   }
 
   function handleLogout() {
@@ -88,7 +111,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col bg-page">
-      <Header activeTab={activeTab} setActiveTab={setActiveTab} />
+      <Header activeTab={activeTab} setActiveTab={handleTabChange} />
 
       <main
         className={`w-full transition-all duration-300 ${
@@ -103,7 +126,12 @@ export default function App() {
           ) : token ? (
             <Dashboard user={user} token={token} onLogout={handleLogout} />
           ) : (
-            <LoginForm onLoginSuccess={handleLoginSuccess} />
+            <LoginForm
+              onLoginSuccess={(newToken, newUser) => {
+                setToken(newToken);
+                setUser(newUser);
+              }}
+            />
           )}
         </ErrorBoundary>
       </main>

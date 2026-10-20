@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { userApi } from '../api';
-import AdminPasswordModal from './AdminPasswordModal';
+import PasswordModal from './PasswordModal';
+
+const ROLES = ['pracownik', 'serwisant', 'magazynier', 'admin'];
 
 export default function AdminUsersPanel({ currentUser, showAlert }) {
   const [users, setUsers] = useState([]);
@@ -10,7 +12,6 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [actionInProgressId, setActionInProgressId] = useState(null);
 
-  // Formularz nowego konta
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState('pracownik');
@@ -18,12 +19,9 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
   const [createError, setCreateError] = useState(null);
 
   const fetchUsers = useCallback(async () => {
-    setLoading(true);
     try {
       const data = await userApi.getUsers();
-      if (Array.isArray(data)) {
-        setUsers(data);
-      }
+      if (Array.isArray(data)) setUsers(data);
     } catch (err) {
       showAlert(err.message, 'error');
     } finally {
@@ -32,23 +30,25 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
   }, [showAlert]);
 
   useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
+    userApi
+      .getUsers()
+      .then((data) => {
+        if (Array.isArray(data)) setUsers(data);
+      })
+      .catch((err) => showAlert(err.message, 'error'))
+      .finally(() => setLoading(false));
+  }, [showAlert]);
 
   async function handleRoleChange(targetUser, nextRole) {
     if (targetUser.id === currentUser?.id && nextRole !== 'admin') {
-      showAlert('Nie możesz odebrać roli administratora samemu sobie!', 'error');
-      return;
+      return showAlert('Nie możesz odebrać roli administratora samemu sobie!', 'error');
     }
     setActionInProgressId(targetUser.id);
     try {
       const data = await userApi.updateRole(targetUser.id, nextRole);
       if (!data) return;
-
       showAlert(data.message, 'success');
-      setUsers((prev) =>
-        prev.map((u) => (u.id === targetUser.id ? { ...u, role: nextRole } : u))
-      );
+      setUsers((prev) => prev.map((u) => (u.id === targetUser.id ? { ...u, role: nextRole } : u)));
     } catch (err) {
       showAlert(err.message, 'error');
     } finally {
@@ -58,8 +58,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
 
   async function handleToggleStatus(targetUser) {
     if (targetUser.id === currentUser?.id && targetUser.aktywny) {
-      showAlert('Nie możesz zablokować własnego konta administratora!', 'error');
-      return;
+      return showAlert('Nie możesz zablokować własnego konta administratora!', 'error');
     }
     const confirmMsg = targetUser.aktywny
       ? `Czy na pewno chcesz zablokować konto "${targetUser.username}"? Użytkownik straci możliwość logowania.`
@@ -70,7 +69,6 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
     try {
       const data = await userApi.toggleStatus(targetUser.id, !targetUser.aktywny);
       if (!data) return;
-
       showAlert(data.message, 'success');
       setUsers((prev) =>
         prev.map((u) => (u.id === targetUser.id ? { ...u, aktywny: data.aktywny } : u))
@@ -85,19 +83,21 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
   async function handleCreateUser(e) {
     e.preventDefault();
     setCreateError(null);
-    if (!newUsername.trim() || !newPassword) {
-      setCreateError('Wypełnij nazwę użytkownika oraz hasło.');
-      return;
+    const cleanPass = newPassword.trim();
+    if (!newUsername.trim() || !cleanPass) {
+      return setCreateError('Wypełnij nazwę użytkownika oraz hasło.');
     }
-    if (newPassword.length < 8) {
-      setCreateError('Hasło musi mieć co najmniej 8 znaków.');
-      return;
+    if (cleanPass.length < 8) {
+      return setCreateError('Hasło musi mieć co najmniej 8 znaków.');
+    }
+    if (cleanPass.length > 72) {
+      return setCreateError('Hasło nie może przekraczać 72 znaków.');
     }
     setCreating(true);
     try {
       const data = await userApi.createUser({
         username: newUsername.trim(),
-        password: newPassword,
+        password: cleanPass,
         role: newRole
       });
       if (!data) return;
@@ -107,6 +107,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
       setNewPassword('');
       setNewRole('pracownik');
       setShowCreateForm(false);
+      setLoading(true);
       fetchUsers();
     } catch (err) {
       setCreateError(err.message);
@@ -115,64 +116,132 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
     }
   }
 
-  const filteredUsers = users.filter((u) => {
-    const q = searchTerm.toLowerCase();
-    return u.username.toLowerCase().includes(q) || u.role.toLowerCase().includes(q);
-  });
+  const q = searchTerm.toLowerCase();
+  const filteredUsers = users.filter(
+    (u) => u.username.toLowerCase().includes(q) || u.role.toLowerCase().includes(q)
+  );
 
-  const totalCount = users.length;
-  const activeCount = users.filter((u) => u.aktywny).length;
-  const blockedCount = users.filter((u) => !u.aktywny).length;
-  const adminCount = users.filter((u) => u.role === 'admin').length;
+  const stats = [
+    { label: 'Wszystkie konta', value: users.length, color: 'text-primary-dark' },
+    { label: 'Aktywne', value: users.filter((u) => u.aktywny).length, color: 'text-primary-dark' },
+    { label: 'Zablokowane', value: users.filter((u) => !u.aktywny).length, color: 'text-danger' },
+    {
+      label: 'Administratorzy',
+      value: users.filter((u) => u.role === 'admin').length,
+      color: 'text-status-zakonczone'
+    }
+  ];
+
+  const emptyText = searchTerm
+    ? 'Nie znaleziono kont spełniających kryteria.'
+    : 'Brak kont użytkowników w bazie.';
+
+  const renderStatusPill = (aktywny) =>
+    aktywny ? (
+      <span className="inline-flex items-center gap-1 text-primary-dark bg-primary/10 border border-primary/30 px-2 py-0.5 rounded-full text-xs font-semibold">
+        ● Aktywny
+      </span>
+    ) : (
+      <span className="inline-flex items-center gap-1 text-danger bg-danger/10 border border-danger/40 px-2 py-0.5 rounded-full text-xs font-semibold">
+        ✕ Zablokowany
+      </span>
+    );
+
+  const renderRoleSelect = (u, isSelf, isBusy, fullWidth = false) => (
+    <select
+      value={u.role}
+      disabled={isBusy || (isSelf && u.role === 'admin')}
+      onChange={(e) => handleRoleChange(u, e.target.value)}
+      title={isSelf ? 'Nie możesz odebrać roli administratora samemu sobie' : 'Zmień rolę'}
+      className={`bg-card border border-line rounded px-2.5 py-1.5 text-xs font-semibold text-ink outline-none focus:border-primary/30 disabled:opacity-60 cursor-pointer ${
+        fullWidth ? 'w-full' : ''
+      }`}
+    >
+      {ROLES.map((r) => (
+        <option key={r} value={r}>
+          {r}
+        </option>
+      ))}
+    </select>
+  );
+
+  const renderActionButtons = (u, isSelf, isBusy, mobile = false) => (
+    <div className={`flex gap-2 flex-wrap items-center ${mobile ? 'w-full' : ''}`}>
+      <button
+        type="button"
+        disabled={isBusy || isSelf}
+        onClick={() => handleToggleStatus(u)}
+        title={
+          isSelf
+            ? 'Nie możesz zablokować własnego konta'
+            : u.aktywny
+            ? 'Zablokuj konto'
+            : 'Odblokuj konto'
+        }
+        className={`text-xs py-1.5 px-3 inline-flex items-center justify-center gap-1 ${
+          mobile ? 'flex-1' : ''
+        } ${u.aktywny ? 'btn-danger' : 'btn-primary'}`}
+      >
+        {u.aktywny ? 'Zablokuj' : 'Odblokuj'}
+      </button>
+      <button
+        type="button"
+        disabled={isBusy}
+        onClick={() => setPasswordModalUser(u)}
+        title="Ustaw nowe hasło dla tego konta"
+        className={`btn-secondary text-xs py-1.5 px-3 inline-flex items-center justify-center gap-1 ${
+          mobile ? 'flex-1' : ''
+        }`}
+      >
+        Zmień hasło
+      </button>
+    </div>
+  );
 
   return (
     <div>
       {/* Statystyki podsumowujące */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="bg-card border border-primary/30 rounded-xl p-4 flex flex-col shadow-sm">
-          <span className="text-2xl font-bold text-primary-dark">{totalCount}</span>
-          <span className="text-xs text-muted font-medium mt-1">Wszystkie konta</span>
-        </div>
-        <div className="bg-card border border-primary/30 rounded-xl p-4 flex flex-col shadow-sm">
-          <span className="text-2xl font-bold text-primary-dark">{activeCount}</span>
-          <span className="text-xs text-muted font-medium mt-1">Aktywne</span>
-        </div>
-        <div className="bg-card border border-primary/30 rounded-xl p-4 flex flex-col shadow-sm">
-          <span className="text-2xl font-bold text-danger">{blockedCount}</span>
-          <span className="text-xs text-muted font-medium mt-1">Zablokowane</span>
-        </div>
-        <div className="bg-card border border-primary/30 rounded-xl p-4 flex flex-col shadow-sm">
-          <span className="text-2xl font-bold text-status-zakonczone">{adminCount}</span>
-          <span className="text-xs text-muted font-medium mt-1">Administratorzy</span>
-        </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4 mb-6">
+        {stats.map((s) => (
+          <div
+            key={s.label}
+            className="bg-card border border-primary/30 rounded-xl p-3 sm:p-4 flex flex-col shadow-sm"
+          >
+            <span className={`text-xl sm:text-2xl font-bold ${s.color}`}>{s.value}</span>
+            <span className="text-xs text-muted font-medium mt-1">{s.label}</span>
+          </div>
+        ))}
       </div>
 
       {/* Pasek narzędzi i przycisk tworzenia nowego konta */}
-      <div className="flex justify-between items-center flex-wrap gap-3 mb-5">
-        <div className="flex gap-2 items-center flex-1 max-w-sm">
+      <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 mb-5">
+        <div className="flex gap-2 items-center flex-1 sm:max-w-sm">
           <input
             type="text"
             placeholder="Filtruj użytkowników..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="app-input py-2 text-sm"
+            className="app-input py-2 text-sm w-full"
           />
         </div>
         <div className="flex gap-2 items-center">
           <button
             type="button"
-            className="btn-secondary py-2 px-3 text-sm"
-            onClick={fetchUsers}
+            className="btn-secondary py-2 px-3 text-xs sm:text-sm flex-1 sm:flex-initial"
+            onClick={() => {
+              setLoading(true);
+              fetchUsers();
+            }}
             title="Odśwież listę kont"
           >
             Odśwież listę
           </button>
           <button
             type="button"
-            className="btn-primary py-2 px-4 text-sm"
+            className="btn-primary py-2 px-3 sm:px-4 text-xs sm:text-sm flex-1 sm:flex-initial"
             onClick={() => setShowCreateForm((prev) => !prev)}
           >
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <line x1="12" y1="5" x2="12" y2="19" />
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
@@ -213,6 +282,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                   type="password"
                   required
                   minLength={8}
+                  maxLength={72}
                   placeholder="Wpisz hasło..."
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
@@ -233,19 +303,15 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                 </select>
               </div>
             </div>
-            <div className="flex justify-end gap-3 mt-4">
+            <div className="flex flex-col sm:flex-row justify-end gap-2.5 sm:gap-3 mt-4">
               <button
                 type="button"
-                className="btn-secondary"
+                className="btn-secondary w-full sm:w-auto"
                 onClick={() => setShowCreateForm(false)}
               >
                 Anuluj
               </button>
-              <button
-                type="submit"
-                className="btn-primary"
-                disabled={creating}
-              >
+              <button type="submit" className="btn-primary w-full sm:w-auto" disabled={creating}>
                 {creating ? 'Tworzenie konta...' : 'Utwórz konto'}
               </button>
             </div>
@@ -253,8 +319,8 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
         </div>
       )}
 
-      {/* Tabela użytkowników */}
-      <div className="overflow-x-auto bg-card rounded-xl shadow-sm border border-line">
+      {/* Widok DESKTOP: Tabela użytkowników */}
+      <div className="hidden md:block overflow-x-auto bg-card rounded-xl shadow-sm border border-line">
         <table>
           <thead>
             <tr>
@@ -276,7 +342,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
             ) : filteredUsers.length === 0 ? (
               <tr>
                 <td colSpan={6} className="text-center py-8 text-muted font-medium">
-                  {searchTerm ? 'Nie znaleziono kont spełniających kryteria.' : 'Brak kont użytkowników w bazie.'}
+                  {emptyText}
                 </td>
               </tr>
             ) : (
@@ -284,72 +350,32 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                 const isSelf = u.id === currentUser?.id;
                 const isBusy = actionInProgressId === u.id;
                 return (
-                  <tr key={u.id} className={u.aktywny ? 'hover:bg-page' : 'bg-danger/10 hover:bg-danger/15'}>
+                  <tr
+                    key={u.id}
+                    className={u.aktywny ? 'hover:bg-page' : 'bg-danger/10 hover:bg-danger/15'}
+                  >
                     <td className="text-center font-bold text-ink">#{u.id}</td>
                     <td>
                       <div className="flex items-center gap-1.5">
                         <span className="font-semibold text-ink">{u.username}</span>
                         {isSelf && (
-                          <span className="bg-primary-dark text-inverse text-[0.65rem] font-bold px-1.5 py-0.5 rounded-full uppercase" title="Aktualnie zalogowany administrator">
+                          <span
+                            className="bg-primary-dark text-inverse text-[0.65rem] font-bold px-1.5 py-0.5 rounded-full uppercase"
+                            title="Aktualnie zalogowany administrator"
+                          >
                             Ty
                           </span>
                         )}
                       </div>
                     </td>
-                    <td>
-                      <select
-                        value={u.role}
-                        disabled={isBusy || (isSelf && u.role === 'admin')}
-                        onChange={(e) => handleRoleChange(u, e.target.value)}
-                        title={isSelf ? 'Nie możesz odebrać roli administratora samemu sobie' : 'Zmień rolę'}
-                        className="bg-card border border-line rounded px-2 py-1 text-xs font-semibold text-ink outline-none focus:border-primary/30 disabled:opacity-60 cursor-pointer"
-                      >
-                        <option value="pracownik">pracownik</option>
-                        <option value="serwisant">serwisant</option>
-                        <option value="magazynier">magazynier</option>
-                        <option value="admin">admin</option>
-                      </select>
-                    </td>
-                    <td>
-                      {u.aktywny ? (
-                        <span className="inline-flex items-center gap-1 text-primary-dark bg-primary/10 border border-primary/30 px-2 py-0.5 rounded-full text-xs font-semibold">
-                          ● Aktywny
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-danger bg-danger/10 border border-danger/40 px-2 py-0.5 rounded-full text-xs font-semibold">
-                          ✕ Zablokowany
-                        </span>
-                      )}
-                    </td>
+                    <td>{renderRoleSelect(u, isSelf, isBusy)}</td>
+                    <td>{renderStatusPill(u.aktywny)}</td>
                     <td>
                       <small className="text-muted">
                         {u.created_at ? new Date(u.created_at).toLocaleString('pl-PL') : '-'}
                       </small>
                     </td>
-                    <td>
-                      <div className="flex gap-1.5 flex-wrap items-center">
-                        <button
-                          type="button"
-                          disabled={isBusy || isSelf}
-                          onClick={() => handleToggleStatus(u)}
-                          title={isSelf ? 'Nie możesz zablokować własnego konta' : (u.aktywny ? 'Zablokuj konto' : 'Odblokuj konto')}
-                          className={`text-xs py-1 px-2.5 inline-flex items-center gap-1 ${
-                            u.aktywny ? 'btn-danger' : 'btn-primary'
-                          }`}
-                        >
-                          {u.aktywny ? 'Zablokuj' : 'Odblokuj'}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={isBusy}
-                          onClick={() => setPasswordModalUser(u)}
-                          title="Ustaw nowe hasło dla tego konta"
-                          className="btn-secondary text-xs py-1 px-2.5 inline-flex items-center gap-1"
-                        >
-                          Zmień hasło
-                        </button>
-                      </div>
-                    </td>
+                    <td>{renderActionButtons(u, isSelf, isBusy)}</td>
                   </tr>
                 );
               })
@@ -358,8 +384,63 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
         </table>
       </div>
 
+      {/* Widok MOBILE: Karty użytkowników (bez przewijania w bok) */}
+      <div className="block md:hidden space-y-3">
+        {loading ? (
+          <div className="bg-card rounded-xl border border-line p-6 text-center text-muted text-sm font-medium">
+            Ładowanie listy użytkowników...
+          </div>
+        ) : filteredUsers.length === 0 ? (
+          <div className="bg-card rounded-xl border border-line p-6 text-center text-muted text-sm font-medium">
+            {emptyText}
+          </div>
+        ) : (
+          filteredUsers.map((u) => {
+            const isSelf = u.id === currentUser?.id;
+            const isBusy = actionInProgressId === u.id;
+            return (
+              <div
+                key={u.id}
+                className={`rounded-xl border border-line p-4 shadow-xs space-y-3 ${
+                  u.aktywny ? 'bg-card' : 'bg-danger/10'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-line">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-xs font-bold text-muted">#{u.id}</span>
+                      <span className="font-bold text-ink text-sm break-all">{u.username}</span>
+                      {isSelf && (
+                        <span className="bg-primary-dark text-inverse text-[0.65rem] font-bold px-1.5 py-0.5 rounded-full uppercase">
+                          Ty
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[0.7rem] text-muted mt-0.5">
+                      Utworzono: {u.created_at ? new Date(u.created_at).toLocaleString('pl-PL') : '-'}
+                    </div>
+                  </div>
+                  <div className="shrink-0">{renderStatusPill(u.aktywny)}</div>
+                </div>
+
+                <div>
+                  <label className="text-[0.7rem] text-muted uppercase font-semibold block mb-1">
+                    Rola użytkownika
+                  </label>
+                  {renderRoleSelect(u, isSelf, isBusy, true)}
+                </div>
+
+                <div className="pt-2 border-t border-line">
+                  {renderActionButtons(u, isSelf, isBusy, true)}
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
       {passwordModalUser && (
-        <AdminPasswordModal
+        <PasswordModal
           userToEdit={passwordModalUser}
           onClose={() => setPasswordModalUser(null)}
           onPasswordChanged={fetchUsers}

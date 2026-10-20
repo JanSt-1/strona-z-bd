@@ -424,6 +424,57 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(insertQueries.length, 1);
         });
 
+        it('POST /api/zgloszenia z poprawnym opcjonalnym telefonem stacjonarnym zapisuje go w bazie', async () => {
+            allExecutedQueries = [];
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    telefon_stacjonarny: '221234567',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Brak obrazu',
+                    zgoda_rodo: true
+                });
+
+            assert.strictEqual(response.status, 201);
+            const insertQuery = allExecutedQueries.find(q => q.sql.includes('INSERT INTO zgloszenia'));
+            assert.ok(insertQuery);
+            assert.ok(insertQuery.values.includes('+48221234567'));
+        });
+
+        it('POST /api/zgloszenia z niepoprawnym telefonem stacjonarnym (mniej niż 9 cyfr) zwraca błąd 400', async () => {
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    telefon_stacjonarny: '22123',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Brak obrazu',
+                    zgoda_rodo: true
+                });
+
+            assert.strictEqual(response.status, 400);
+            assert.ok(response.body.error.includes('telefon_stacjonarny'));
+        });
+
         it('GET /api/zgloszenia bez tokenu powinien zwrócić status 401', async () => {
             const response = await request(app).get('/api/zgloszenia');
             assert.strictEqual(response.status, 401);
@@ -528,12 +579,44 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(response.body.error, 'Możesz oznaczyć jako naprawione tylko zlecenie przypisane do Ciebie.');
         });
 
-        it('Serwisant może oznaczyć jako naprawione dowolne zlecenie w_realizacji (200)', async () => {
-            setMockTicket({ status: 'w_realizacji', przypisany_pracownik_id: 1 });
+        it('Serwisant może oznaczyć jako naprawione zlecenie w_realizacji przypisane do siebie (200)', async () => {
+            setMockTicket({ status: 'w_realizacji', przypisany_pracownik_id: 50 });
             const response = await request(app)
                 .patch('/api/zgloszenia/1/naprawione')
                 .set('Authorization', `Bearer ${serwisantToken}`)
                 .send({ opis_naprawy: 'Serwisant naprawił płytę główną.' });
+            assert.strictEqual(response.status, 200);
+            assert.strictEqual(response.body.status, 'do_wysylki');
+        });
+
+        it('Serwisant NIE może oznaczyć jako naprawione zlecenia przypisanego do innego pracownika (403)', async () => {
+            setMockTicket({ status: 'w_realizacji', przypisany_pracownik_id: 1 });
+            const response = await request(app)
+                .patch('/api/zgloszenia/1/naprawione')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ opis_naprawy: 'Próba opisania cudzego zlecenia przez serwisanta' });
+            assert.strictEqual(response.status, 403);
+            assert.strictEqual(response.body.error, 'Serwisant nie może opisać zlecenia przypisanego do innego pracownika.');
+        });
+
+        it('Serwisant oznaczając nieprzypisane zlecenie jako naprawione zostaje do niego automatycznie przypisany (200)', async () => {
+            setMockTicket({ status: 'w_realizacji', przypisany_pracownik_id: null });
+            const response = await request(app)
+                .patch('/api/zgloszenia/1/naprawione')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ opis_naprawy: 'Serwisant naprawił i przypisał automatycznie' });
+            assert.strictEqual(response.status, 200);
+            assert.strictEqual(response.body.status, 'do_wysylki');
+            assert.strictEqual(response.body.przypisany_pracownik_id, 50);
+            assert.strictEqual(response.body.przypisany_pracownik_username, 'serwisant_testowy');
+        });
+
+        it('Admin MOŻE oznaczyć jako naprawione zlecenie nieprzypisane do żadnego pracownika (200)', async () => {
+            setMockTicket({ status: 'w_realizacji', przypisany_pracownik_id: null });
+            const response = await request(app)
+                .patch('/api/zgloszenia/1/naprawione')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ opis_naprawy: 'Admin naprawił nieprzypisane zlecenie' });
             assert.strictEqual(response.status, 200);
             assert.strictEqual(response.body.status, 'do_wysylki');
         });
@@ -771,15 +854,14 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(respMagazynier.status, 403);
         });
 
-        it('Admin może przypisać zlecenie do użytkownika o roli magazynier w /przypisz (200)', async () => {
+        it('Próba przypisania zlecenia do użytkownika o roli magazynier w /przypisz zwraca 400', async () => {
             setMockTicket({ status: 'do_wysylki' });
             const response = await request(app)
                 .patch('/api/zgloszenia/1/przypisz')
                 .set('Authorization', `Bearer ${adminToken}`)
                 .send({ pracownik_id: 2 }); // ID 2 to magazynier
-            assert.strictEqual(response.status, 200);
-            assert.strictEqual(response.body.przypisany_pracownik_id, 2);
-            assert.strictEqual(response.body.przypisany_pracownik_username, 'magazynier_testowy');
+            assert.strictEqual(response.status, 400);
+            assert.strictEqual(response.body.error, 'Zlecenie można przypisać wyłącznie do pracownika lub serwisanta.');
         });
 
         it('Próba przypisania zablokowanego użytkownika w /przypisz zwraca 400', async () => {
@@ -912,7 +994,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             // Upewniamy się, że ciąg 'Warszawa' NIE został wklejony do zapytania SQL
             assert.ok(!lastExecutedQuery.includes('Warszawa'));
             // I że znajduje się wyłącznie w parametrach jako '%Warszawa%'
-            assert.strictEqual(lastExecutedParams.filter(p => p === '%Warszawa%').length, 13);
+            assert.strictEqual(lastExecutedParams.filter(p => p === '%Warszawa%').length, 14);
 
             // Łączenie reguły roli pracownika z filtrem statusu i szukaj
             await request(app)
@@ -963,6 +1045,109 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(czyMoznaZmienic('pracownik', 'w_realizacji', 'do_wysylki').allowed, true);
             assert.strictEqual(czyMoznaZmienic('magazynier', 'do_wysylki', 'zakończone').allowed, true);
             assert.strictEqual(czyMoznaZmienic('admin', 'do_wysylki', 'zakończone').allowed, true);
+        });
+
+        it('wyznaczDozwoloneAkcje wyznacza akcje z jednego źródła (Single Source of Truth) dla ról', () => {
+            const wyznacz = app.wyznaczDozwoloneAkcje;
+            assert.strictEqual(typeof wyznacz, 'function');
+
+            const pracownik = { id: 10, role: 'pracownik' };
+            const serwisant = { id: 20, role: 'serwisant' };
+            const magazynier = { id: 30, role: 'magazynier' };
+            const admin = { id: 40, role: 'admin' };
+
+            // 1. Rola: PRACOWNIK
+            // Na 'nowe' pracownik nie ma akcji (nie może rozpocząć ani cofnąć)
+            assert.deepStrictEqual(wyznacz(pracownik, { id: 1, status: 'nowe', przypisany_pracownik_id: 10 }), []);
+            // Na 'w_realizacji' pracownik przypisany widzi tylko 'naprawione'
+            const pRealizacjiAssigned = wyznacz(pracownik, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 10 });
+            assert.strictEqual(pRealizacjiAssigned.length, 1);
+            assert.strictEqual(pRealizacjiAssigned[0].akcja, 'naprawione');
+            assert.strictEqual(pRealizacjiAssigned[0].typ, 'naprawa');
+            assert.strictEqual(pRealizacjiAssigned[0].na_status, 'do_wysylki');
+            // Na 'w_realizacji' pracownik NIEprzypisany nie ma żadnych akcji
+            assert.deepStrictEqual(wyznacz(pracownik, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 999 }), []);
+            // Na 'do_wysylki' oraz 'zakończone' pracownik nie ma akcji
+            assert.deepStrictEqual(wyznacz(pracownik, { id: 1, status: 'do_wysylki', przypisany_pracownik_id: 10 }), []);
+            assert.deepStrictEqual(wyznacz(pracownik, { id: 1, status: 'zakończone', przypisany_pracownik_id: 10 }), []);
+
+            // 2. Rola: SERWISANT
+            const sNowe = wyznacz(serwisant, { id: 1, status: 'nowe' });
+            assert.strictEqual(sNowe.length, 1);
+            assert.strictEqual(sNowe[0].akcja, 'przypisz');
+            assert.strictEqual(sNowe[0].typ, 'przypisanie');
+            assert.strictEqual(sNowe[0].etykieta, 'Przypisz');
+            assert.strictEqual(sNowe[0].na_status, 'w_realizacji');
+
+            // Serwisant na 'w_realizacji': dla zlecenia nieprzypisanego widzi akcję 'naprawione' (automatycznie przypisze go przy naprawie)
+            const sRealizacjiUnassigned = wyznacz(serwisant, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: null });
+            assert.strictEqual(sRealizacjiUnassigned.length, 1);
+            assert.strictEqual(sRealizacjiUnassigned[0].akcja, 'naprawione');
+            assert.strictEqual(sRealizacjiUnassigned[0].na_status, 'do_wysylki');
+
+            // Dla zlecenia przypisanego do siebie serwisant widzi akcję 'naprawione', ale dla przypisanego komuś innemu - brak akcji
+            const sRealizacjiOwn = wyznacz(serwisant, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 20 });
+            assert.strictEqual(sRealizacjiOwn.length, 1);
+            assert.strictEqual(sRealizacjiOwn[0].akcja, 'naprawione');
+            assert.strictEqual(sRealizacjiOwn[0].na_status, 'do_wysylki');
+            assert.deepStrictEqual(wyznacz(serwisant, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 5 }), []);
+
+            assert.deepStrictEqual(wyznacz(serwisant, { id: 1, status: 'do_wysylki', przypisany_pracownik_id: 5 }), []);
+            assert.deepStrictEqual(wyznacz(serwisant, { id: 1, status: 'zakończone', przypisany_pracownik_id: 5 }), []);
+
+            // 3. Rola: MAGAZYNIER
+            assert.deepStrictEqual(wyznacz(magazynier, { id: 1, status: 'nowe' }), []);
+            assert.deepStrictEqual(wyznacz(magazynier, { id: 1, status: 'w_realizacji' }), []);
+            const mWysylka = wyznacz(magazynier, { id: 1, status: 'do_wysylki' });
+            assert.strictEqual(mWysylka.length, 1);
+            assert.strictEqual(mWysylka[0].akcja, 'wyslij');
+            assert.strictEqual(mWysylka[0].typ, 'wysylka');
+            assert.strictEqual(mWysylka[0].etykieta, 'Oznacz jako wysłane');
+            assert.strictEqual(mWysylka[0].na_status, 'zakończone');
+            assert.deepStrictEqual(wyznacz(magazynier, { id: 1, status: 'zakończone' }), []);
+
+            // 4. Rola: ADMIN (zawiera akcje w przód oraz cofanie do wcześniejszych etapów)
+            const aNowe = wyznacz(admin, { id: 1, status: 'nowe' });
+            assert.strictEqual(aNowe.length, 1);
+            assert.strictEqual(aNowe[0].akcja, 'przypisz');
+            assert.strictEqual(aNowe[0].typ, 'przypisanie');
+            assert.strictEqual(aNowe[0].etykieta, 'Przypisz');
+
+            const aRealizacji = wyznacz(admin, { id: 1, status: 'w_realizacji' });
+            assert.strictEqual(aRealizacji.length, 2);
+            assert.strictEqual(aRealizacji.some(a => a.typ === 'cofnij' && a.na_status === 'nowe'), true);
+            assert.strictEqual(aRealizacji.some(a => a.typ === 'naprawa' && a.na_status === 'do_wysylki'), true);
+
+            const aWysylka = wyznacz(admin, { id: 1, status: 'do_wysylki' });
+            assert.strictEqual(aWysylka.length, 3);
+            assert.strictEqual(aWysylka.some(a => a.typ === 'cofnij' && a.na_status === 'nowe'), true);
+            assert.strictEqual(aWysylka.some(a => a.typ === 'cofnij' && a.na_status === 'w_realizacji'), true);
+            assert.strictEqual(aWysylka.some(a => a.typ === 'wysylka' && a.na_status === 'zakończone'), true);
+
+            const aZakonczone = wyznacz(admin, { id: 1, status: 'zakończone' });
+            assert.strictEqual(aZakonczone.length, 3);
+            assert.strictEqual(aZakonczone.every(a => a.typ === 'cofnij'), true);
+        });
+
+        it('GET /api/zgloszenia i GET /api/zgloszenia/:id zwracają dozwolone_akcje obliczone per rola', async () => {
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
+
+            // Pracownik (ID: 1) pobiera listę i widzi akcję naprawy
+            const resListP = await request(app).get('/api/zgloszenia').set('Authorization', `Bearer ${pracownikToken}`);
+            assert.strictEqual(resListP.status, 200);
+            assert.ok(Array.isArray(resListP.body.data[0].dozwolone_akcje));
+            assert.strictEqual(resListP.body.data[0].dozwolone_akcje[0].akcja, 'naprawione');
+
+            // Szczegóły GET /api/zgloszenia/1
+            const resDetailsP = await request(app).get('/api/zgloszenia/1').set('Authorization', `Bearer ${pracownikToken}`);
+            assert.strictEqual(resDetailsP.status, 200);
+            assert.ok(Array.isArray(resDetailsP.body.dozwolone_akcje));
+            assert.strictEqual(resDetailsP.body.dozwolone_akcje[0].akcja, 'naprawione');
+
+            // Admin widzi cofnięcie oraz naprawę
+            const resDetailsA = await request(app).get('/api/zgloszenia/1').set('Authorization', `Bearer ${adminToken}`);
+            assert.strictEqual(resDetailsA.status, 200);
+            assert.strictEqual(resDetailsA.body.dozwolone_akcje.length, 2);
         });
     });
 
@@ -1149,6 +1334,56 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             // Endpoint usunięcia zgłoszenia wymaga roli admin. Skoro w bazie ma pracownik -> 403 Forbidden!
             assert.strictEqual(res.status, 403);
         });
+
+        it('Ochrona przed próbami obejścia walidacji hasła spacjami, koercją typów i błędnymi ID', async () => {
+            // 1. Próba utworzenia użytkownika z hasłem z samych spacji lub krótkim hasłem dopełnionym spacjami
+            const resSpaces = await request(app)
+                .post('/api/admin/users')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ username: 'user_spacje', password: '        ', role: 'pracownik' });
+            assert.strictEqual(resSpaces.status, 400);
+
+            const resPadded = await request(app)
+                .post('/api/admin/users')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ username: 'user_padded', password: '  abc   ', role: 'pracownik' });
+            assert.strictEqual(resPadded.status, 400);
+            assert.strictEqual(resPadded.body.error, 'Hasło musi mieć co najmniej 8 znaków.');
+
+            const resTooLong = await request(app)
+                .post('/api/admin/users')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ username: 'user_toolong', password: 'a'.repeat(73), role: 'pracownik' });
+            assert.strictEqual(resTooLong.status, 400);
+            assert.strictEqual(resTooLong.body.error, 'Hasło nie może przekraczać 72 znaków.');
+
+            // 2. Próba zablokowania samego siebie przez admina z użyciem stringów "0" lub "false"
+            const resSelfZero = await request(app)
+                .patch('/api/admin/users/99/status')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ aktywny: '0' });
+            assert.strictEqual(resSelfZero.status, 400);
+            assert.ok(resSelfZero.body.error.includes('własnego konta'));
+
+            const resSelfFalseStr = await request(app)
+                .patch('/api/admin/users/99/status')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ aktywny: 'false' });
+            assert.strictEqual(resSelfFalseStr.status, 400);
+
+            // 3. Częściowo liczbowe ID (np. 99abc) nie przechodzi przez parsePositiveInt
+            const resPartialId = await request(app)
+                .patch('/api/admin/users/99abc/status')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ aktywny: false });
+            assert.strictEqual(resPartialId.status, 400);
+
+            // 4. POST /api/login z nie-tekstowym username/password zwraca 400 zamiast 500
+            const resBadLoginTypes = await request(app)
+                .post('/api/login')
+                .send({ username: ['admin'], password: { $ne: null } });
+            assert.strictEqual(resBadLoginTypes.status, 400);
+        });
     });
 
     describe('10. Zmiana własnego hasła użytkownika (PATCH /api/profil/haslo)', () => {
@@ -1332,6 +1567,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
         });
 
         it('GET /api/zgloszenia/:id/historia zwraca listę wpisów historii zgłoszenia', async () => {
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
             const resp = await request(app)
                 .get('/api/zgloszenia/1/historia')
                 .set('Authorization', `Bearer ${pracownikToken}`);
@@ -1342,6 +1578,21 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(resp.body[0].akcja, 'utworzenie');
             assert.strictEqual(resp.body[1].akcja, 'przypisanie');
             assert.strictEqual(resp.body[1].username, 'admin_testowy');
+        });
+
+        it('GET /api/zgloszenia/:id/historia blokuje dostęp (403) pracownikowi do cudzego zlecenia i magazynierowi do zlecenia w realizacji', async () => {
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 20 });
+            const respPracownik = await request(app)
+                .get('/api/zgloszenia/1/historia')
+                .set('Authorization', `Bearer ${pracownikToken}`);
+            assert.strictEqual(respPracownik.status, 403);
+            assert.strictEqual(respPracownik.body.error, 'Brak uprawnień do przeglądania tego zgłoszenia.');
+
+            const respMagazynier = await request(app)
+                .get('/api/zgloszenia/1/historia')
+                .set('Authorization', `Bearer ${magazynierToken}`);
+            assert.strictEqual(respMagazynier.status, 403);
+            assert.strictEqual(respMagazynier.body.error, 'Brak uprawnień do przeglądania tego zgłoszenia.');
         });
     });
 
@@ -1630,7 +1881,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(response.body.message, 'Zgłoszenie serwisowe zostało pomyślnie przyjęte.');
             const insertZgloszenie = allExecutedQueries.find(q => q.sql.includes('INSERT INTO zgloszenia'));
             assert.ok(insertZgloszenie, 'Powinno wykonać INSERT do tabeli zgloszenia');
-            assert.strictEqual(insertZgloszenie.values[11].length, 65535);
+            assert.strictEqual(insertZgloszenie.values[12].length, 65535);
         });
 
         it('Żądanie JSON przekraczające limit express.json (np. 80KB) zwraca błąd 413 Payload Too Large', async () => {
@@ -1701,9 +1952,16 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(res.headers['x-permitted-cross-domain-policies'], 'none');
         });
 
-        it('Nagłówek Content-Security-Policy jest wyłączony na czas kompilacji JSX w przeglądarce', async () => {
+        it('Nagłówek Content-Security-Policy jest aktywny i zawiera ścisłe dyrektywy bezpieczeństwa', async () => {
             const res = await request(app).get('/api/health');
-            assert.strictEqual(res.headers['content-security-policy'], undefined);
+            const csp = res.headers['content-security-policy'];
+            assert.ok(csp, 'Nagłówek Content-Security-Policy powinien być obecny');
+            assert.ok(csp.includes("default-src 'self'"));
+            assert.ok(csp.includes("script-src 'self'"));
+            assert.ok(!csp.includes("'unsafe-eval'"));
+            assert.ok(csp.includes("object-src 'none'"));
+            assert.ok(csp.includes('https://fonts.googleapis.com'));
+            assert.ok(csp.includes('https://fonts.gstatic.com'));
         });
     });
 

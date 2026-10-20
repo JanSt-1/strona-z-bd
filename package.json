@@ -1,26 +1,22 @@
 {
   "name": "strona_z_bd",
   "version": "1.0.0",
-  "description": "",
   "main": "index.js",
+  "license": "ISC",
+  "type": "commonjs",
   "workspaces": [
     "frontend"
   ],
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "dev:front": "npm --prefix frontend run dev",
-    "build": "npm --prefix frontend run build",
-    "build:frontend": "npm --prefix frontend run build",
     "dev:frontend": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "lint": "npm --prefix frontend run lint",
     "seed": "node seed.js",
-    "seed:zgloszenia": "node seed-zgloszenia.js",
+    "config:testowy": "node config-testowy.js",
     "test": "node --test"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
     "bcrypt": "^6.0.0",
     "dotenv": "^18.0.5",

@@ -1,199 +1,143 @@
-# Kontekst Projektu: System Obsługi Zgłoszeń Serwisowych
+# Project Context: Service Ticket Management System
 
-Kompleksowy system zgłoszeń serwisowych (SPA + REST API) w technologii **Express.js (v5)**, **MySQL** oraz **React** (modularny frontend w `frontend/` z bundlerem **Vite** i **Tailwind CSS**, kompilowany do katalogu produkcyjnego `frontend/dist/`).
+Full-stack service ticket management system (SPA + REST API) built with **Express.js (v5)**, **MySQL (`mysql2/promise`)**, and **React 19** (`frontend/` with **Vite** and **Tailwind CSS v4**, compiled to `frontend/dist/`).
 
 ---
 
-## 1. Architektura i Struktura Plików
+## 1. Architecture & File Structure
 
 ```
 strona_z_bd/
-├── .env / .env.example      # Zmienne: PORT, DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT, JWT_SECRET (.env jest w .gitignore)
-├── .github/workflows/ci.yml # CI (GitHub Actions): npm ci + testy
-├── README.md                # Instrukcja uruchomienia i opis projektu
-├── app.js                   # Instancja Express: middleware, RBAC, walidacja, JWT, routing, pula DB, serwowanie frontend/dist/
-├── db.js                    # Centralna konfiguracja połączenia MySQL (DB_PORT, createPool, createConnection)
-├── index.js                 # Entrypoint serwera: weryfikacja .env i JWT_SECRET, test DB, app.listen()
-├── app.test.js              # Testy integracyjne API (node:test + supertest, 118 testów, mock DB przez app.setPool())
-├── schemat.sql              # Schemat MySQL (tabele: uzytkownicy, zgloszenia, historia_zgloszen)
-├── seed.js                  # Inicjalizacja bazy i aplikowanie schemat.sql (`npm run seed`)
-├── seed-zgloszenia.js       # Generator 200 realistycznych zgłoszeń z historią zdarzeń (`npm run seed:zgloszenia`)
-├── create-user.js           # CLI: tworzenie kont z haszowaniem bcrypt (`node create-user.js <user> <pass> [rola]`)
-├── frontend/                # Źródła aplikacji SPA (React + Vite + Tailwind CSS v4)
-│   ├── src/                 # App.jsx (z ErrorBoundary), main.jsx, components/, pages/, api.js, constants.js, index.css
-│   ├── .oxlintrc.json       # Konfiguracja lintera oxlint (`npm --prefix frontend run lint`)
-│   ├── index.html           # Punkt wejścia Vite
-│   ├── public/              # Statyczne zasoby źródłowe frontendu (logo_mentor4.svg, favicon.svg)
-│   ├── dist/                # Katalog dystrybucyjny serwowany przez Express (wynik npm run build)
-│   ├── package.json         # Zależności frontendu (React, Tailwind, Vite)
-│   └── vite.config.js       # Konfiguracja Vite: proxy do backendu /api, outDir: dist, emptyOutDir: true
-└── context.md               # [TEN PLIK] Wytyczne architektoniczne i biznesowe dla deweloperów i agentów AI
+├── .env / .env.example      # Env vars: PORT, DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT, JWT_SECRET (.env in .gitignore)
+├── .github/workflows/ci.yml # GitHub Actions CI: npm ci + npm run lint + npm run build + npm test
+├── app.js                   # Express app: middleware, RBAC, validation, JWT, routes, DB pool, static serving of frontend/dist/
+├── db.js                    # Centralized MySQL config (DB_PORT, createPool, createConnection)
+├── index.js                 # Server entrypoint: .env & JWT_SECRET check, DB connection check, app.listen()
+├── app.test.js              # Integration tests (node:test + supertest, 127 tests, mocked DB via app.setPool())
+├── schemat.sql              # MySQL schema (tables: uzytkownicy, zgloszenia, historia_zgloszen)
+├── seed.js                  # DB initialization & schema application (`npm run seed`)
+├── config-testowy.js        # Local test setup (in .gitignore): seeds 4 accounts (pass: admin123) + 'nowe' tickets (`npm run config:testowy`)
+├── create-user.js           # CLI user creator with bcrypt hashing (`node create-user.js <user> <pass> [role]`)
+├── frontend/                # React + Vite + Tailwind CSS v4 SPA
+│   ├── src/                 # App.jsx (with ErrorBoundary), main.jsx, components/, pages/, api.js, constants.js, index.css
+│   ├── .oxlintrc.json       # oxlint config (`npm run lint`)
+│   ├── public/              # Static assets (logo_mentor4.svg, favicon.svg)
+│   ├── dist/                # Production build served by Express (`npm run build`)
+│   └── vite.config.js       # Vite config: /api proxy to backend, outDir: dist, emptyOutDir: true
+└── context.md               # Architectural, security, and business rules for developers and AI agents
 ```
 
-- **Separation of Concerns:** `app.js` eksportuje aplikację Express i udostępnia `app.setPool(pool)` / `app.getPool()`. `index.js` wyłącznie uruchamia serwer HTTP (`app.listen()`).
-- **Nagłówki bezpieczeństwa HTTP:** `app.use(helmet({ contentSecurityPolicy: false }))` zabezpiecza aplikację nagłówkami ochronnymi (m.in. `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Strict-Transport-Security`, `Referrer-Policy`). Frontend korzysta z bundlera Vite (brak Babel Standalone w przeglądarce).
-- **Parsowanie JSON i limit payloadu:** `app.use(express.json({ limit: '70kb' }))` jawnie ogranicza rozmiar ciała żądania, mieszcząc najdłuższy dopuszczalny opis usterki (65535 znaków) z narzutem struktury JSON, a odrzucając większe żądania kodem 413 Payload Too Large.
-- **Moduł bazy danych (`db.js`):** Centralizuje odczyt konfiguracji MySQL z `.env` (`DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_PORT`) i eksportuje pomocniki `createPool()` oraz `createConnection()`, wykorzystywane wspólnie przez `app.js`, `seed.js` i `create-user.js`.
-- **Pula połączeń:** `mysql2/promise` z parametryzowanymi zapytaniami (`?`).
+- **Separation of Concerns:** `app.js` exports the Express instance and exposes `app.setPool(pool)` / `app.getPool()`. `index.js` validates `JWT_SECRET`, tests the DB connection, and starts the HTTP server (`app.listen()`).
+- **HTTP Security & Payload Limits:** `helmet` sets security headers (`nosniff`, `SAMEORIGIN`, strict `Content-Security-Policy` with `script-src 'self'`, `object-src 'none'`, and Google Fonts allowlist). `express.json({ limit: '70kb' })` fits the max `opis_usterki` (65,535 chars + JSON overhead) and rejects larger payloads with `413 Payload Too Large`.
+- **Database (`db.js`):** Exports `dbConfig`, `createPool()`, and `createConnection()` shared across `app.js`, `seed.js`, `config-testowy.js`, and `create-user.js`. All queries use parameterized `?` placeholders.
 
 ---
 
-## 2. Baza Danych MySQL (`schemat.sql`, baza: `serwis_db`)
+## 2. MySQL Database Schema (`schemat.sql`, DB: `serwis_db`)
 
-### Tabela `uzytkownicy`
-- `id` (INT PK AI), `username` (VARCHAR(50) UNIQUE NOT NULL), `password_hash` (VARCHAR(255) NOT NULL), `role` (VARCHAR(20) DEFAULT 'pracownik'), `aktywny` (BOOLEAN NOT NULL DEFAULT TRUE), `created_at` (TIMESTAMP).
-- **Dozwolone role:** `admin`, `serwisant`, `pracownik`, `magazynier`.
-- **Blokowanie kont:** Użytkownicy z `aktywny = FALSE` nie mogą się zalogować (403 Forbidden). Zamiast usuwać powiązane z historią zgłoszeń konta, administrator zarządza flagą aktywności. Administrator nie może zablokować ani odebrać roli samemu sobie.
+### Table `uzytkownicy`
+- Columns: `id` (INT PK AI), `username` (VARCHAR(50) UNIQUE NOT NULL), `password_hash` (VARCHAR(255) NOT NULL), `role` (VARCHAR(20) DEFAULT `'pracownik'`), `aktywny` (BOOLEAN NOT NULL DEFAULT TRUE), `created_at` (TIMESTAMP).
+- **Allowed roles (`ALLOWED_ROLES`):** `admin`, `serwisant`, `pracownik`, `magazynier`.
+- **Account blocking:** Users with `aktywny = FALSE` cannot log in (`403 Forbidden`) and are rejected in `authenticateToken` (`401 Unauthorized`). Admins toggle `aktywny` instead of deleting accounts linked to ticket history. Admins cannot block or demote themselves (`400`).
 
-### Tabela `zgloszenia`
-- `id` (INT PK AI), `imie` (VARCHAR(50)), `nazwisko` (VARCHAR(50)), `nazwa_firmy` (VARCHAR(100) NULL), `adres` (TEXT), `kod_pocztowy` (VARCHAR(6)), `miasto` (VARCHAR(100)), `numer_telefonu` (VARCHAR(20)), `email` (VARCHAR(100)), `opis_usterki` (TEXT), `numer_fv` (VARCHAR(50)), `nip` (VARCHAR(10)), `przedmiot_zgloszenia` (VARCHAR(100)), `numer_seryjny` (VARCHAR(100) NULL), `data_zakupu` (DATE), `zgoda_rodo_data` (DATETIME NULL), `status` (ENUM('nowe', 'w_realizacji', 'do_wysylki', 'zakończone') DEFAULT 'nowe'), `created_at` (TIMESTAMP).
-- **Pola przepływu serwisowego:**
-  - `przypisany_pracownik_id` (INT NULL FK do `uzytkownicy.id` ON DELETE SET NULL)
-  - `opis_naprawy` (TEXT NULL), `opis_naprawy_data` (DATETIME NULL)
-  - `data_wyslania` (DATETIME NULL), `numer_listu` (VARCHAR(100) NULL)
-  - `zgoda_rodo_data` (DATETIME NULL - data i godzina potwierdzenia zapoznania się z informacją o przetwarzaniu danych osobowych przy wysyłce formularza)
+### Table `zgloszenia`
+- Columns: `id` (INT PK AI), `imie` (VARCHAR(50)), `nazwisko` (VARCHAR(50)), `nazwa_firmy` (VARCHAR(100) NULL), `adres` (TEXT), `kod_pocztowy` (VARCHAR(6)), `miasto` (VARCHAR(100)), `numer_telefonu` (VARCHAR(20)), `telefon_stacjonarny` (VARCHAR(20) NULL), `email` (VARCHAR(100)), `opis_usterki` (TEXT), `numer_fv` (VARCHAR(50)), `nip` (VARCHAR(10)), `przedmiot_zgloszenia` (VARCHAR(100)), `numer_seryjny` (VARCHAR(100) NULL), `data_zakupu` (DATE), `zgoda_rodo_data` (DATETIME NULL), `status` (ENUM(`'nowe'`, `'w_realizacji'`, `'do_wysylki'`, `'zakończone'`) DEFAULT `'nowe'`), `created_at` (TIMESTAMP).
+- **Workflow fields:** `przypisany_pracownik_id` (INT NULL FK -> `uzytkownicy.id` ON DELETE SET NULL), `opis_naprawy` (TEXT NULL), `opis_naprawy_data` (DATETIME NULL), `data_wyslania` (DATETIME NULL), `numer_listu` (VARCHAR(100) NULL).
 
-### Tabela `historia_zgloszen`
-- `id` (INT PK AI), `zgloszenie_id` (INT NOT NULL), `uzytkownik_id` (INT NULL FK do `uzytkownicy.id` ON DELETE SET NULL), `akcja` (VARCHAR(100) NOT NULL), `z_statusu` (VARCHAR(50) NULL), `na_status` (VARCHAR(50) NULL), `szczegoly` (TEXT NULL), `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP).
-- **Cel i zasada trwałości:** Zapisuje audyt każdej zmiany w zgłoszeniu: utworzenie (`utworzenie`), przypisanie lub odpięcie pracownika (`przypisanie`), zatwierdzenie naprawy (`naprawa`), zmiana statusu (`zmiana_statusu`), aktualizacja numeru listu (`zmiana_numeru_listu`), wysyłka (`wysyłka`) oraz usunięcie (`usunięcie`).
-- **Zachowanie historii przy usuwaniu zgłoszenia:** Kolumna `zgloszenie_id` **celowo nie posiada klucza obcego z `ON DELETE CASCADE`** do tabeli `zgloszenia`. Dzięki temu, gdy administrator usunie zgłoszenie (`DELETE /api/zgloszenia/:id`), cała dotychczasowa historia pozostaje w bazie, a przed usunięciem zgłoszenia rejestrowany jest wpis o usunięciu (np. `Wpis usunięty przez admin`).
-- **Funkcja pomocnicza:** `dodajWpisHistorii(zgloszenieId, uzytkownikId, akcja, zStatusu, naStatus, szczegoly)` wywoływana asynchronicznie z każdego endpointu modyfikującego zgłoszenie.
+### Table `historia_zgloszen`
+- Columns: `id` (INT PK AI), `zgloszenie_id` (INT NOT NULL), `uzytkownik_id` (INT NULL FK -> `uzytkownicy.id` ON DELETE SET NULL), `akcja` (VARCHAR(100) NOT NULL), `z_statusu` (VARCHAR(50) NULL), `na_status` (VARCHAR(50) NULL), `szczegoly` (TEXT NULL), `created_at` (TIMESTAMP DEFAULT CURRENT_TIMESTAMP).
+- **Audit persistence:** Records every ticket event (`utworzenie`, `przypisanie`, `naprawa`, `zmiana_statusu`, `zmiana_numeru_listu`, `wysyłka`, `usunięcie`) via `dodajWpisHistorii(...)`.
+- **No `ON DELETE CASCADE` on `zgloszenie_id`:** Intentionally omitted so that when an admin deletes a ticket (`DELETE /api/zgloszenia/:id`), its audit trail and the final `usunięcie` entry remain in `historia_zgloszen`.
 
 ---
 
-## 3. Role Użytkowników i Przejścia Statusów (RBAC)
+## 3. Role-Based Access Control (RBAC) & Status Lifecycle
 
-### Mapa przejść statusów i funkcja `czyMoznaZmienic(rola, zStatusu, naStatus)`
+### Status Transitions (`PRZEJSCIA` & `czyMoznaZmienic(rola, zStatusu, naStatus)`)
 ```javascript
+const STATUS_ORDER = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
 const PRZEJSCIA = {
     nowe:         { w_realizacji: ['admin', 'serwisant'] },
     w_realizacji: { do_wysylki: ['admin', 'serwisant', 'pracownik'] },
     do_wysylki:   { 'zakończone': ['admin', 'magazynier'] }
 };
 ```
-Wszystkie endpointy modyfikujące status zgłoszenia (`PATCH/PUT /api/zgloszenia/:id/status`, `PATCH /api/zgloszenia/:id/naprawione`, `PATCH /api/zgloszenia/:id/przypisz`) korzystają ze wspólnej funkcji walidacji:
-`czyMoznaZmienic(rola, zStatusu, naStatus)`:
-- **409 Conflict:** gdy przejście jest niedozwolone w cyklu życia (np. pomijanie etapów: `nowe` → `zakończone`, `w_realizacji` → `zakończone`) – komunikat: `Nie można zmienić statusu z »${zStatusu}« na »${naStatus}«.`.
-- **403 Forbidden:** gdy dane przejście istnieje w procesie lub jest cofnięciem, lecz rola użytkownika nie ma uprawnień (np. cofanie przez nie-admina, pracownik próbujący `nowe` → `w_realizacji`).
+- **409 Conflict:** Invalid lifecycle jump (e.g., `nowe` → `zakończone`) — returns `Nie można zmienić statusu z »${zStatusu}« na »${naStatus}«.`.
+- **403 Forbidden:** Valid lifecycle transition or rollback, but the user's role lacks permission.
 
-### Reguły przejść statusów:
-| Z → Na | Kto | Warunki i zachowanie |
+| Transition | Allowed Roles | Rules & Side Effects |
 | :--- | :--- | :--- |
-| `nowe` → `w_realizacji` | automatycznie przy przypisaniu (`admin`, `serwisant`) | W `PATCH /api/zgloszenia/:id/przypisz` przypisanie pracownika automatycznie zmienia status z `nowe` na `w_realizacji`. Dostępne także przez endpoint statusu. |
-| `w_realizacji` → `do_wysylki` | przypisany pracownik, serwisant, admin | **Wyłącznie przez `PATCH /api/zgloszenia/:id/naprawione`** (z wymaganym `opis_naprawy`). Automatycznie zapisuje `opis_naprawy_data = NOW()`. W `/status` zmiana na `do_wysylki` jest zablokowana (400). |
-| `do_wysylki` → `zakończone` | magazynier, admin | Oznaczenie jako wysłane. Magazynier ma obowiązek podać `numer_listu` (zapisywane `data_wyslania = NOW()`). |
-| **Cofanie statusu** | **tylko admin** | Zmiana statusu wstecz wg kolejności `['nowe', 'w_realizacji', 'do_wysylki', 'zakończone']` jest dozwolona wyłącznie dla `admin` (dla pozostałych ról: 403 Forbidden). **Czyszczenie danych późniejszych etapów:** cofnięcie przed `zakończone` czyści `data_wyslania` i `numer_listu` na `NULL`; cofnięcie przed `do_wysylki` czyści `opis_naprawy` i `opis_naprawy_data` na `NULL`, przenosząc treść opisu naprawy do wpisu w `historia_zgloszen`. |
-| **Niedozwolony skok** | **nikt** | Przejścia niezdefiniowane w `PRZEJSCIA` (np. `nowe` → `zakończone`) zwracają **409 Conflict**. |
+| `nowe` → `w_realizacji` | `admin`, `serwisant` | Triggered automatically when assigning a worker (`PATCH /api/zgloszenia/:id/przypisz`) or via `/status`. |
+| `w_realizacji` → `do_wysylki` | Assigned `pracownik`, `serwisant`, `admin` | **Exclusively via `PATCH /api/zgloszenia/:id/naprawione`** (requires `opis_naprawy`, sets `opis_naprawy_data = NOW()`). Blocked (`400`) on `/status`. **`serwisant` cannot describe a ticket assigned to another worker (`403`)**; describing an unassigned ticket auto-assigns it to that `serwisant`. |
+| `do_wysylki` → `zakończone` | `magazynier`, `admin` | Marks ticket as shipped (`data_wyslania = NOW()`). `magazynier` must provide `numer_listu`. |
+| **Rollback (backward)** | **`admin` only** | Other roles get `403`. Rolling back before `zakończone` clears `data_wyslania` and `numer_listu` to `NULL`; rolling back before `do_wysylki` clears `opis_naprawy` and `opis_naprawy_data` to `NULL` and appends the previous repair description to `historia_zgloszen.szczegoly`. |
 
-### Widoczność i uprawnienia ról:
-| Rola | Widoczność zgłoszeń | Przypisywanie pracownika | Zmiana statusu / Naprawa | Inne uprawnienia |
+### Role Permissions Matrix
+| Role | Ticket Visibility (`canViewTicket`) | Assign Worker | Status / Repair Actions | Other Permissions |
 | :--- | :--- | :--- | :--- | :--- |
-| **`admin`** | Wszystkie | Tak | Pełne przejścia w przód oraz **wyłączne prawo do cofania statusów** | Usuwanie (`DELETE`), pełne zarządzanie kontami (`/api/admin/users*` - lista bez hashy, role, hasła, blokady; bez możliwości blokady/odebrania roli sobie) |
-| **`serwisant`** | Wszystkie | Tak (auto: `nowe` → `w_realizacji`) | Może oznaczyć `w_realizacji` → `do_wysylki` (przez `/naprawione`) | — |
-| **`pracownik`** | **Tylko przypisane do siebie** | Nie | Może oznaczyć `w_realizacji` → `do_wysylki` (przez `/naprawione` dla własnych zadań) | — |
-| **`magazynier`** | **Tylko `do_wysylki` i `zakończone`** | Nie | Wyłącznie `do_wysylki` → `zakończone` (wymagany `numer_listu`) | — |
+| **`admin`** | All tickets | Yes (`pracownik`, `serwisant`, `admin`) | All forward transitions + **exclusive rollback rights** + edit `numer_listu` on any status | `DELETE /api/zgloszenia/:id`, full user management (`/api/admin/users*`) |
+| **`serwisant`** | All tickets | Yes (`pracownik`, `serwisant`; auto `nowe` → `w_realizacji`) | `w_realizacji` → `do_wysylki` via `/naprawione` **only for own or unassigned tickets** (`403` if assigned to someone else) | — |
+| **`pracownik`** | **Only assigned to self** | No | `w_realizacji` → `do_wysylki` via `/naprawione` (own tickets only) | — |
+| **`magazynier`** | **Only `do_wysylki` & `zakończone`** | No | `do_wysylki` → `zakończone` (requires `numer_listu`) + edit `numer_listu` on `zakończone` | — |
 
 ---
 
-## 4. Specyfikacja API REST
+## 4. REST API Specification
 
-Format odpowiedzi błędów: `{ error: string }`.
+All errors return `{ error: string }`. Polish error messages are strictly tested in `app.test.js` — do not alter their wording.
 
-| Metoda | Endpoint | Dostęp / Rola | Opis i Walidacja |
+| Method | Endpoint | Access / Role | Description & Validation |
 | :--- | :--- | :--- | :--- |
-| `POST` | `/api/zgloszenia` | Publiczny | Rejestracja zgłoszenia. Ochrona Honeypot (ukryte pole `website` – boty wypełniające pole otrzymują 201, lecz rekord nie jest zapisywany w bazie). Obowiązkowa zgoda RODO (`zgoda_rodo`: boolean/1; zapisuje `zgoda_rodo_data = NOW()`, błąd 400 w przypadku braku akceptacji). Rate limit: 5 zgłoszeń / 1 h z IP (pomijany w `NODE_ENV === 'test'`). Rygorystyczna walidacja: imię/nazwisko (bez cyfr, litery), NIP (10 cyfr), kod (`XX-XXX`), telefon (`+48` + 9 cyfr), przedmiot (z listy dozwolonych), data zakupu (`RRRR-MM-DD`, istniejąca w kalendarzu, nie z przyszłości; w przeciwnym razie 400). Limity długości zgodne z kolumnami (np. `numer_seryjny` max 100). `numer_seryjny` obowiązkowy wyłącznie dla monitorów i tablic interaktywnych (bez akcesoriów). Zwraca 201 `{ message, id }`. |
-| `POST` | `/api/login` | Publiczny | Logowanie (`username`, `password`). Rate limit: 10 prób / 15 min z IP (pomijany w `NODE_ENV === 'test'`). Weryfikacja hasła przez bcrypt. Blokada logowania dla kont z `aktywny = FALSE` (403). Zwraca 200 `{ token, user: { id, username, role } }`. |
-| `GET` | `/api/pracownicy` | JWT (`admin`, `serwisant`) | Pobiera listę aktywnych pracowników do przypisania (`pracownik`, `serwisant`, `magazynier`). |
-| `GET` | `/api/zgloszenia` | JWT (dowolna rola) | Lista zgłoszeń z obsługą paginacji, filtrów i wyszukiwania. Parametry query: `?szukaj=` (wyszukiwanie tekstowe LIKE we wszystkich polach, wyłącznie przez placeholdery `?`), `?status=` (filtr statusu), `?pracownik=` (filtr ID pracownika lub `nieprzypisane`), `?strona=` (numer strony, domyślnie 1, limit 25), `?limit=` (wielkość strony, max 100), `?sort=` (`asc` lub `desc` po dacie `created_at`). Zwraca obiekt `{ total, page, limit, totalPages, data, zgloszenia }`. Reguły ról RBAC (`pracownik` widzi tylko swoje, `magazynier` tylko `do_wysylki` i `zakończone`) są ściśle łączone (`AND`) z filtrami użytkownika. |
-| `GET` | `/api/zgloszenia/:id` | JWT (dowolna rola) | Pobranie pełnych szczegółów pojedynczego zgłoszenia wraz z historią zdarzeń (`historia: Array`). Ochrona RBAC: `pracownik` może podejrzeć tylko własne, `magazynier` tylko `do_wysylki` i `zakończone`, `admin` i `serwisant` dowolne (403 przy braku uprawnień, 404 dla nieistniejącego ID). Zwraca `{ ...ticket, historia, zgloszenie }`. |
-| `PATCH` | `/api/zgloszenia/:id/przypisz` | JWT (`admin`, `serwisant`) | Przypisanie pracownika (`{ pracownik_id }` lub `null`). Serwisant może przypisać pracownika, serwisanta lub magazyniera; administrator może przypisać dowolnego aktywnego użytkownika (w tym magazyniera po naprawie). Jeśli status to `nowe` i przypisywany jest pracownik/serwisant, status automatycznie przechodzi na `w_realizacji`. |
-| `PATCH` | `/api/zgloszenia/:id/naprawione` | JWT (`pracownik`, `serwisant`, `admin`) | **Jedyna droga do statusu `do_wysylki`**. Zatwierdzenie naprawy (`{ opis_naprawy }`). Ustawia status `do_wysylki` oraz `opis_naprawy_data = NOW()`. Dla pracownika dotyczy wyłącznie przypisanego zadania. Magazynier otrzymuje 403. |
-| `PATCH/PUT`| `/api/zgloszenia/:id/status` | JWT (zgodnie z RBAC) | Zmiana statusu wg mapy `PRZEJSCIA` z wyłączeniem `do_wysylki` w przód (blokada 400 – wymagane użycie `/naprawione`). Cofanie statusu dozwolone wyłącznie dla `admin`. **Czyszczenie etapów przy cofaniu:** cofnięcie przed `zakończone` resetuje `data_wyslania` i `numer_listu` na `NULL`; cofnięcie przed `do_wysylki` resetuje `opis_naprawy` i `opis_naprawy_data` na `NULL` oraz przenosi wycofany opis do wpisu historii (`szczegoly`). Walidacja `numer_listu`: max 100 znaków (VARCHAR(100)). Przy `zakończone` magazynier musi podać `numer_listu` (`data_wyslania = NOW()`). Magazynier może zaktualizować `numer_listu` dla zlecenia zakończonego, a **administrator może dodać lub zaktualizować `numer_listu` na dowolnym statusie zlecenia w dowolnym momencie**. |
-| `DELETE`| `/api/zgloszenia/:id` | JWT (`admin`) | Usunięcie zgłoszenia z bazy danych. Przed usunięciem w `historia_zgloszen` zapisywany jest wpis o akcji `usunięcie` z informacją o administratorze usuwającym rekord (historia powiązana z `zgloszenie_id` pozostaje trwale w bazie). |
-| `GET` | `/api/zgloszenia/:id/historia` | JWT (dowolna rola) | Pobranie chronologicznej historii zmian wybranego zgłoszenia (`id, zgloszenie_id, uzytkownik_id, username, akcja, z_statusu, na_status, szczegoly, created_at`). |
-| `GET` | `/api/admin/users` | JWT (`admin`) | Pobranie listy wszystkich kont użytkowników (`id, username, role, aktywny, created_at`) **bez pola `password_hash`!** |
-| `POST` | `/api/admin/users` | JWT (`admin`) | Utworzenie nowego użytkownika (`username` max 50 znaków, `password` min. 8 znaków, `role`). Haszowanie bcrypt (salt 10). |
-| `PATCH` | `/api/admin/users/:id` | JWT (`admin`) | Zmiana roli użytkownika (`{ role }`). Zabezpieczenie: admin nie może odebrać roli admina samemu sobie (400). |
-| `PATCH` | `/api/admin/users/:id/haslo` | JWT (`admin`) | Ustawienie nowego hasła dla użytkownika (`{ password }` min. 8 znaków). Haszowanie bcrypt. |
-| `PATCH` | `/api/admin/users/:id/status` | JWT (`admin`) | Zmiana/przełączenie statusu blokady konta (`{ aktywny }` lub toggle). Zabezpieczenie: admin nie może zablokować samego siebie (400). |
-| `PATCH` | `/api/profil/haslo` | JWT (każdy zalogowany) | Zmiana własnego hasła użytkownika (`{ currentPassword, newPassword }`). Weryfikuje stare hasło przez bcrypt, nowe hasło min. 8 znaków (400 przy błędzie). |
-| `GET` | `/api/health` | Publiczny | Health check serwera i bazy danych: `{ status: 'ok' }` (przy błędzie bazy: 500 `{ status: 'error' }` bez ujawniania `err.message` na zewnątrz; szczegóły błędu trafiają wyłącznie do `console.error`). |
+| `POST` | `/api/zgloszenia` | Public | Create ticket. Honeypot (`website` field -> returns fake `201` with `id: 0` without DB write). Requires `zgoda_rodo` (`zgoda_rodo_data = NOW()`). Rate limit: 5/1h per IP (skipped in `NODE_ENV === 'test'`). Validates: `imie`/`nazwisko` (letters only, no digits), `nip` (10 digits), `kod_pocztowy` (`XX-XXX`), `numer_telefonu` (`+48` + 9 digits), optional `telefon_stacjonarny` (9 digits, saved with `+48`), `przedmiot_zgloszenia` (from `ALLOWED_PRZEDMIOTY`), `data_zakupu` (`YYYY-MM-DD`, real calendar date, not in future), `numer_seryjny` (required only for interactive monitors/boards, max 100 chars). |
+| `POST` | `/api/login` | Public | Login (`username`, `password` verified as strings). Rate limit: 10/15m per IP. Bcrypt check. Blocked accounts (`!isUserActive`) get `403`. Returns `{ message, token, user }`. |
+| `GET` | `/api/pracownicy` | JWT (`admin`, `serwisant`) | Active repair staff (`role IN ('pracownik', 'serwisant')`). |
+| `GET` | `/api/zgloszenia` | JWT (any role) | Paginated ticket list. Query params: `?szukaj=` (parameterized `LIKE ?` across 14 columns), `?status=`, `?pracownik=` (ID or `nieprzypisane`), `?strona=` (default 1), `?limit=` (default 25, max 100), `?sort=` (`asc`/`desc` on `created_at`). Enforces RBAC visibility (`AND`). Each row includes `dozwolone_akcje` computed by `wyznaczDozwoloneAkcje(req.user, t)`. Returns `{ total, page, limit, totalPages, data, zgloszenia }`. |
+| `GET` | `/api/zgloszenia/:id` | JWT (any role) | Ticket details + `historia` + `dozwolone_akcje`. Protected by `canViewTicket(req.user, ticket)` (`404` if missing, `403` if unauthorized). |
+| `GET` | `/api/zgloszenia/:id/historia` | JWT (any role) | Chronological audit history for ticket `:id`. Protected by `canViewTicket(req.user, ticket)` (`404` / `403`). |
+| `PATCH` | `/api/zgloszenia/:id/przypisz` | JWT (`admin`, `serwisant`) | Assign/unassign worker (`{ pracownik_id }`). Target must be active `pracownik`/`serwisant` (or `admin` if caller is `admin`). Auto-transitions `nowe` → `w_realizacji`. |
+| `PATCH` | `/api/zgloszenia/:id/naprawione` | JWT (`pracownik`, `serwisant`, `admin`) | **Only forward path to `do_wysylki`**. Requires non-empty `opis_naprawy` (max 65,535 chars). Blocks `pracownik` on others' tickets (`403`) and `serwisant` on tickets assigned to another worker (`403`). |
+| `PATCH/PUT` | `/api/zgloszenia/:id/status` | JWT (RBAC) | Status change per `czyMoznaZmienic` (blocks forward `do_wysylki` with `400`). Handles admin rollbacks (with stage data cleanup) and `numer_listu` updates (max 100 chars). |
+| `DELETE` | `/api/zgloszenia/:id` | JWT (`admin`) | Logs `usunięcie` to `historia_zgloszen` and deletes ticket. |
+| `GET` | `/api/admin/users` | JWT (`admin`) | Lists users (`id, username, role, aktywny, created_at`) **without `password_hash`**. |
+| `POST` | `/api/admin/users` | JWT (`admin`) | Create user (`username` max 50, `password` 8–72 chars after `.trim()`, `role` in `ALLOWED_ROLES`). Bcrypt salt 10. `409` on duplicate username. |
+| `PATCH` | `/api/admin/users/:id` | JWT (`admin`) | Change role (`{ role }`). Admin cannot demote self (`400`). |
+| `PATCH` | `/api/admin/users/:id/haslo` | JWT (`admin`) | Reset user password (`password`/`haslo` 8–72 chars after `.trim()`). |
+| `PATCH` | `/api/admin/users/:id/status` | JWT (`admin`) | Toggle/set `aktywny` via `isUserActive` (alias: `/aktywny`). Admin cannot block self (`400`). |
+| `PATCH` | `/api/profil/haslo` | JWT (any role) | Self-service password change (`currentPassword`, `newPassword` 8–72 chars after `.trim()`). Verifies old password via bcrypt. |
+| `GET` | `/api/health` | Public | DB health check: `200 { status: 'ok' }` or `500 { status: 'error' }` (never leaks `err.message`). |
 
 ---
 
-## 5. Frontend SPA (`frontend/` -> `frontend/dist/`)
+## 5. Frontend SPA (`frontend/src/`)
 
-- Nowoczesna modularna architektura **React + Vite** z ostylowaniem w **Tailwind CSS v4** opartym na zmiennych CSS (patrz „System wizualny” poniżej).
-- `App.jsx` zawiera `ErrorBoundary` owijający widok główny: błąd renderowania pokazuje komunikat z przyciskami „Odśwież stronę” i „Wyczyść sesję i zresetuj” zamiast białego ekranu.
-- **Struktura katalogu `frontend/src/`:**
-  - `components/`:
-    - `Header.jsx`: Nagłówek z logo firmy, nawigacją i przełączaniem zakładek (na wąskim ekranie zakładki układają się pod logo, pełna szerokość).
-    - `Alert.jsx`: Komponent powiadomień sukcesu i błędów z animacją wejścia.
-    - `StatusBadge.jsx`: Pigułka statusu z kolorystyką ze zmiennych `--status-*` (nowe, w realizacji, do wysyłki, zakończone).
-    - `TicketDetailsModal.jsx`: Okno szczegółów zgłoszenia (klient, adres, NIP, FV, produkt, opis usterki, raport naprawy, przypisanie i wysyłka, historia pobierana z `GET /api/zgloszenia/:id`).
-    - `StatusControl.jsx`: Kontrolki zmiany statusu zależne od ról (RBAC) w wierszach tabeli.
-    - `ShipControl.jsx`: Formularz wysyłki dla magazyniera z walidacją numeru listu przewozowego na żywo.
-    - `RepairModal.jsx`: Modal raportu naprawy z zatwierdzeniem i automatycznym datowaniem.
-    - `TrackingNumberModal.jsx`: Modal wprowadzania/edycji numeru listu przewozowego.
-    - `ChangeOwnPasswordModal.jsx`: Modal zmiany własnego hasła (min. 8 znaków, weryfikacja dotychczasowego hasła).
-    - `AdminPasswordModal.jsx`: Modal resetowania hasła użytkownika przez administratora.
-    - `AdminUsersPanel.jsx`: Kompletny panel zarządzania kontami, rolami, blokadami i dodawaniem użytkowników.
-  - `pages/`:
-    - `PublicTicketForm.jsx`: Publiczny formularz zgłoszeniowy (Honeypot, 3 sekcje, kalendarz, NIP, warunkowy S/N, RODO).
-    - `LoginForm.jsx`: Karta logowania pracownika z obsługą JWT i błędów.
-    - `Dashboard.jsx`: Główny widok pracownika/serwisanta/magazyniera/admina z filtrami, wyszukiwarką, sortowaniem i paginacją. Lista zgłoszeń: na desktopie (`md+`) tabela o 6 kolumnach (nr, klient, produkt, przypisany, status, data; w kolumnie daty przyciski „Szczegóły” i „Usuń”), na telefonie karty jedna pod drugą. Pełne dane (adres, NIP, FV, opis usterki, raport naprawy) są w `TicketDetailsModal`. Lista przypisania pokazuje pełną nazwę użytkownika bez ucinania.
-  - `api.js`: Scentralizowany klient API (`apiFetch`, `apiJson`, `ticketApi`, `authApi`, `workerApi`, `userApi`, `healthApi`, nasłuchiwacz 401 `onUnauthorized`).
-  - `constants.js`: Lista produktów (`PRZEDMIOTY_LISTA`), 49 stref kierunkowych (`NUMERY_KIERUNKOWE`), etykiety statusów (`STATUS_LABELS`), role (`ROLES`), pusty stan formularza (`EMPTY_TICKET_FORM`).
-  - `index.css`: Jedyne miejsce definicji kolorów i odstępów (zmienne w `:root`), mapowanie na klasy Tailwinda (`@theme inline`), klasy komponentowe (przyciski, karty, pola, tabela, statusy, modale), bez statycznych inline `style={{}}`.
-- **System wizualny (obowiązujące zasady):**
-  - **Kolory wyłącznie ze zmiennych** w `:root` (`index.css`): `--bg-page`, `--bg-card` (pełny kolor, bez przezroczystości), `--text-main`, `--text-muted`, `--text-white`, `--primary` (zieleń z logo), `--primary-dark`, `--danger`, `--border`, 4 statusy `--status-nowe|w-realizacji|do-wysylki|zakonczone`. Weryfikacja: `grep -E "#[0-9a-fA-F]{3,6}|rgb" -r frontend/src` ma trafiać tylko w blok `:root`. Tinty i cienie przez `color-mix()` ze zmiennych. W `.jsx` używać klas `text-ink`, `text-muted`, `bg-page`, `bg-card`, `border-line`, `text-danger`, `bg-primary/10` itd. – nie klas palety Tailwinda (`slate-*`, `red-*`…) ani wartości `[#hex]`.
-  - **Odstępy** jako zmienne `--space-4/8/16/24/32`.
-  - **Przyciski w 3 wariantach:** `.btn-primary` (pełna zieleń), `.btn-secondary` (obramowanie; także „Odśwież”, „Wyloguj”), `.btn-danger` (czerwony).
-  - **Dostępność:** kontrast WCAG AA (min. 4,5:1) dla tekstu i przycisków; wąski ekran (375 px) bez przewijania w bok, formularz w jednej kolumnie; przy 1366 px tabela mieści się bez przewijania w bok.
-- **Budowanie i assety produkcyjne:** `npm run build` (lub `npm run build:frontend`) kompiluje aplikację Vite do `frontend/dist/` z hashowanymi assetami `assets/index-*.js` i `assets/index-*.css`, spełniając reguły 1-rocznego `Cache-Control: immutable`. Plik `index.html` serwowany jest z nagłówkiem `Cache-Control: no-store`.
-- **Ochrona antyspamowa Honeypot:** Ukryte pole formularza `website`. Zwykli użytkownicy go nie widzą ani nie wypełniają. Boty wypełniające pole otrzymują 201 Created, lecz zgłoszenie nie trafia do bazy danych.
-- **Klauzula informacyjna RODO i zgoda:** Rozwijana sekcja `<details>`/`<summary>` z klauzulą oraz obowiązkowy checkbox („Zapoznałem/am się z informacją o przetwarzaniu danych osobowych”).
-- **Bezpieczeństwo sesji i obsługa błędów:**
-  - Token JWT przechowywany w `localStorage` (`serwis_token`).
-  - **401 Unauthorized:** wygaśnięcie lub brak sesji. Automatyczne wylogowanie i powrót do ekranu logowania.
-  - **403 Forbidden:** brak uprawnień RBAC. Frontend nie wylogowuje, lecz wyświetla komunikat błędu z backendu w alercie.
+- **Single Source of Truth for Actions:** Backend computes `ticket.dozwolone_akcje` via `wyznaczDozwoloneAkcje`. `StatusControl.jsx` (used both in `Dashboard.jsx` and `TicketDetailsDrawer.jsx`) and `constants.js` (`getTicketActionState`) render only buttons present in `dozwolone_akcje`.
+- **Key Components (`frontend/src/components/`):**
+  - `Modal.jsx`: Shared portal modal base (`createPortal`, `Escape` key, scroll lock, header & error banner).
+  - `PasswordModal.jsx`: Unified modal for own password change (`userToEdit = null`) and admin password reset (`userToEdit = user`).
+  - `ShipModal.jsx`: Unified modal for shipping (`mode="ship"`) and tracking number editing (`mode="edit"`).
+  - `AssignWorkerModal.jsx`, `RepairModal.jsx`, `RollbackStatusModal.jsx`: Stage-specific workflow modals.
+  - `StatusControl.jsx`, `StatusBadge.jsx`, `TicketDetailsDrawer.jsx`, `AdminUsersPanel.jsx`, `Header.jsx`, `Alert.jsx`.
+- **Pages (`frontend/src/pages/`):** `PublicTicketForm.jsx` (3-step form, honeypot, RODO, `sessionStorage` confirmation view with `← Powrót na stronę główną` button), `LoginForm.jsx`, `Dashboard.jsx` (URL query sync, stable `fetchTickets` via `filtersRef` so searches fire only on form submit / filter change without duplicate requests, desktop table `hidden md:block` + mobile cards `block md:hidden`, skeleton loaders).
+- **Strict Visual System & Accessibility (`frontend/src/index.css`):**
+  - **Colors exclusively from `:root` CSS variables:** `--bg-page`, `--bg-card`, `--text-main`, `--text-muted`, `--text-white`, `--primary`, `--primary-dark`, `--danger`, `--border`, `--status-nowe|w-realizacji|do-wysylki|zakonczone`.
+  - **Zero raw hex/RGB outside `:root`:** `grep -E "#[0-9a-fA-F]{3,6}|rgb" -r frontend/src` must match only `:root` in `index.css`. Use semantic classes (`text-ink`, `text-muted`, `text-primary-dark`, `bg-page`, `bg-card`, `border-line`, `text-danger`, `.btn-primary`, `.btn-secondary`, `.btn-danger`) — never default Tailwind palettes (`slate-*`, `red-*`) or inline `style={{}}`.
+  - **WCAG AA, Responsiveness & Linter Cleanliness:** Contrast ratio $\ge 4.5:1$ for all text/badges (use `text-primary-dark` for green text on light backgrounds, `text-muted` without opacity modifiers). No horizontal scroll at `375px` (iPhone SE — both `Dashboard.jsx` and `AdminUsersPanel.jsx` switch to mobile card layouts below `md`) or `1366px` desktop. `npm run lint` (`oxlint`) must report **0 warnings and 0 errors** (no synchronous `setState` in `useEffect`, no ref writes during render).
 
 ---
 
-## 6. Uruchomienie i Testy
+## 6. Commands & Mandatory Security Rules
 
 ```bash
-npm install                     # Instalacja zależności całego projektu (backend + frontend przez npm workspaces)
-npm run build                   # Zbudowanie frontendu Vite do katalogu frontend/dist/
-npm run seed                    # Wgranie schematu bazy danych (schemat.sql)
-npm run seed:zgloszenia         # Wygenerowanie 200 realistycznych zgłoszeń z historią zdarzeń
-node create-user.js admin Haslo123 admin   # Utworzenie pierwszego konta (hasło min. 8 znaków)
-npm start                       # Start serwera produkcyjnego (port 3000, serwuje API oraz frontend/dist/)
-npm run dev                     # Start serwera backendowego w trybie watch
-npm run dev:front               # Start deweloperskiego serwera Vite (port 5173 z proxy do backendu :3000)
-npm test                        # Uruchomienie 118 testów integracyjnych (node --test app.test.js)
+npm install                                # Install root + frontend workspace dependencies
+npm run build                              # Build Vite SPA into frontend/dist/
+npm run lint                               # Run oxlint on frontend/src/
+npm test                                   # Run 127 integration tests (node --test app.test.js)
+npm run seed && npm run config:testowy     # Initialize schema, 4 test accounts (pass: admin123) & 200 'nowe' tickets
+node create-user.js admin Haslo123 admin   # Create admin account (password min 8 chars after .trim())
+npm start                                  # Start production server on PORT (default 3000)
 ```
 
----
-
-## 7. Kluczowe Zasady i Wytyczne dla Agentów AI
-
-1. **Separation of Concerns:**
-   - Całość logiki tras, middleware, JWT i walidacji musi znajdować się w `app.js`.
-   - `index.js` służy wyłącznie jako punkt wejściowy (`app.listen()`), weryfikuje obecność `JWT_SECRET` oraz sprawdza połączenie z bazą. Nigdy nie definiować tras w `index.js`.
-   - Testy integracyjne importują `app.js` i mockują bazę przez `app.setPool(mockPool)`. Oryginalna pula musi być przywracana w `after()`.
-2. **BEZWZGLĘDNY ZAKAZ TWORZENIA FURTEK I DZIUR W WALIDACJI (SECURITY INTEGRITY):**
-   - **Brak domyślnych sekretów:** Nigdy nie dodawać do kodu aplikacji produkcyjnej domyślnych/fallbackowych sekretów (np. `const JWT_SECRET = process.env.JWT_SECRET || 'sekret_testowy'`). W `app.js` brak `process.env.JWT_SECRET` musi natychmiast rzucać błąd `throw new Error(...)`.
-   - **Izolacja testów:** Zmienne testowe wolno konfigurować wyłącznie w plikach testowych (`app.test.js`) przed załadowaniem aplikacji (jeśli brak `JWT_SECRET`, test generuje losowy klucz przez `crypto.randomBytes(32)` – bez statycznych sekretów w repozytorium). Nigdy nie obniżać poziomu bezpieczeństwa kodu produkcyjnego na potrzeby testów.
-   - **Zakaz osłabiania walidacji:** Żaden agent nie ma prawa usuwać, omijać ani rozluźniać walidacji wejściowych (NIP, kod, regexy, role RBAC, bcrypt) pod pretekstem testów. Testy muszą spełniać produkcyjne wymagania walidacji.
-   - **Polityka haseł:** Wymóg minimum 8 znaków dla hasła przy tworzeniu użytkownika (`POST /api/admin/users`, `create-user.js`) oraz przy zmianie hasła (`PATCH /api/admin/users/:id/haslo`). Hasło krótsze niż 8 znaków zwraca błąd 400 (`Hasło musi mieć co najmniej 8 znaków.`).
-   - **Algorytm JWT:** Wymuszać jawnie algorytm `HS256` zarówno przy generowaniu (`jwt.sign`), jak i weryfikacji (`jwt.verify({ algorithms: ['HS256'] })`), chroniąc przed podatnościami Algorithm Confusion / `alg: none`.
-   - **Weryfikacja tożsamości i roli w bazie (`authenticateToken`):** Po sprawdzeniu podpisu JWT middleware `authenticateToken` każdorazowo odpytuje bazę danych o aktualny rekord użytkownika (`SELECT id, username, role, aktywny FROM uzytkownicy WHERE id = ?`). Jeśli użytkownik nie istnieje lub jest nieaktywny (`aktywny = FALSE`), żądanie jest natychmiast odrzucane z kodem `401 Unauthorized`. Rola użytkownika (`req.user.role`) jest pobierana bezpośrednio z bazy danych, a nie z payloadu tokenu, co uniemożliwia eskalację uprawnień poprzez sfałszowanie roli w tokenie.
-3. **Baza danych:** Zawsze stosować zapytania parametryzowane (`?`) w puli `mysql2/promise`. Nie wprowadzać twardo kodowanych poświadczeń do repozytorium.
-4. **Rozdział 401 vs 403:**
-   - Kod **401 Unauthorized**: zarezerwowany dla problemów z uwierzytelnieniem (brakujący, nieprawidłowy lub wygasły token JWT, błędne hasło, brak użytkownika w bazie lub zablokowane konto w `authenticateToken`). Frontend wylogowuje użytkownika wyłącznie przy 401.
-   - Kod **403 Forbidden**: zarezerwowany dla braku uprawnień (rola nie ma dostępu do endpointu, pracownik próbuje modyfikować cudze zlecenie, brak uprawnień do danego przejścia w RBAC, logowanie zablokowanego konta). Frontend nie wylogowuje, lecz wyświetla komunikat z serwera.
-5. **Walidacja daty (`data_zakupu`):**
-   - Wymaga formatu `RRRR-MM-DD`.
-   - Bezwzględna weryfikacja kalendarzowa: sprawdzanie czy po sparsowaniu `year`, `month`, `day` zgadzają się dokładnie z wartościami wejściowymi (eliminuje przelewanie np. 31 lutego na 3 marca).
-   - Zakaz dat z przyszłości: data zakupu nie może być późniejsza niż bieżący dzień.
+1. **No Fallback Secrets:** Never add a fallback `JWT_SECRET` in `app.js` (missing `process.env.JWT_SECRET` must immediately `throw new Error(...)`). Random test secrets belong only in `app.test.js` prior to importing `app.js`.
+2. **JWT & DB Auth (`authenticateToken`):** Explicitly enforce `algorithms: ['HS256']` in `jwt.sign` and `jwt.verify`. On every request, `authenticateToken` queries `SELECT id, username, role, aktywny FROM uzytkownicy WHERE id = ?` — rejecting inactive/missing users with `401` and taking `req.user.role` strictly from the DB.
+3. **401 vs 403 Separation:** `401` = authentication failure (triggers auto-logout on frontend via `onUnauthorized`). `403` = insufficient RBAC permissions or blocked account on login (displays alert without logging out).
+4. **Strict Validation & Type Safety:** Keep all regexes, field length checks, calendar date validation (`validatePurchaseDate`), strict integer ID parsing (`parsePositiveInt` requiring `/^\d+$/`), boolean coercion guard (`isUserActive` rejecting `0`/`false`/`'0'`/`'false'`), and password `.trim()` before length checks intact.

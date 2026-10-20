@@ -1,6 +1,6 @@
 # System Obsługi Zgłoszeń Serwisowych
 
-To pełna aplikacja webowa (SPA) umożliwiająca klientom szybkie rejestrowanie usterek urządzeń poprzez formularz publiczny. Pracownicy serwisu, serwisanci, magazynierzy oraz administratorzy mają do dyspozycji chroniony tokenem JWT panel zarządzania, w którym monitorują zgłoszenia, modyfikują ich statusy, przypisują zadania, sporządzają raporty napraw oraz rejestrują wysyłki paczek z numerem listu przewozowego. Rozwiązanie łączy backend w technologii Express.js i MySQL z nowoczesnym, responsywnym frontendem napisanym w React 18.
+To pełna aplikacja webowa (SPA) umożliwiająca klientom szybkie rejestrowanie usterek urządzeń poprzez formularz publiczny. Pracownicy serwisu, serwisanci, magazynierzy oraz administratorzy mają do dyspozycji chroniony tokenem JWT panel zarządzania, w którym monitorują zgłoszenia, modyfikują ich statusy, przypisują zadania, sporządzają raporty napraw oraz rejestrują wysyłki paczek z numerem listu przewozowego. Rozwiązanie łączy backend w technologii Express.js i MySQL z nowoczesnym, responsywnym frontendem napisanym w React 19.
 
 ---
 
@@ -10,7 +10,7 @@ Aplikacja jest rozdzielona zgodnie z zasadą separacji odpowiedzialności:
 - **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (nagłówki bezpieczeństwa helmet, limit rozmiaru JSON, serwowanie plików statycznych z `frontend/dist/`), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
 - **`db.js`**: Centralny moduł konfiguracji bazy danych MySQL uwzględniający `DB_PORT`, `DB_HOST`, `DB_USER`, `DB_PASSWORD` oraz `DB_NAME`. Udostępnia metody `createPool()` oraz `createConnection()`, z których korzystają `app.js`, `seed.js` oraz `create-user.js`.
 - **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację obecności `JWT_SECRET`, test połączenia z bazą MySQL oraz uruchomienie nasłuchiwania HTTP (`app.listen()`).
-- **`frontend/`**: Źródła interfejsu użytkownika SPA napisane w React 18 z bundlerem Vite i nowoczesnym stylem Tailwind CSS v4. Kod został podzielony modularnie na komponenty (`components/`), strony (`pages/`), scentralizowaną warstwę API (`api.js`) oraz stałe biznesowe (`constants.js`). Wynik kompilacji trafia do katalogu `frontend/dist/`.
+- **`frontend/`**: Źródła interfejsu użytkownika SPA napisane w React 19 z bundlerem Vite i nowoczesnym stylem Tailwind CSS v4 opartym na zmiennych CSS. Kod został podzielony modularnie na komponenty (`components/`), strony (`pages/`), scentralizowaną warstwę API (`api.js`) oraz stałe biznesowe (`constants.js`). Aplikacja zabezpieczona jest komponentem `ErrorBoundary`. Wynik kompilacji trafia do katalogu `frontend/dist/`.
 - **`frontend/dist/`**: Katalog dystrybucyjny serwowany przez Express. Zawiera skompilowany, zoptymalizowany pakiet produkcyjny wygenerowany poleceniem `npm run build` (`index.html`, zhaszowane `assets/index-*.js`, `assets/index-*.css`, `favicon.svg` oraz `logo_mentor4.svg`).
 - **`app.test.js`**: Zestaw testów integracyjnych API bazujący na natywnym runnerze `node:test` oraz bibliotece `supertest`.
 
@@ -57,18 +57,18 @@ Uruchom skrypt tworzący bazę `serwis_db` oraz tabele na podstawie schematu `sc
 ```bash
 npm run seed
 ```
-*(Skrypt ten aplikuje pełną strukturę tabel `uzytkownicy`, `zgloszenia` oraz `historia_zgloszen` z pliku `schemat.sql`, w tym pola `numer_listu`, `data_wyslania`, `opis_naprawy` itp.).*
+*(Skrypt ten aplikuje pełną strukturę tabel `uzytkownicy`, `zgloszenia` oraz `historia_zgloszen` z pliku `schemat.sql`, w tym pola `telefon_stacjonarny`, `numer_listu`, `data_wyslania`, `opis_naprawy` itp.).*
 
-### Krok 3a: Generowanie danych testowych (200 zgłoszeń)
-Aby wypełnić bazę 200 zgłoszeniami serwisowymi (z różnymi statusami, danymi klientów, usterkami, opisami napraw, listami przewozowymi i powiązaną historią zdarzeń), uruchom:
+### Krok 3a: Konfiguracja środowiska testowego (konta + 200 nowych zgłoszeń)
+Aby utworzyć 4 konta testowe (`admin`, `pracownik`, `serwisant`, `magazynier` z hasłem `admin123`) oraz wypełnić bazę 200 zgłoszeniami serwisowymi ze statusem `"nowe"`, uruchom lokalny skrypt (ignorowany przez Git):
 ```bash
-npm run seed:zgloszenia
+npm run config:testowy
 # lub bezpośrednio:
-node seed-zgloszenia.js
+node config-testowy.js
 ```
 Opcjonalnie:
-- `node seed-zgloszenia.js 50` – wygenerowanie innej liczby zgłoszeń (np. 50)
-- `node seed-zgloszenia.js --clean` – wyczyszczenie tabel `zgloszenia` i `historia_zgloszen` przed wygenerowaniem nowych rekordów
+- `node config-testowy.js 50` – wygenerowanie innej liczby zgłoszeń (np. 50)
+- `node config-testowy.js --clean` – wyczyszczenie tabel `zgloszenia` i `historia_zgloszen` przed wygenerowaniem nowych rekordów
 
 
 ### Krok 4: Utworzenie pierwszych kont użytkowników
@@ -115,8 +115,72 @@ npm run dev:front
 #### Favicon i identyfikacja wizualna
 Aplikacja posiada dedykowany favicon (`favicon.svg`) wygenerowany na bazie sygnetu logo Mentor, serwowany bezpośrednio w nagłówku strony i w pasku zakładek przeglądarki.
 
+#### Jakość kodu i linter frontendu
+Do weryfikacji i statycznej analizy kodu frontendu skonfigurowany jest linter **oxlint**:
+```bash
+npm --prefix frontend run lint
+```
+
 Po uruchomieniu aplikacja produkcyjna dostępna jest pod adresem:
 👉 **http://localhost:3000** (lub dev serwer frontendu pod **http://localhost:5173**)
+
+---
+
+## Interfejs użytkownika (UI/UX) i dostępność (WCAG AA)
+
+Frontend aplikacji został zaprojektowany z dbałością o estetykę, responsywność oraz ścisłe standardy dostępności WCAG AA:
+- **Trwały ekran potwierdzenia przyjęcia zgłoszenia (`PublicTicketForm`)**:
+  - Po pomyślnym przesłaniu formularza przez klienta zamiast znikającego po kilku sekundach alertu pojawia się dedykowany, estetyczny ekran potwierdzenia, który **nie znika samoczynnie**.
+  - Zawiera wyróżniony nagłówek **„Zgłoszenie nr {id} przyjęte”** z ikoną sukcesu,
+  - Zawiera sekcję **„Co dalej?”** z placeholderem czasu reakcji (**„skontaktujemy się w ciągu [X] dni roboczych”**) oraz czytelnym opisem kolejnych kroków weryfikacji i kontaktu,
+  - Prezentuje podsumowanie przesłanych danych (klient, sprzęt, email, telefon, data przyjęcia),
+  - Stan potwierdzenia jest zachowywany w `sessionStorage` (zapobiega utracie widoku przy przypadkowym odświeżeniu strony F5),
+  - Udostępnia przycisk: **„Powrót na stronę główną”** (czyszczący stan potwierdzenia i przywracający widok główny formularza).
+- **Spójny system tokenów i zmiennych CSS**: Wszystkie kolory oraz odstępy zdefiniowane są w bloku `:root` w `frontend/src/index.css` (`--bg-page`, `--bg-card`, `--text-main`, `--text-muted`, `--text-white`, `--primary`, `--danger`, `--border`, 4 statusy). Karty posiadają pełny, nieprzezroczysty kolor tła (`#ffffff`), co eliminuje artefakty graficzne i zapewnia wysoki współczynnik kontrastu tekstu (>4.5:1, a dla głównych elementów >6:1).
+- **Trzy ujednolicone warianty przycisków**:
+  - `.btn-primary` – pełna zieleń (akcje główne: wysłanie zgłoszenia, zapisanie naprawy, logowanie),
+  - `.btn-secondary` – eleganckie obramowanie (akcje pomocnicze, m.in. „Odśwież”, „Wyloguj”, „Wyczyść filtry”, „Zamknij panel”),
+  - `.btn-danger` – czerwony (akcje niebezpieczne / usuwanie).
+- **Zasada „Jedna akcja = jeden przycisk w jednym miejscu”**:
+  - Zamiast przeładowanych list rozwijanych statusów i ciasnych formularzy w komórkach tabeli, interfejs udostępnia dokładnie jeden, intuicyjny przycisk głównej akcji dla danego etapu zlecenia:
+    - **„Przypisz”** (etap `nowe`) – otwiera modal przypisania pracownika (`AssignWorkerModal`), a wybór pracownika automatycznie zmienia status na `w_realizacji`,
+    - **„Oznacz jako naprawione”** (etap `w_realizacji`) – otwiera modal raportu naprawy (`RepairModal`), w którym wprowadza się opis wykonanych prac (dla serwisanta automatycznie przypisuje zlecenie do niego),
+    - **„Oznacz jako wysłane”** (etap `do_wysylki`) – otwiera dedykowany modal wysyłki (`ShipModal`) z polem na numer listu przewozowego i podsumowaniem adresu odbiorcy,
+    - **„Cofnij status”** – osobny przycisk dostępny wyłącznie dla administratora na etapach zaawansowanych, otwierający modal potwierdzenia (`RollbackStatusModal`) z wyborem docelowego statusu i czytelnym ostrzeżeniem o wyczyszczeniu danych późniejszych etapów (np. numeru listu czy archiwizacji opisu naprawy).
+- **Pasek kontrolny nad listą, filtry i synchronizacja z adresem URL**:
+  - Nad tabelą znajduje się kompleksowy pasek sterujący zawierający:
+    - **Pole wyszukiwania** (`szukaj`) przeszukujące treść zgłoszeń, z dedykowanym przyciskiem `Szukaj` oraz szybkim czyszczeniem `✕`,
+    - **Filtr statusu** (`status` – *Wszystkie statusy*, *Nowe*, *W realizacji*, *Do wysyłki*, *Zakończone*),
+    - **Filtr przypisanego pracownika** (`pracownik` – *Wszyscy*, *Nieprzypisane*, lista pracowników z rolami),
+    - **Sortowanie po dacie** (`sort` – *od najnowszych* / *od najstarszych*),
+    - **Przycisk „Wyczyść filtry”** resetujący wszystkie kryteria wyszukiwania,
+    - **Kompaktowe stronicowanie w pasku** (`Strona X z Y` oraz przyciski `«` `»`), umożliwiające natychmiastową nawigację między stronami bez konieczności przewijania na sam dół listy.
+  - **Pełna synchronizacja stanu filtrów z adresem URL (Query Params)**:
+    - Wszystkie aktywne filtry oraz aktualna strona są na bieżąco utrwalane w adresie URL przeglądarki (np. `?status=do_wysylki&strona=2&szukaj=laptop`).
+    - Po odświeżeniu strony (`F5`) lub przesłaniu linku innemu pracownikowi filtry i strona nie znikają i zostają automatycznie załadowane z adresu.
+    - Obsługiwana jest również pełna nawigacja historii przeglądarki (przyciski *Wstecz* / *Dalej* przez zdarzenie `popstate`).
+- **Tabela desktopowa (`md+`) i podgląd usterki**:
+  - Zwięzła tabela o 6 kolumnach (*Nr*, *Klient*, *Produkt / Usterka*, *Przypisany*, *Status i akcja*, *Data*).
+  - Kolumna *Produkt / Usterka* zawiera 2-linijkowy skrót zgłoszenia (`.ticket-excerpt` z atrybutem `title`), co pozwala natychmiast rozróżnić zlecenia od tego samego klienta przy zachowaniu równej, stabilnej wysokości wierszy.
+  - Kolumna *Przypisany* prezentuje czytelny tekst pracownika (lub informację *— Nieprzypisane —*), bez dodatkowych przycisków – zgodnie z zasadą jednej akcji całe sterowanie etapem zlecenia skupione jest w kolumnie *Status i akcja*.
+  - Cały wiersz tabeli jest klikalny i otwiera panel boczny ze szczegółami (zastąpiono osobny przycisk „Szczegóły”).
+  - Tabela bez problemu mieści się na ekranach laptopów (1366 px) bez konieczności przewijania w bok.
+- **Karty mobilne (wąskie ekrany / telefon 375 px)**:
+  - Na telefonach zamiast poziomej tabeli wyświetlane są estetyczne karty zgłoszeń jedna pod drugą, mieszczące wszystkie kluczowe informacje, skrót usterki oraz pojedyncze przyciski akcji bez przewijania poziomego.
+  - Każda karta jest w całości klikalna i wysuwa panel boczny ze szczegółami.
+  - Zakładki w nagłówku układają się elastycznie pod logo na pełną szerokość.
+- **Wysuwany panel boczny szczegółów zgłoszenia (`TicketDetailsDrawer`)**:
+  - Kliknięcie w dowolne zgłoszenie (wiersz na desktopie lub kartę na telefonie) wysuwa estetyczny panel boczny z animacją slajdu.
+  - Panel zawiera: pełne dane klienta i rozliczenia (NIP, faktura/paragon, adres wysyłki, telefon komórkowy oraz opcjonalny telefon stacjonarny, email), pełne dane urządzenia i numer seryjny, kompletny opis usterki, sekcję realizacji z raportem prac naprawczych i datą zatwierdzenia, sekcję wysyłki z numerem listu przewozowego (oraz opcją edycji dla admina) oraz **graficzną pionową oś czasu zdarzeń (historię audytową)** z dedykowanymi ikonami pobieraną z `GET /api/zgloszenia/:id`.
+  - Posiada zintegrowany górny pasek akcji z pojedynczym przyciskiem etapu („Przypisz”, „Oznacz jako naprawione”, „Oznacz jako wysłane”, a dla admina „Cofnij status”), co pozwala przeprowadzić operację bezpośrednio podczas analizy szczegółów zlecenia.
+- **Puste stany i elegancki szkielet ładowania (Skeletons & Spinners)**:
+  - W przypadku braku wyników dla wybranych kryteriów filtrowania lub wyszukiwania, użytkownik widzi estetyczny komunikat **„Brak zgłoszeń dla wybranych filtrów”** wraz z przyciskiem **„Wyczyść filtry”**, który natychmiast przywraca pełną listę.
+  - Podczas pobierania danych z serwera (`loading`) tabela oraz karty zastępowane są płynnym szkieletem animowanym (`TableSkeleton` / `CardsSkeleton` z `animate-pulse`) oraz wskaźnikiem ładowania (`animate-spin`), eliminując migotanie i przesunięcia układu (CLS).
+- **Opcjonalny telefon stacjonarny (`telefon_stacjonarny`)**:
+  - Zarówno w formularzu publicznym, jak i w panelu szczegółów zgłoszenia uwzględniono obsługę telefonu stacjonarnego (z listą 49 polskich stref numeracyjnych).
+  - Pole jest w 100% opcjonalne (nie każdy klient posiada telefon stacjonarny), a po podaniu jest ściśle walidowane i zapisywane w formacie E.164 (`+48XXXXXXXXX`).
+- **Ochrona przed awariami (`ErrorBoundary`)**:
+  - Główny widok aplikacji w `App.jsx` objęty jest komponentem `ErrorBoundary`, który w przypadku nieprzewidzianego błędu w drzewie komponentów wyświetla bezpieczną kartę awaryjną z przyciskami przeładowania i zresetowania sesji zamiast pustego białego ekranu.
 
 ---
 
@@ -130,10 +194,10 @@ npm test
 ```
 *Skrypt wykonuje polecenie `node --test` z użyciem `supertest`. Dzięki wbudowanemu mockowaniu puli bazy danych w `app.test.js`, testy wykonują się błyskawicznie i nie wymagają aktywnego serwera MySQL.*
 
-Główne grupy przypadków testowych (łącznie **118 testów** w 18 suitach):
-1. **Uwierzytelnianie, logowanie, ochrona Honeypot, klauzula RODO i walidacja zgłoszeń**: walidacja pól obowiązkowych, obowiązkowy checkbox zgody RODO (odrzucenie 400 przy braku lub false, utrwalenie znacznika czasu w `zgoda_rodo_data` przy akceptacji), ochrona antyspamowa Honeypot (wypełnione pole `website` zwraca 201 bez zapisu do bazy), brak tokenu (401), błędne dane logowania (401), poprawny token JWT (200), blokada nieprawidłowych formatów i dat z przyszłości (400).
+Główne grupy przypadków testowych (łącznie **124 testy** w 18 suitach):
+1. **Uwierzytelnianie, logowanie, ochrona Honeypot, klauzula RODO i walidacja zgłoszeń**: walidacja pól obowiązkowych, obsługa opcjonalnego telefonu stacjonarnego (`telefon_stacjonarny` – zapis z prefiksem `+48` po podaniu 9 cyfr, dopuszczenie `null` gdy brak, błąd 400 przy niepoprawnym formacie), obowiązkowy checkbox zgody RODO (odrzucenie 400 przy braku lub false, utrwalenie znacznika czasu w `zgoda_rodo_data` przy akceptacji), ochrona antyspamowa Honeypot (wypełnione pole `website` zwraca 201 bez zapisu do bazy), brak tokenu (401), błędne dane logowania (401), poprawny token JWT (200), blokada nieprawidłowych formatów i dat z przyszłości (400).
 2. **Przejście `nowe` → `w_realizacji`**: automatyczne przypisanie zlecenia, uprawnienia serwisanta i admina (200), blokada pracownika i magazyniera (403).
-3. **Przejście `w_realizacji` → `do_wysylki`**: wyłączność dedykowanego endpointu `/naprawione`, wymóg opisu prac, uprawnienia przypisanego pracownika/serwisanta/admina (200), blokada magazyniera (403) oraz blokada przejścia ze statusu `nowe` (409 Conflict).
+3. **Przejście `w_realizacji` → `do_wysylki`**: wyłączność dedykowanego endpointu `/naprawione`, wymóg opisu prac, uprawnienia przypisanego pracownika/serwisanta/admina (200; zatwierdzenie naprawy przez serwisanta automatycznie przypisuje do niego to zlecenie), blokada magazyniera (403) oraz blokada przejścia ze statusu `nowe` (409 Conflict).
 4. **Przejście `do_wysylki` → `zakończone`**: uprawnienia magazyniera i admina, wymóg numeru listu przewozowego (`numer_listu`), walidacja długości (max 100 znaków), możliwość aktualizacji numeru listu na zakończonym zleceniu.
 5. **Cofanie statusu (Rollback)**: wyłączne prawo administratora do cofania statusu wstecz (200); blokada dla pozostałych ról (403).
 6. **Niedozwolone skoki w przód**: blokowanie pomijania kroków w procesie (409 Conflict) nawet dla administratora.
@@ -184,13 +248,14 @@ Główne grupy przypadków testowych (łącznie **118 testów** w 18 suitach):
 
 ---
 
-## Role użytkowników i przejścia statusów
+## Role użytkowników i przejścia statusów (Single Source of Truth)
 
-W systemie zaimplementowano role oraz ścisłą mapę przejść statusów (`PRZEJSCIA`):
-- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie zadań dowolnym użytkownikom (w tym serwisantom, pracownikom i magazynierom na dowolnym etapie), zmiana i cofanie statusów, dodawanie/edycja numeru listu przewozowego na dowolnym etapie, wysyłka paczek, usuwanie zgłoszeń (`DELETE`), zakładka **„Użytkownicy”** do pełnego zarządzania kontami (tworzenie, zmiana roli, zmiana hasła, blokowanie/odblokowywanie kont). Admin może zrobić wszystko w całym cyklu życia zgłoszenia.
-- **`serwisant`**: Przegląd wszystkich zleceń i przypisywanie ich pracownikom, serwisantom lub magazynierom (przypisanie zlecenia o statusie "nowe" automatycznie zmienia status na "w realizacji"). Może również oznaczyć zlecenie jako naprawione ("w realizacji" -> "do wysyłki") z opisem naprawy.
-- **`pracownik`**: Domyślnie widzi wyłącznie zlecenia przypisane do siebie. Może oznaczyć zlecenie jako naprawione ("w realizacji" -> "do wysyłki") ze sporządzeniem wymaganego opisu prac.
-- **`magazynier`**: Widzi zlecenia gotowe do wysyłki ("do wysyłki") oraz zakończone. Może oznaczyć zlecenie jako wysłane ("do wysyłki" -> "zakończone") podając numer listu przewozowego (`numer_listu`).
+W systemie reguły cyklu życia zgłoszeń znajdują się w jednym miejscu na backendzie (`czyMoznaZmienic` i `PRZEJSCIA`). Przy każdym zgłoszeniu zwracana jest dynamicznie obliczona tablica `dozwolone_akcje` (z uwzględnieniem roli użytkownika, statusu oraz przypisania). Dzięki temu frontend (`StatusControl.jsx` i `TicketDetailsDrawer.jsx`) nie powiela reguł i wyświetla wyłącznie legalne przyciski/akcje, eliminując ryzyko wywołania błędów `403 Forbidden` czy `409 Conflict`:
+
+- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie zadań dowolnym użytkownikom (w tym serwisantom, pracownikom i magazynierom na dowolnym etapie), zmiana i cofanie statusów (w panelu pojawia się wyłącznie lista dozwolonych statusów cofnięcia), dodawanie/edycja numeru listu przewozowego na dowolnym etapie, wysyłka paczek, usuwanie zgłoszeń (`DELETE`), zakładka **„Użytkownicy”** do pełnego zarządzania kontami (tworzenie, zmiana roli, zmiana hasła, blokowanie/odblokowywanie kont). Admin może przeprowadzić każdą poprawną operację w cyklu życia zgłoszenia.
+- **`serwisant`**: Przegląd wszystkich zleceń i przypisywanie ich pracownikom, serwisantom lub magazynierom (przypisanie zlecenia o statusie "nowe" automatycznie zmienia status na "w realizacji" lub rozpoczęcie realizacji przyciskiem). Może również oznaczyć zlecenie jako naprawione ("w realizacji" -> "do wysyłki") z opisem naprawy.
+- **`pracownik`**: Domyślnie widzi wyłącznie zlecenia przypisane do siebie. Gdy zadanie jest w statusie "w realizacji" i jest przypisane do danego pracownika, otrzymuje przycisk "Oznacz jako naprawione" ze sporządzeniem wymaganego opisu prac. Panel nigdy nie wyświetla pracownikowi nielegalnych przycisków startu czy cofania.
+- **`magazynier`**: Widzi zlecenia gotowe do wysyłki ("do wysyłki") oraz zakończone. Dla zleceń do wysyłki otrzymuje przycisk „Oznacz jako wysłane” (`ShipModal`), umożliwiający oznaczenie jako wysłane z podaniem numeru listu przewozowego (`numer_listu`).
 
 Każdy zalogowany użytkownik ma dodatkowo możliwość zmiany swojego hasła w nagłówku panelu po podaniu dotychczasowego hasła.
 
@@ -292,10 +357,12 @@ cd /var/www/serwis
 git clone <URL_TWOJEGO_REPOZYTORIUM> .
 ```
 
-#### Instalacja zależności produkcyjnych
-Na środowisku produkcyjnym instalujemy wyłącznie zależności runtime (pomijając biblioteki testowe, np. `supertest`):
+#### Instalacja zależności i zbudowanie frontendu
+Na serwerze instalujemy zależności projektu, budujemy produkcyjny pakiet frontendu do `frontend/dist/` i opcjonalnie usuwamy zbędne pakiety deweloperskie:
 ```bash
-npm ci --omit=dev
+npm ci
+npm run build
+npm prune --omit=dev
 ```
 
 #### Konfiguracja bazy danych i dedykowanego użytkownika MySQL

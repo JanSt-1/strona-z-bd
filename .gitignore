@@ -1,10 +1,12 @@
 # Zależności
 node_modules/
 
-# Środowisko i sekrety
+# Środowisko, sekrety i konfiguracja testowa
 .env
 .env.local
 *.local
+config-testowy.js
+config-testowy
 
 # Logi
 logs/
