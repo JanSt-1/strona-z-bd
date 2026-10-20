@@ -83,17 +83,21 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
   async function handleCreateUser(e) {
     e.preventDefault();
     setCreateError(null);
-    if (!newUsername.trim() || !newPassword) {
+    const cleanPass = newPassword.trim();
+    if (!newUsername.trim() || !cleanPass) {
       return setCreateError('Wypełnij nazwę użytkownika oraz hasło.');
     }
-    if (newPassword.length < 8) {
+    if (cleanPass.length < 8) {
       return setCreateError('Hasło musi mieć co najmniej 8 znaków.');
+    }
+    if (cleanPass.length > 72) {
+      return setCreateError('Hasło nie może przekraczać 72 znaków.');
     }
     setCreating(true);
     try {
       const data = await userApi.createUser({
         username: newUsername.trim(),
-        password: newPassword,
+        password: cleanPass,
         role: newRole
       });
       if (!data) return;
@@ -103,7 +107,8 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
       setNewPassword('');
       setNewRole('pracownik');
       setShowCreateForm(false);
-      fetchUsers({ showLoading: true });
+      setLoading(true);
+      fetchUsers();
     } catch (err) {
       setCreateError(err.message);
     } finally {
@@ -277,6 +282,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                   type="password"
                   required
                   minLength={8}
+                  maxLength={72}
                   placeholder="Wpisz hasło..."
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}

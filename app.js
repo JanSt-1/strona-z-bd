@@ -1067,6 +1067,7 @@ app.post('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =
     if (!cleanUsername || !cleanPassword) return fail(res, 'Podaj nazwę użytkownika i hasło.');
     if (cleanUsername.length > 50) return fail(res, 'Pole "username" przekracza maksymalną dozwoloną długość (50 znaków).');
     if (cleanPassword.length < 8) return fail(res, 'Hasło musi mieć co najmniej 8 znaków.');
+    if (cleanPassword.length > 72) return fail(res, 'Hasło nie może przekraczać 72 znaków.');
     if (!ALLOWED_ROLES.includes(role)) {
         return fail(res, `Nieprawidłowa rola. Dozwolone: ${ALLOWED_ROLES.join(', ')}`);
     }
@@ -1144,6 +1145,7 @@ app.patch('/api/admin/users/:id/haslo', authenticateToken, requireAdmin,
 
         const cleanPassword = password.trim();
         if (cleanPassword.length < 8) return fail(res, 'Hasło musi mieć co najmniej 8 znaków.');
+        if (cleanPassword.length > 72) return fail(res, 'Hasło nie może przekraczać 72 znaków.');
 
         const [users] = await currentPool.query('SELECT id, username FROM uzytkownicy WHERE id = ?', [id]);
         if (!users || users.length === 0) return fail(res, `Nie znaleziono użytkownika o ID ${id}.`, 404);
@@ -1203,6 +1205,7 @@ app.patch('/api/profil/haslo', authenticateToken,
 
         const cleanNewPass = newPass.trim();
         if (cleanNewPass.length < 8) return fail(res, 'Nowe hasło musi mieć co najmniej 8 znaków.');
+        if (cleanNewPass.length > 72) return fail(res, 'Nowe hasło nie może przekraczać 72 znaków.');
 
         const [rows] = await currentPool.query(
             'SELECT id, username, password_hash, aktywny FROM uzytkownicy WHERE id = ?',

@@ -9,7 +9,7 @@ Full-stack service ticket management system (SPA + REST API) built with **Expres
 ```
 strona_z_bd/
 ├── .env / .env.example      # Env vars: PORT, DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT, JWT_SECRET (.env in .gitignore)
-├── .github/workflows/ci.yml # GitHub Actions CI: npm ci + tests
+├── .github/workflows/ci.yml # GitHub Actions CI: npm ci + npm run lint + npm run build + npm test
 ├── app.js                   # Express app: middleware, RBAC, validation, JWT, routes, DB pool, static serving of frontend/dist/
 ├── db.js                    # Centralized MySQL config (DB_PORT, createPool, createConnection)
 ├── index.js                 # Server entrypoint: .env & JWT_SECRET check, DB connection check, app.listen()
@@ -99,11 +99,11 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
 | `PATCH/PUT` | `/api/zgloszenia/:id/status` | JWT (RBAC) | Status change per `czyMoznaZmienic` (blocks forward `do_wysylki` with `400`). Handles admin rollbacks (with stage data cleanup) and `numer_listu` updates (max 100 chars). |
 | `DELETE` | `/api/zgloszenia/:id` | JWT (`admin`) | Logs `usunięcie` to `historia_zgloszen` and deletes ticket. |
 | `GET` | `/api/admin/users` | JWT (`admin`) | Lists users (`id, username, role, aktywny, created_at`) **without `password_hash`**. |
-| `POST` | `/api/admin/users` | JWT (`admin`) | Create user (`username` max 50, `password` min 8 chars after `.trim()`, `role` in `ALLOWED_ROLES`). Bcrypt salt 10. `409` on duplicate username. |
+| `POST` | `/api/admin/users` | JWT (`admin`) | Create user (`username` max 50, `password` 8–72 chars after `.trim()`, `role` in `ALLOWED_ROLES`). Bcrypt salt 10. `409` on duplicate username. |
 | `PATCH` | `/api/admin/users/:id` | JWT (`admin`) | Change role (`{ role }`). Admin cannot demote self (`400`). |
-| `PATCH` | `/api/admin/users/:id/haslo` | JWT (`admin`) | Reset user password (`password`/`haslo` min 8 chars after `.trim()`). |
+| `PATCH` | `/api/admin/users/:id/haslo` | JWT (`admin`) | Reset user password (`password`/`haslo` 8–72 chars after `.trim()`). |
 | `PATCH` | `/api/admin/users/:id/status` | JWT (`admin`) | Toggle/set `aktywny` via `isUserActive` (alias: `/aktywny`). Admin cannot block self (`400`). |
-| `PATCH` | `/api/profil/haslo` | JWT (any role) | Self-service password change (`currentPassword`, `newPassword` min 8 chars after `.trim()`). Verifies old password via bcrypt. |
+| `PATCH` | `/api/profil/haslo` | JWT (any role) | Self-service password change (`currentPassword`, `newPassword` 8–72 chars after `.trim()`). Verifies old password via bcrypt. |
 | `GET` | `/api/health` | Public | DB health check: `200 { status: 'ok' }` or `500 { status: 'error' }` (never leaks `err.message`). |
 
 ---

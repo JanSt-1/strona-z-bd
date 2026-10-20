@@ -1350,6 +1350,13 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(resPadded.status, 400);
             assert.strictEqual(resPadded.body.error, 'Hasło musi mieć co najmniej 8 znaków.');
 
+            const resTooLong = await request(app)
+                .post('/api/admin/users')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ username: 'user_toolong', password: 'a'.repeat(73), role: 'pracownik' });
+            assert.strictEqual(resTooLong.status, 400);
+            assert.strictEqual(resTooLong.body.error, 'Hasło nie może przekraczać 72 znaków.');
+
             // 2. Próba zablokowania samego siebie przez admina z użyciem stringów "0" lub "false"
             const resSelfZero = await request(app)
                 .patch('/api/admin/users/99/status')

@@ -37,6 +37,11 @@ if (cleanPassword.length < 8) {
     process.exit(1);
 }
 
+if (cleanPassword.length > 72) {
+    console.error('❌ Błąd: Hasło nie może przekraczać 72 znaków.');
+    process.exit(1);
+}
+
 const allowedRoles = ['admin', 'pracownik', 'serwisant', 'magazynier'];
 if (!allowedRoles.includes(role)) {
     console.error(`❌ Nieprawidłowa rola: "${role}". Dostępne: admin, pracownik, serwisant, magazynier`);

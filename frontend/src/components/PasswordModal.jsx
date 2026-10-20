@@ -17,11 +17,15 @@ export default function PasswordModal({ userToEdit = null, onClose, onPasswordCh
     if (isOwnPassword && !currentPassword) {
       return setError('Podaj aktualne hasło.');
     }
-    if (!password.trim()) {
+    const cleanPass = password.trim();
+    if (!cleanPass) {
       return setError('Podaj nowe hasło.');
     }
-    if (password.length < 8) {
+    if (cleanPass.length < 8) {
       return setError('Hasło musi mieć co najmniej 8 znaków.');
+    }
+    if (cleanPass.length > 72) {
+      return setError('Hasło nie może przekraczać 72 znaków.');
     }
     if (password !== confirm) {
       return setError('Wpisane hasła nie są identyczne.');
@@ -85,6 +89,7 @@ export default function PasswordModal({ userToEdit = null, onClose, onPasswordCh
             type="password"
             required
             minLength={8}
+            maxLength={72}
             autoFocus={!isOwnPassword}
             placeholder="Wpisz nowe hasło (min. 8 znaków)..."
             value={password}
@@ -100,6 +105,7 @@ export default function PasswordModal({ userToEdit = null, onClose, onPasswordCh
             type="password"
             required
             minLength={8}
+            maxLength={72}
             placeholder="Powtórz nowe hasło..."
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
