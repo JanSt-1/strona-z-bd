@@ -41,6 +41,7 @@ cp .env.example .env
 ```
 Wypełnij plik danymi dostępowymi do lokalnej bazy MySQL oraz własnym kluczem JWT:
 ```ini
+NODE_ENV=production
 PORT=3000
 HOST=127.0.0.1
 DB_HOST=localhost
@@ -50,6 +51,7 @@ DB_NAME=serwis_db
 DB_PORT=3306
 JWT_SECRET=twoj_klucz_jtw
 ```
+`NODE_ENV=production` zapewnia ukrywanie szczegółów technicznych błędów, uniemożliwia wyciek stack trace'a w odpowiedziach HTTP oraz włącza optymalizacje wydajnościowe Express.js.
 `HOST` domyślnie przyjmuje `127.0.0.1` (aplikacja nasłuchuje wyłącznie na pętli zwrotnej za Reverse Proxy, chroniąc przed wystawieniem niezaszyfrowanego portu HTTP do sieci). Aby świadomie udostępnić aplikację w sieci lokalnej (np. podczas testów bez proxy), ustaw `HOST=0.0.0.0`.
 `JWT_SECRET` jest wymagany (brak domyślnej wartości – serwer się nie uruchomi). Wygeneruj silny klucz:
 ```bash

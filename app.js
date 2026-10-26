@@ -69,11 +69,22 @@ app.use(express.static(staticDir, {
 // --- Pomocniki ---
 const fail = (res, error, status = 400) => res.status(status).json({ error });
 
+// Bezpieczne logowanie błędów backendu (ochrona RODO: bez wycieku err.sql / err.sqlMessage z danymi osobowymi i haszami)
+function logError(msg, err) {
+    if (!err) {
+        console.error(msg);
+        return;
+    }
+    const code = err.code ? `[${err.code}] ` : '';
+    const message = err.message || (typeof err === 'string' ? err : 'Nieznany błąd');
+    console.error(`${msg} ${code}${message}`.trim());
+}
+
 const safe = (logMsg, errMsg, handler) => async (req, res) => {
     try {
         return await handler(req, res);
     } catch (err) {
-        console.error(logMsg, err);
+        logError(logMsg, err);
         return fail(res, errMsg, 500);
     }
 };
@@ -110,7 +121,7 @@ async function dodajWpisHistorii(zgloszenieId, uzytkownikId, akcja, zStatusu = n
             [zgloszenieId, uzytkownikId || null, akcja, zStatusu || null, naStatus || null, szczegoly || null]
         );
     } catch (err) {
-        console.error('Błąd podczas zapisywania historii zgłoszenia:', err);
+        logError('Błąd podczas zapisywania historii zgłoszenia:', err);
     }
 }
 
@@ -146,7 +157,7 @@ async function authenticateToken(req, res, next) {
         req.user = { id: dbUser.id, username: dbUser.username, role: dbUser.role };
         next();
     } catch (err) {
-        console.error('Błąd podczas weryfikacji użytkownika w authenticateToken:', err);
+        logError('Błąd podczas weryfikacji użytkownika w authenticateToken:', err);
         return fail(res, 'Błąd serwera podczas autoryzacji użytkownika.', 500);
     }
 }
@@ -167,7 +178,7 @@ app.get('/api/health', async (req, res) => {
         await currentPool.query('SELECT 1');
         return res.json({ status: 'ok' });
     } catch (err) {
-        console.error('Błąd połączenia z bazą danych w /api/health:', err);
+        logError('Błąd połączenia z bazą danych w /api/health:', err);
         return res.status(500).json({ status: 'error' });
     }
 });
@@ -391,7 +402,7 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
             id: result.insertId
         });
     } catch (err) {
-        console.error('Błąd podczas zapisywania zgłoszenia:', err);
+        logError('Błąd podczas zapisywania zgłoszenia:', err);
         return fail(res, 'Błąd serwera podczas zapisywania zgłoszenia do bazy danych.', 500);
     }
 });
@@ -409,6 +420,9 @@ const loginLimiter = rateLimit({
     skip: () => process.env.NODE_ENV === 'test'
 });
 
+// Stały hash bcrypt (koszt 10) używany do porównania hasła, gdy użytkownik nie istnieje w bazie (ochrona przed enumeracją loginów po czasie odpowiedzi)
+const DUMMY_PASSWORD_HASH = '$2b$10$eGNTFcaRQvqm.RrAD/kcSOQNfCFTrnqt8/1IiVV7woTU4BTCSvvXe';
+
 // 3. POST /api/login - Logowanie użytkownika i generowanie tokenu JWT (wyłącznie username, rate limited)
 app.post('/api/login', loginLimiter, async (req, res) => {
     const { username, password } = req.body || {};
@@ -425,10 +439,11 @@ app.post('/api/login', loginLimiter, async (req, res) => {
         );
 
         const user = rows?.[0];
-        // Hasło porównywane wyłącznie przez bcrypt (hash musi mieć prefiks $2a$/$2b$/$2y$)
-        const isPasswordValid = !!user && typeof user.password_hash === 'string' &&
-            /^\$2[aby]\$/.test(user.password_hash) &&
-            await bcrypt.compare(password, user.password_hash);
+        // Hasło porównywane wyłącznie przez bcrypt (hash musi mieć prefiks $2a$/$2b$/$2y$); gdy użytkownika nie ma, porównujemy ze stałym hashem (ochrona przed timing attack)
+        const hasValidHash = Boolean(user && typeof user.password_hash === 'string' && /^\$2[aby]\$/.test(user.password_hash));
+        const hashToCompare = hasValidHash ? user.password_hash : DUMMY_PASSWORD_HASH;
+        const passwordMatches = await bcrypt.compare(password, hashToCompare);
+        const isPasswordValid = hasValidHash && passwordMatches;
 
         if (!isPasswordValid) {
             return fail(res, 'Nieprawidłowa nazwa użytkownika lub hasło.', 401);
@@ -1196,8 +1211,21 @@ const handleToggleUserStatus = safe('Błąd podczas zmiany statusu konta:', 'Bł
 app.patch('/api/admin/users/:id/status', authenticateToken, requireAdmin, handleToggleUserStatus);
 app.patch('/api/admin/users/:id/aktywny', authenticateToken, requireAdmin, handleToggleUserStatus);
 
+// Rate limiting dla zmiany własnego hasła (5 prób / 15 minut po req.user.id)
+const hasloLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minut
+    limit: 5, // 5 prób na zalogowanego użytkownika (req.user.id)
+    keyGenerator: (req) => String(req.user.id),
+    message: {
+        error: 'Zbyt wiele prób zmiany hasła. Spróbuj ponownie za 15 minut.'
+    },
+    standardHeaders: true, // Zwraca nagłówki RateLimit-*
+    legacyHeaders: false, // Wyłącza nagłówki X-RateLimit-*
+    skip: () => process.env.NODE_ENV === 'test'
+});
+
 // 12. PATCH /api/profil/haslo - Każdy zalogowany użytkownik może zmienić własne hasło (wymaga podania starego hasła)
-app.patch('/api/profil/haslo', authenticateToken,
+app.patch('/api/profil/haslo', authenticateToken, hasloLimiter,
     safe('Błąd podczas zmiany własnego hasła:', 'Błąd serwera podczas zmiany hasła.', async (req, res) => {
         const { currentPassword, newPassword } = req.body || {};
         const oldPass = (currentPassword ?? req.body?.stare_haslo ?? '');
@@ -1232,20 +1260,30 @@ app.patch('/api/profil/haslo', authenticateToken,
     }));
 
 
-// Obsługa błędu przekroczenia limitu payloadu express.json (413 Payload Too Large) oraz błędów parsowania JSON
+// Obsługa błędów 404 dla nieistniejących tras API
+app.use('/api', (req, res) => {
+    res.status(404).json({ error: 'Endpoint API nie został odnaleziony.' });
+});
+
+// Centralna obsługa błędów aplikacji (zawsze zwraca JSON { error } bez ujawniania stack trace'a i ścieżek serwera)
 app.use((err, req, res, next) => {
+    if (res.headersSent) {
+        return next(err);
+    }
+    logError('Błąd w middleware aplikacji:', err);
+
     if (err && (err.type === 'entity.too.large' || err.status === 413)) {
         return res.status(413).json({ error: 'Przesłany ładunek żądania (payload) przekracza dozwolony limit.' });
     }
     if (err && err.status === 400 && 'body' in err) {
         return res.status(400).json({ error: 'Nieprawidłowy format JSON w ciele żądania.' });
     }
-    next(err);
-});
+    if (err instanceof URIError || err?.status === 400) {
+        return res.status(400).json({ error: 'Nieprawidłowe parametry zapytania URL.' });
+    }
 
-// Obsługa błędów 404 dla nieistniejących tras API
-app.use('/api', (req, res) => {
-    res.status(404).json({ error: 'Endpoint API nie został odnaleziony.' });
+    const statusCode = typeof err?.status === 'number' && err.status >= 400 && err.status < 600 ? err.status : 500;
+    return res.status(statusCode).json({ error: 'Wystąpił wewnętrzny błąd serwera.' });
 });
 
 app.czyMoznaZmienic = czyMoznaZmienic;
@@ -1256,6 +1294,9 @@ app.STATUS_LABELS = STATUS_LABELS;
 app.dodajWpisHistorii = dodajWpisHistorii;
 app.loginLimiter = loginLimiter;
 app.zgloszeniaLimiter = zgloszeniaLimiter;
+app.hasloLimiter = hasloLimiter;
+app.DUMMY_PASSWORD_HASH = DUMMY_PASSWORD_HASH;
 app.validateJwtSecret = validateJwtSecret;
+app.logError = logError;
 
 module.exports = app;

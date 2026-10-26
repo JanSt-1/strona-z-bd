@@ -504,6 +504,29 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(response.status, 200);
             assert.ok(response.body.token);
         });
+
+        it('POST /api/login dla nieistniejącego użytkownika wykonuje bcrypt.compare ze stałym hashem (ochrona przed timing attack) i zwraca 401', async () => {
+            const origCompare = bcrypt.compare;
+            const compareCalls = [];
+            bcrypt.compare = async (pass, hash) => {
+                compareCalls.push({ pass, hash });
+                return origCompare.call(bcrypt, pass, hash);
+            };
+
+            try {
+                const response = await request(app)
+                    .post('/api/login')
+                    .send({ username: 'nieistniejacy_uzytkownik_xyz', password: 'DowolneHaslo123' });
+
+                assert.strictEqual(response.status, 401);
+                assert.strictEqual(response.body.error, 'Nieprawidłowa nazwa użytkownika lub hasło.');
+                assert.strictEqual(compareCalls.length, 1, 'bcrypt.compare powinno zostać wywołane dokładnie raz');
+                assert.strictEqual(compareCalls[0].pass, 'DowolneHaslo123');
+                assert.strictEqual(compareCalls[0].hash, app.DUMMY_PASSWORD_HASH);
+            } finally {
+                bcrypt.compare = origCompare;
+            }
+        });
     });
 
     describe('2. Przejście "nowe" → "w_realizacji"', () => {
@@ -1421,6 +1444,42 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(res.body.error, 'Aktualne hasło jest nieprawidłowe.');
         });
 
+        it('PATCH /api/profil/haslo: limiter po req.user.id blokuje 6. próbę w ciągu 15 minut kodem 429, nie blokując innego użytkownika z tego samego IP', async () => {
+            assert.ok(app.hasloLimiter, 'hasloLimiter powinien być wyeksportowany');
+            const prevEnv = process.env.NODE_ENV;
+            process.env.NODE_ENV = 'production';
+            try {
+                for (let i = 1; i <= 5; i++) {
+                    const res = await request(app)
+                        .patch('/api/profil/haslo')
+                        .set('Authorization', `Bearer ${pracownikToken}`)
+                        .send({ currentPassword: 'zleHaslo123', newPassword: 'NoweSuperHaslo123' });
+                    assert.strictEqual(res.status, 400);
+                }
+
+                // 6. próba dla tego samego req.user.id (1) zostaje zablokowana (429)
+                const blockedRes = await request(app)
+                    .patch('/api/profil/haslo')
+                    .set('Authorization', `Bearer ${pracownikToken}`)
+                    .send({ currentPassword: 'prawidloweHaslo123', newPassword: 'NoweSuperHaslo123' });
+                assert.strictEqual(blockedRes.status, 429);
+                assert.strictEqual(blockedRes.body.error, 'Zbyt wiele prób zmiany hasła. Spróbuj ponownie za 15 minut.');
+
+                // Inny zalogowany użytkownik (req.user.id = 20) z tego samego IP nie jest zablokowany
+                const otherUserRes = await request(app)
+                    .patch('/api/profil/haslo')
+                    .set('Authorization', `Bearer ${innyPracownikToken}`)
+                    .send({ currentPassword: 'prawidloweHaslo123', newPassword: 'NoweSuperHaslo123' });
+                assert.strictEqual(otherUserRes.status, 200);
+            } finally {
+                process.env.NODE_ENV = prevEnv;
+                if (typeof app.hasloLimiter.resetKey === 'function') {
+                    app.hasloLimiter.resetKey('1');
+                    app.hasloLimiter.resetKey('20');
+                }
+            }
+        });
+
         it('PATCH /api/profil/haslo: poprawne aktualne i nowe hasło zwraca 200', async () => {
             const res = await request(app)
                 .patch('/api/profil/haslo')
@@ -1771,9 +1830,10 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
     });
 
     describe('13. Rate limiting (POST /api/zgloszenia oraz POST /api/login)', () => {
-        it('zgloszeniaLimiter i loginLimiter są wyeksportowane i poprawnie skonfigurowane', () => {
+        it('zgloszeniaLimiter, loginLimiter i hasloLimiter są wyeksportowane i poprawnie skonfigurowane', () => {
             assert.ok(app.zgloszeniaLimiter, 'zgloszeniaLimiter powinien być zdefiniowany');
             assert.ok(app.loginLimiter, 'loginLimiter powinien być zdefiniowany');
+            assert.ok(app.hasloLimiter, 'hasloLimiter powinien być zdefiniowany');
         });
 
         it('W środowisku testowym (NODE_ENV === "test") rate limiter na POST /api/zgloszenia jest pomijany', async () => {
@@ -1856,6 +1916,53 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
 
         it('Aplikacja ma skonfigurowane app.set("trust proxy", "loopback")', () => {
             assert.strictEqual(app.get('trust proxy'), 'loopback');
+        });
+
+        it('Bezpośrednio na instancji app za reverse proxy: 6. zgłoszenie z X-Forwarded-For: 1.1.1.1 zwraca 429, a z X-Forwarded-For: 2.2.2.2 zwraca 201', async () => {
+            const prevEnv = process.env.NODE_ENV;
+            process.env.NODE_ENV = 'production';
+            const validPayload = {
+                imie: 'Jan',
+                nazwisko: 'Kowalski',
+                adres: 'ul. Testowa 1',
+                kod_pocztowy: '00-001',
+                miasto: 'Warszawa',
+                numer_telefonu: '+48123456789',
+                email: 'jan@example.com',
+                przedmiot_zgloszenia: 'Projektory',
+                data_zakupu: '2026-01-01',
+                numer_fv: 'FV/123/2026',
+                nip: '1234567890',
+                opis_usterki: 'Brak obrazu',
+                zgoda_rodo: true
+            };
+            try {
+                for (let i = 1; i <= 5; i++) {
+                    const res = await request(app)
+                        .post('/api/zgloszenia')
+                        .set('X-Forwarded-For', '1.1.1.1')
+                        .send(validPayload);
+                    assert.strictEqual(res.status, 201);
+                }
+
+                const blockedRes = await request(app)
+                    .post('/api/zgloszenia')
+                    .set('X-Forwarded-For', '1.1.1.1')
+                    .send(validPayload);
+                assert.strictEqual(blockedRes.status, 429);
+
+                const otherIpRes = await request(app)
+                    .post('/api/zgloszenia')
+                    .set('X-Forwarded-For', '2.2.2.2')
+                    .send(validPayload);
+                assert.strictEqual(otherIpRes.status, 201);
+            } finally {
+                process.env.NODE_ENV = prevEnv;
+                if (typeof app.zgloszeniaLimiter.resetKey === 'function') {
+                    app.zgloszeniaLimiter.resetKey('1.1.1.1');
+                    app.zgloszeniaLimiter.resetKey('2.2.2.2');
+                }
+            }
         });
 
         it('Za reverse proxy (trust proxy: loopback) z włączonym limiterem: 6. zgłoszenie z X-Forwarded-For: 1.1.1.1 zwraca 429, a z X-Forwarded-For: 2.2.2.2 zwraca 201', async () => {
@@ -2037,6 +2144,23 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
 
             assert.strictEqual(response.status, 400);
             assert.strictEqual(response.body.error, 'Nieprawidłowy format JSON w ciele żądania.');
+        });
+
+        it('Żądanie z nieprawidłowo zakodowanym parametrem URI (np. GET /api/zgloszenia/%E0%A4%A) zwraca JSON 400 bez wycieku stack trace\'a', async () => {
+            const response = await request(app).get('/api/zgloszenia/%E0%A4%A');
+
+            assert.strictEqual(response.status, 400);
+            assert.match(response.headers['content-type'], /application\/json/);
+            assert.strictEqual(response.body.error, 'Nieprawidłowe parametry zapytania URL.');
+            assert.strictEqual(response.text.includes('URIError'), false);
+            assert.strictEqual(response.text.includes('node_modules'), false);
+            assert.strictEqual(response.text.includes('<!DOCTYPE html>'), false);
+        });
+
+        it('.env.example zawiera zdefiniowaną zmienną NODE_ENV=production wraz z opisem', () => {
+            const envExample = fs.readFileSync(path.join(__dirname, '.env.example'), 'utf8');
+            assert.ok(envExample.includes('NODE_ENV=production'));
+            assert.ok(envExample.includes('stack trace'));
         });
     });
 
@@ -2261,6 +2385,102 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.match(stderr, /Błąd konfiguracji JWT/);
             assert.match(stderr, /Wygeneruj bezpieczny/);
             assert.match(stderr, /randomBytes\(32\)/);
+        });
+    });
+
+    describe('20. Bezpieczne logowanie błędów bez danych osobowych (RODO/GDPR - brak err.sql w logach)', () => {
+        it('Wymuszenie błędu bazy przy zapisie zgłoszenia (POST /api/zgloszenia) nie ujawnia w logu żadnych danych z formularza (err.sql)', async () => {
+            const currentPool = app.getPool();
+
+            const formPayload = {
+                imie: 'Aureliusz',
+                nazwisko: 'Kwiatkowski',
+                adres: 'ul. Tajemnicza 99',
+                kod_pocztowy: '01-234',
+                miasto: 'Warszawa',
+                numer_telefonu: '+48600111222',
+                telefon_stacjonarny: '221234567',
+                email: 'aureliusz.kwiatkowski.tajny@example.com',
+                przedmiot_zgloszenia: 'Projektory',
+                data_zakupu: '2026-01-01',
+                opis_usterki: 'Poważna awaria zasilania',
+                numer_fv: 'FV/999/2026',
+                nip: '5250001099',
+                zgoda_rodo: true
+            };
+
+            // Symulacja błędu mysql2, w którym obiekt błędu zawiera zapytanie z podstawionymi wartościami (err.sql)
+            const simulatedMysqlError = new Error("Data too long for column 'opis_usterki' at row 1");
+            simulatedMysqlError.code = 'ER_DATA_TOO_LONG';
+            simulatedMysqlError.errno = 1406;
+            simulatedMysqlError.sql = `INSERT INTO zgloszenia VALUES ('${formPayload.imie}', '${formPayload.nazwisko}', '${formPayload.email}', '${formPayload.numer_telefonu}', '${formPayload.nip}')`;
+            simulatedMysqlError.sqlMessage = "Data too long for column 'opis_usterki' at row 1";
+
+            const failingPool = {
+                query: async () => {
+                    throw simulatedMysqlError;
+                }
+            };
+            app.setPool(failingPool);
+
+            const interceptedLogs = [];
+            const originalConsoleError = console.error;
+            console.error = (...args) => {
+                interceptedLogs.push(args.map(a => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+            };
+
+            try {
+                const response = await request(app)
+                    .post('/api/zgloszenia')
+                    .send(formPayload);
+
+                assert.strictEqual(response.status, 500);
+                assert.strictEqual(response.body.error, 'Błąd serwera podczas zapisywania zgłoszenia do bazy danych.');
+
+                const combinedLogs = interceptedLogs.join('\n');
+
+                // W logach NIE MOŻE być żadnej wartości z formularza (ochrona RODO)
+                assert.strictEqual(combinedLogs.includes('Aureliusz'), false, 'Imię nie może trafić do logów');
+                assert.strictEqual(combinedLogs.includes('Kwiatkowski'), false, 'Nazwisko nie może trafić do logów');
+                assert.strictEqual(combinedLogs.includes('aureliusz.kwiatkowski.tajny@example.com'), false, 'Email nie może trafić do logów');
+                assert.strictEqual(combinedLogs.includes('600111222'), false, 'Telefon nie może trafić do logów');
+                assert.strictEqual(combinedLogs.includes('5250001099'), false, 'NIP nie może trafić do logów');
+                assert.strictEqual(combinedLogs.includes('INSERT INTO'), false, 'err.sql nie może trafić do logów');
+
+                // W logach POWINNA znaleźć się informacja diagnostyczna (kod i treść błędu)
+                assert.ok(combinedLogs.includes('ER_DATA_TOO_LONG'), 'Kod błędu powinien być w logach');
+                assert.ok(combinedLogs.includes("Data too long for column 'opis_usterki'"), 'Komunikat błędu powinien być w logach');
+            } finally {
+                console.error = originalConsoleError;
+                app.setPool(currentPool);
+            }
+        });
+
+        it('Funkcja pomocnicza logError loguje wyłącznie err.code i err.message bez właściwości err.sql i err.sqlMessage', () => {
+            const interceptedArgs = [];
+            const originalConsoleError = console.error;
+            console.error = (...args) => {
+                interceptedArgs.push(args);
+            };
+
+            try {
+                const sensitiveError = new Error('Przekroczono limit połączeń');
+                sensitiveError.code = 'ER_CON_COUNT_ERROR';
+                sensitiveError.sql = "SELECT * FROM users WHERE password_hash = '$2b$10$supersecretpasshash'";
+                sensitiveError.sqlMessage = 'Przekroczono limit połączeń';
+
+                app.logError('Błąd bazy danych:', sensitiveError);
+
+                assert.strictEqual(interceptedArgs.length, 1);
+                const loggedOutput = interceptedArgs[0].join(' ');
+
+                assert.strictEqual(loggedOutput.includes('$2b$10$supersecretpasshash'), false);
+                assert.strictEqual(loggedOutput.includes('SELECT * FROM users'), false);
+                assert.ok(loggedOutput.includes('ER_CON_COUNT_ERROR'));
+                assert.ok(loggedOutput.includes('Przekroczono limit połączeń'));
+            } finally {
+                console.error = originalConsoleError;
+            }
         });
     });
 });
