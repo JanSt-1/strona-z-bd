@@ -1,13 +1,19 @@
 require('dotenv').config();
 
-if (!process.env.JWT_SECRET) {
-    console.error('❌ Brak JWT_SECRET w .env – nie startuję.');
+const { validateJwtSecret } = require('./jwt-validation');
+
+const jwtValidation = validateJwtSecret(process.env.JWT_SECRET);
+if (!jwtValidation.valid) {
+    console.error(`❌ Błąd konfiguracji JWT: ${jwtValidation.reason}`);
+    console.error('Wygeneruj bezpieczny, co najmniej 32-znakowy klucz poleceniem:');
+    console.error('node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"');
     process.exit(1);
 }
 
 const app = require('./app');
 const { checkPendingMigrations } = require('./migrate');
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '127.0.0.1';
 
 // Test połączenia z bazą danych przy starcie serwera, weryfikacja migracji i uruchomienie HTTP
 (async () => {
@@ -22,7 +28,7 @@ const PORT = process.env.PORT || 3000;
             process.exit(1);
         }
 
-        app.listen(PORT, () => console.log(`🚀 Serwer Express.js działa na http://localhost:${PORT}`));
+        app.listen(PORT, HOST, () => console.log(`🚀 Serwer Express.js działa na http://${HOST}:${PORT}`));
     } catch (err) {
         console.error('❌ Błąd połączenia z bazą MySQL:', err.message);
         process.exit(1);

@@ -42,6 +42,7 @@ cp .env.example .env
 Wypełnij plik danymi dostępowymi do lokalnej bazy MySQL oraz własnym kluczem JWT:
 ```ini
 PORT=3000
+HOST=127.0.0.1
 DB_HOST=localhost
 DB_USER=root
 DB_PASSWORD=
@@ -49,6 +50,7 @@ DB_NAME=serwis_db
 DB_PORT=3306
 JWT_SECRET=twoj_klucz_jtw
 ```
+`HOST` domyślnie przyjmuje `127.0.0.1` (aplikacja nasłuchuje wyłącznie na pętli zwrotnej za Reverse Proxy, chroniąc przed wystawieniem niezaszyfrowanego portu HTTP do sieci). Aby świadomie udostępnić aplikację w sieci lokalnej (np. podczas testów bez proxy), ustaw `HOST=0.0.0.0`.
 `JWT_SECRET` jest wymagany (brak domyślnej wartości – serwer się nie uruchomi). Wygeneruj silny klucz:
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"

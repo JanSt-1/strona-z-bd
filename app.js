@@ -9,10 +9,13 @@ const { createPool } = require('./db');
 
 const app = express();
 app.set('trust proxy', 'loopback');
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-    throw new Error('Krytyczny błąd konfiguracji: Zmienna środowiskowa JWT_SECRET nie została zdefiniowana.');
+const { validateJwtSecret } = require('./jwt-validation');
+
+const jwtValidation = validateJwtSecret(process.env.JWT_SECRET);
+if (!jwtValidation.valid) {
+    throw new Error(`Krytyczny błąd konfiguracji: ${jwtValidation.reason} Wygeneruj klucz poleceniem: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`);
 }
+const JWT_SECRET = process.env.JWT_SECRET.trim();
 
 // --- Konfiguracja puli połączeń do bazy MySQL ---
 let currentPool = createPool();
@@ -1253,5 +1256,6 @@ app.STATUS_LABELS = STATUS_LABELS;
 app.dodajWpisHistorii = dodajWpisHistorii;
 app.loginLimiter = loginLimiter;
 app.zgloszeniaLimiter = zgloszeniaLimiter;
+app.validateJwtSecret = validateJwtSecret;
 
 module.exports = app;

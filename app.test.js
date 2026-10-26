@@ -2182,4 +2182,85 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(app.isHashedFile('style.css'), false);
         });
     });
+
+    describe('18. Konfiguracja adresu nasłuchiwania (HOST)', () => {
+        it('Serwer uruchomiony z domyślnym HOST nasłuchuje na 127.0.0.1 (ochrona przed niezaszyfrowanym ruchem z sieci zewnętrznej)', async () => {
+            const host = process.env.HOST || '127.0.0.1';
+            const server = app.listen(0, host);
+            await new Promise((resolve) => server.once('listening', resolve));
+            try {
+                const addr = server.address();
+                assert.strictEqual(addr.address, '127.0.0.1');
+            } finally {
+                await new Promise((resolve) => server.close(resolve));
+            }
+        });
+
+        it('Gdy HOST=0.0.0.0, serwer świadomie binduje się do wszystkich interfejsów sieciowych', async () => {
+            const server = app.listen(0, '0.0.0.0');
+            await new Promise((resolve) => server.once('listening', resolve));
+            try {
+                const addr = server.address();
+                assert.strictEqual(addr.address, '0.0.0.0');
+            } finally {
+                await new Promise((resolve) => server.close(resolve));
+            }
+        });
+    });
+
+    describe('19. Walidacja bezpieczeństwa sekretu JWT (JWT_SECRET)', () => {
+        const { validateJwtSecret } = require('./jwt-validation');
+
+        it('Brak sekretu JWT lub pusty ciąg znaków zwraca błąd walidacji', () => {
+            assert.strictEqual(validateJwtSecret(null).valid, false);
+            assert.strictEqual(validateJwtSecret('').valid, false);
+            assert.strictEqual(validateJwtSecret('   ').valid, false);
+            assert.strictEqual(validateJwtSecret(undefined).valid, false);
+        });
+
+        it('Domyślna wartość "wygeneruj_wlasny" z .env.example / README zostaje odrzucona', () => {
+            const res = validateJwtSecret('wygeneruj_wlasny');
+            assert.strictEqual(res.valid, false);
+            assert.match(res.reason, /domyślną\/przykładową wartość JWT_SECRET/);
+        });
+
+        it('Domyślna wartość "twoj_klucz_jtw" z README zostaje odrzucona', () => {
+            const res = validateJwtSecret('twoj_klucz_jtw');
+            assert.strictEqual(res.valid, false);
+            assert.match(res.reason, /domyślną\/przykładową wartość JWT_SECRET/);
+        });
+
+        it('Sekret krótszy niż 32 znaki zostaje odrzucony ze względów bezpieczeństwa', () => {
+            const res = validateJwtSecret('krotki-sekret-123');
+            assert.strictEqual(res.valid, false);
+            assert.match(res.reason, /zbyt krótka.*minimum 32 znaki/);
+        });
+
+        it('Sekret o długości co najmniej 32 znaków, niebędący wartością z szablonu, przechodzi walidację', () => {
+            const validSecret = 'a'.repeat(32);
+            assert.strictEqual(validateJwtSecret(validSecret).valid, true);
+
+            const randomHex = crypto.randomBytes(32).toString('hex');
+            assert.strictEqual(validateJwtSecret(randomHex).valid, true);
+        });
+
+        it('Uruchomienie index.js z JWT_SECRET=wygeneruj_wlasny kończy się kodem wyjścia 1 i wypisuje instrukcję generowania klucza', async () => {
+            const { spawn } = require('child_process');
+            const proc = spawn(process.execPath, ['index.js'], {
+                cwd: __dirname,
+                env: { ...process.env, JWT_SECRET: 'wygeneruj_wlasny' }
+            });
+
+            let stderr = '';
+            proc.stderr.on('data', (data) => {
+                stderr += data.toString();
+            });
+
+            const exitCode = await new Promise((resolve) => proc.on('close', resolve));
+            assert.strictEqual(exitCode, 1);
+            assert.match(stderr, /Błąd konfiguracji JWT/);
+            assert.match(stderr, /Wygeneruj bezpieczny/);
+            assert.match(stderr, /randomBytes\(32\)/);
+        });
+    });
 });
