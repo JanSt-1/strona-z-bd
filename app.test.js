@@ -1853,6 +1853,111 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 'Zbyt wiele nieudanych prób logowania z tego adresu IP. Spróbuj ponownie za 15 minut.'
             );
         });
+
+        it('Aplikacja ma skonfigurowane app.set("trust proxy", "loopback")', () => {
+            assert.strictEqual(app.get('trust proxy'), 'loopback');
+        });
+
+        it('Za reverse proxy (trust proxy: loopback) z włączonym limiterem: 6. zgłoszenie z X-Forwarded-For: 1.1.1.1 zwraca 429, a z X-Forwarded-For: 2.2.2.2 zwraca 201', async () => {
+            const express = require('express');
+            const rateLimit = require('express-rate-limit');
+
+            const testApp = express();
+            testApp.set('trust proxy', 'loopback');
+            const limiter = rateLimit({
+                windowMs: 60 * 60 * 1000,
+                limit: 5,
+                message: {
+                    error: 'Zbyt wiele zgłoszeń z tego adresu IP. Dozwolony limit to 5 zgłoszeń na godzinę. Spróbuj ponownie później.'
+                },
+                standardHeaders: true,
+                legacyHeaders: false
+            });
+
+            testApp.post('/api/zgloszenia', limiter, (req, res) => {
+                res.status(201).json({ id: 1, message: 'Zgłoszenie serwisowe zostało pomyślnie przyjęte.' });
+            });
+
+            // Pierwsze 5 zgłoszeń z adresu 1.1.1.1 przechodzi pomyślnie (201)
+            for (let i = 1; i <= 5; i++) {
+                const res = await request(testApp)
+                    .post('/api/zgloszenia')
+                    .set('X-Forwarded-For', '1.1.1.1');
+                assert.strictEqual(res.status, 201);
+            }
+
+            // 6. zgłoszenie z adresu 1.1.1.1 zostaje zablokowane kodem 429
+            const blockedRes = await request(testApp)
+                .post('/api/zgloszenia')
+                .set('X-Forwarded-For', '1.1.1.1');
+            assert.strictEqual(blockedRes.status, 429);
+            assert.strictEqual(
+                blockedRes.body.error,
+                'Zbyt wiele zgłoszeń z tego adresu IP. Dozwolony limit to 5 zgłoszeń na godzinę. Spróbuj ponownie później.'
+            );
+
+            // Zgłoszenie z innego adresu IP (2.2.2.2) przechodzi pomyślnie (201)
+            const otherIpRes = await request(testApp)
+                .post('/api/zgloszenia')
+                .set('X-Forwarded-For', '2.2.2.2');
+            assert.strictEqual(otherIpRes.status, 201);
+        });
+
+        it('loginLimiter ma skonfigurowane skipSuccessfulRequests: true - udane logowania nie zużywają puli prób', async () => {
+            const express = require('express');
+            const rateLimit = require('express-rate-limit');
+
+            const testApp = express();
+            testApp.set('trust proxy', 'loopback');
+            const limiter = rateLimit({
+                windowMs: 15 * 60 * 1000,
+                limit: 10,
+                skipSuccessfulRequests: true,
+                message: {
+                    error: 'Zbyt wiele prób logowania z tego adresu IP. Spróbuj ponownie za 15 minut.'
+                },
+                standardHeaders: true,
+                legacyHeaders: false
+            });
+
+            let failAuth = false;
+            testApp.post('/api/login', limiter, (req, res) => {
+                if (failAuth) {
+                    res.status(401).json({ error: 'Nieprawidłowa nazwa użytkownika lub hasło.' });
+                } else {
+                    res.status(200).json({ token: 'mock-jwt-token' });
+                }
+            });
+
+            // 15 udanych logowań z jednego IP (np. 1.1.1.1) nie blokuje IP
+            for (let i = 0; i < 15; i++) {
+                const res = await request(testApp)
+                    .post('/api/login')
+                    .set('X-Forwarded-For', '1.1.1.1');
+                assert.strictEqual(res.status, 200);
+            }
+
+            // Teraz 10 nieudanych prób logowania z tego samego IP
+            failAuth = true;
+            for (let i = 1; i <= 10; i++) {
+                const res = await request(testApp)
+                    .post('/api/login')
+                    .set('X-Forwarded-For', '1.1.1.1');
+                assert.strictEqual(res.status, 401);
+            }
+
+            // 11. próba logowania z tego samego IP zostaje zablokowana (429)
+            const blocked = await request(testApp)
+                .post('/api/login')
+                .set('X-Forwarded-For', '1.1.1.1');
+            assert.strictEqual(blocked.status, 429);
+
+            // Inny użytkownik z innego IP (2.2.2.2) może wysłać próbę logowania
+            const otherUser = await request(testApp)
+                .post('/api/login')
+                .set('X-Forwarded-For', '2.2.2.2');
+            assert.strictEqual(otherUser.status, 401); // 401 z logowania, a nie 429
+        });
     });
 
     describe('14. Limit rozmiaru ciała żądania JSON (express.json limit)', () => {

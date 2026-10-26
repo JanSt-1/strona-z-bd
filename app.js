@@ -8,6 +8,7 @@ const rateLimit = require('express-rate-limit');
 const { createPool } = require('./db');
 
 const app = express();
+app.set('trust proxy', 'loopback');
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
     throw new Error('Krytyczny błąd konfiguracji: Zmienna środowiskowa JWT_SECRET nie została zdefiniowana.');
@@ -396,6 +397,7 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
 const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minut
     limit: 10, // 10 prób z jednego adresu IP
+    skipSuccessfulRequests: true, // Udane logowania nie zużywają puli prób
     message: {
         error: 'Zbyt wiele prób logowania z tego adresu IP. Spróbuj ponownie za 15 minut.'
     },
