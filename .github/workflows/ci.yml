@@ -10,6 +10,24 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: serwis_db_test
+        ports:
+          - 3306:3306
+        options: --health-cmd="healthcheck.sh --connect --innodb_initialized" --health-interval=10s --health-timeout=5s --health-retries=5
+
+    env:
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: serwis_db_test
+      JWT_SECRET: super_tajny_klucz_jwt_do_testow_ci_1234567890
+
     steps:
       - name: Pobierz kod repozytorium
         uses: actions/checkout@v4
@@ -29,5 +47,11 @@ jobs:
       - name: Zbuduj aplikację frontendową (Vite)
         run: npm run build
 
-      - name: Uruchom testy
+      - name: Zaaplikuj migracje bazy danych
+        run: npm run migrate
+
+      - name: Uruchom testy jednostkowe API (mock)
         run: npm test
+
+      - name: Uruchom testy integracyjne na prawdziwej bazie danych MariaDB
+        run: npm run test:db

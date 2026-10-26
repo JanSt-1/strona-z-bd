@@ -14,8 +14,10 @@
     "build": "npm --prefix frontend run build",
     "lint": "npm --prefix frontend run lint",
     "seed": "node seed.js",
+    "migrate": "node migrate.js",
     "config:testowy": "node config-testowy.js",
-    "test": "node --test"
+    "test": "node --test",
+    "test:db": "node --test integration.test.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

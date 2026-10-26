@@ -2003,17 +2003,35 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
         const testIndexHtml = path.join(staticDir, 'index.html');
         const testLogo = path.join(staticDir, 'logo_mentor4.svg');
 
+        let createdIndexHtml = false;
+        let createdLogo = false;
+        let createdStaticDir = false;
+
         before(() => {
-            fs.mkdirSync(staticDir, { recursive: true });
+            if (!fs.existsSync(staticDir)) {
+                fs.mkdirSync(staticDir, { recursive: true });
+                createdStaticDir = true;
+            }
             fs.writeFileSync(testHashedJs, 'console.log("hashed bundle");');
             fs.writeFileSync(testHashedCss, 'body { color: red; }');
-            if (!fs.existsSync(testIndexHtml)) fs.writeFileSync(testIndexHtml, '<!doctype html><html></html>');
-            if (!fs.existsSync(testLogo)) fs.writeFileSync(testLogo, '<svg></svg>');
+            if (!fs.existsSync(testIndexHtml)) {
+                fs.writeFileSync(testIndexHtml, '<!doctype html><html></html>');
+                createdIndexHtml = true;
+            }
+            if (!fs.existsSync(testLogo)) {
+                fs.writeFileSync(testLogo, '<svg></svg>');
+                createdLogo = true;
+            }
         });
 
         after(() => {
             if (fs.existsSync(testHashedJs)) fs.unlinkSync(testHashedJs);
             if (fs.existsSync(testHashedCss)) fs.unlinkSync(testHashedCss);
+            if (createdIndexHtml && fs.existsSync(testIndexHtml)) fs.unlinkSync(testIndexHtml);
+            if (createdLogo && fs.existsSync(testLogo)) fs.unlinkSync(testLogo);
+            if (fs.existsSync(staticDir) && fs.readdirSync(staticDir).length === 0) {
+                fs.rmdirSync(staticDir);
+            }
         });
 
         it('GET / oraz GET /index.html zwracają Cache-Control: no-store', async () => {

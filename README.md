@@ -8,11 +8,13 @@ To pełna aplikacja webowa (SPA) umożliwiająca klientom szybkie rejestrowanie 
 
 Aplikacja jest rozdzielona zgodnie z zasadą separacji odpowiedzialności:
 - **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (nagłówki bezpieczeństwa helmet, limit rozmiaru JSON, serwowanie plików statycznych z `frontend/dist/`), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
-- **`db.js`**: Centralny moduł konfiguracji bazy danych MySQL uwzględniający `DB_PORT`, `DB_HOST`, `DB_USER`, `DB_PASSWORD` oraz `DB_NAME`. Udostępnia metody `createPool()` oraz `createConnection()`, z których korzystają `app.js`, `seed.js` oraz `create-user.js`.
-- **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację obecności `JWT_SECRET`, test połączenia z bazą MySQL oraz uruchomienie nasłuchiwania HTTP (`app.listen()`).
+- **`db.js`**: Centralny moduł konfiguracji bazy danych MySQL uwzględniający `DB_PORT`, `DB_HOST`, `DB_USER`, `DB_PASSWORD` oraz `DB_NAME`. Udostępnia metody `createPool()` oraz `createConnection()`, z których korzystają `app.js`, `migrate.js`, `seed.js` oraz `create-user.js`.
+- **`migrate.js` & `migrations/`**: Lekki (~50 linii), bez-ORM system migracji SQL. Skrypt `npm run migrate` aplikuje oczekujące migracje po kolei w transakcjach, zapisując stan w tabeli `schema_migrations`. Zapewnia pełną idempotencję i kompatybilność z MariaDB oraz MySQL 8 (bezpieczne dodawanie kolumn i indeksów).
+- **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację obecności `JWT_SECRET`, test połączenia z bazą MySQL, **sprawdzenie czy wszystkie migracje zostały wykonane** oraz uruchomienie nasłuchiwania HTTP (`app.listen()`).
 - **`frontend/`**: Źródła interfejsu użytkownika SPA napisane w React 19 z bundlerem Vite i nowoczesnym stylem Tailwind CSS v4 opartym na zmiennych CSS. Kod został podzielony modularnie na komponenty (`components/`), strony (`pages/`), scentralizowaną warstwę API (`api.js`) oraz stałe biznesowe (`constants.js`). Aplikacja zabezpieczona jest komponentem `ErrorBoundary`. Wynik kompilacji trafia do katalogu `frontend/dist/`.
 - **`frontend/dist/`**: Katalog dystrybucyjny serwowany przez Express. Zawiera skompilowany, zoptymalizowany pakiet produkcyjny wygenerowany poleceniem `npm run build` (`index.html`, zhaszowane `assets/index-*.js`, `assets/index-*.css`, `favicon.svg` oraz `logo_mentor4.svg`).
-- **`app.test.js`**: Zestaw testów integracyjnych API bazujący na natywnym runnerze `node:test` oraz bibliotece `supertest`.
+- **`app.test.js`**: Zestaw testów jednostkowych i integracyjnych API oraz reguł RBAC bazujący na runnerze `node:test` i mocku bazy.
+- **`integration.test.js`**: Zestaw testów na prawdziwej bazie danych MySQL/MariaDB (pełny cykl życia, polskie znaki utf8mb4, równoległe zapytania, migracja starych schematów, wykorzystanie indeksów).
 
 ---
 
@@ -52,12 +54,13 @@ JWT_SECRET=twoj_klucz_jtw
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-### Krok 3: Inicjalizacja bazy danych (Seed)
-Uruchom skrypt tworzący bazę `serwis_db` oraz tabele na podstawie schematu `schemat.sql`:
+### Krok 3: Inicjalizacja i migracje bazy danych
+Uruchom migracje bazy danych, które utworzą bazę (zgodnie z `DB_NAME` w `.env`) oraz zaaplikują wszystkie migracje z katalogu `migrations/` (w tym bezpieczne dodanie kolumn takich jak `telefon_stacjonarny` oraz indeksu na `historia_zgloszen`):
 ```bash
-npm run seed
+npm run migrate
 ```
-*(Skrypt ten aplikuje pełną strukturę tabel `uzytkownicy`, `zgloszenia` oraz `historia_zgloszen` z pliku `schemat.sql`, w tym pola `telefon_stacjonarny`, `numer_listu`, `data_wyslania`, `opis_naprawy` itp.).*
+*(Alternatywnie polecenie `npm run seed` również wykonuje migracje i przygotowuje tabele na nowe zgłoszenia).*
+
 
 ### Krok 3a: Konfiguracja środowiska testowego (konta + 200 nowych zgłoszeń)
 Aby utworzyć 4 konta testowe (`admin`, `pracownik`, `serwisant`, `magazynier` z hasłem `admin123`) oraz wypełnić bazę 200 zgłoszeniami serwisowymi ze statusem `"nowe"`, uruchom lokalny skrypt (ignorowany przez Git):
@@ -123,6 +126,51 @@ npm --prefix frontend run lint
 
 Po uruchomieniu aplikacja produkcyjna dostępna jest pod adresem:
 👉 **http://localhost:3000** (lub dev serwer frontendu pod **http://localhost:5173**)
+
+---
+
+## Aktualizacja wersji
+
+W przypadku wdrażania nowej wersji aplikacji na serwerze produkcyjnym wykonaj następującą procedurę:
+
+```bash
+# 1. Pobierz najnowszy kod z repozytorium
+git pull
+
+# 2. Zainstaluj nowe lub zaktualizowane zależności w trybie ci
+npm ci
+
+# 3. Zbuduj zoptymalizowane pliki produkcyjne frontendu
+npm run build
+
+# 4. Zastosuj nowe migracje bazy danych
+npm run migrate
+
+# 5. Zrestartuj proces aplikacji (np. pm2, systemd, docker)
+pm2 restart serwis-app
+```
+
+> [!IMPORTANT]
+> Przy starcie serwera (`index.js`) aplikacja automatycznie weryfikuje w tabeli `schema_migrations`, czy wszystkie migracje z katalogu `migrations/` zostały zaaplikowane. W przypadku wykrycia brakujących migracji serwer odmawia uruchomienia i wyświetla czytelny komunikat: `❌ Wykryto niezastosowane migracje bazy danych (...). Uruchom: npm run migrate`.
+
+---
+
+## Testy automatyczne
+
+Projekt posiada dwa zestawy testów:
+
+1. **Testy jednostkowe API i reguł RBAC (szybkie, z mockiem bazy)**:
+   ```bash
+   npm test
+   ```
+   Weryfikują wszystkie endpointy REST API, logikę biznesową, autoryzację ról (admin, pracownik, serwisant, magazynier) oraz nagłówki bezpieczeństwa bez konieczności uruchamiania bazy danych.
+
+2. **Testy integracyjne z prawdziwą bazą danych (MySQL / MariaDB)**:
+   ```bash
+   # Uruchomienie na dedykowanej bazie testowej (nigdy na produkcyjnej!)
+   npm run test:db
+   ```
+   *Uwaga: Testy integracyjne używają bazy określonej w zmiennej `DB_NAME` (domyślnie `serwis_db_test`). Ze względów bezpieczeństwa skrypt blokuje uruchomienie testów na bazie o nazwie produkcyjnej (`serwis_db`). Testy te są również automatycznie wykonywane w potoku CI (GitHub Actions) z kontenerem MariaDB.*
 
 ---
 
