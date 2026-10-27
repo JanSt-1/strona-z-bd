@@ -3,6 +3,16 @@
 // =========================================================================
 
 const API_BASE = '/api';
+const NETWORK_ERROR_MESSAGE =
+  'Brak połączenia z serwerem. Sprawdź internet i spróbuj ponownie.';
+
+async function safeFetch(url, options) {
+  try {
+    return await fetch(url, options);
+  } catch {
+    throw new Error(NETWORK_ERROR_MESSAGE);
+  }
+}
 
 let unauthorizedHandlers = [];
 
@@ -35,7 +45,7 @@ export async function apiFetch(endpoint, options = {}) {
     ? endpoint
     : `${API_BASE}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
 
-  const response = await fetch(url, { ...options, headers });
+  const response = await safeFetch(url, { ...options, headers });
 
   if (response.status === 401) {
     notifyUnauthorized();
@@ -85,7 +95,7 @@ export function apiPost(endpoint, body, fallbackError) {
 }
 
 async function publicPost(endpoint, body, fallbackError) {
-  const response = await fetch(`${API_BASE}${endpoint}`, {
+  const response = await safeFetch(`${API_BASE}${endpoint}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)

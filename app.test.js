@@ -2968,6 +2968,35 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.match(schematSql, /szczegoly\s+MEDIUMTEXT\s+NULL/i);
         });
 
+        it('Brak sieci w frontend/src/api.js rzuca polskie "Brak połączenia z serwerem...", a ErrorBoundary w App.jsx nie wyświetla surowego error.message', async () => {
+            const origFetch = global.fetch;
+            const origLocalStorage = global.localStorage;
+            try {
+                global.localStorage = {
+                    getItem: () => 'fake-token',
+                    setItem: () => {},
+                    removeItem: () => {}
+                };
+                global.fetch = async () => {
+                    throw new TypeError('Failed to fetch');
+                };
+
+                const { apiFetch, authApi, ticketApi } = await import('./frontend/src/api.js');
+                const expectedMsg = 'Brak połączenia z serwerem. Sprawdź internet i spróbuj ponownie.';
+
+                await assert.rejects(() => apiFetch('/zgloszenia'), { message: expectedMsg });
+                await assert.rejects(() => authApi.login('admin', 'secret'), { message: expectedMsg });
+                await assert.rejects(() => ticketApi.createTicket({}), { message: expectedMsg });
+            } finally {
+                global.fetch = origFetch;
+                global.localStorage = origLocalStorage;
+            }
+
+            const appJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'App.jsx'), 'utf8');
+            assert.strictEqual(appJsx.includes('this.state.error?.message'), false);
+            assert.ok(appJsx.includes('Nieoczekiwany błąd w interfejsie użytkownika.'));
+        });
+
         it('Promise.all z dwóch równoległych żądań "wyślij" na to samo zlecenie zwraca dokładnie jedno 200 i jedno 409 oraz tworzy tylko jeden wpis "wysyłka"', async () => {
             const currentPool = app.getPool();
             let currentDbStatus = 'do_wysylki';

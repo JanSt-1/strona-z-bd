@@ -37,7 +37,7 @@ class ErrorBoundary extends React.Component {
           </div>
           <h2 className="text-xl font-bold text-ink mb-2">Wystąpił błąd w panelu</h2>
           <p className="text-sm text-muted mb-4">
-            {this.state.error?.message || 'Nieoczekiwany błąd w interfejsie użytkownika.'}
+            Nieoczekiwany błąd w interfejsie użytkownika.
           </p>
           <div className="flex gap-3 justify-center">
             <button
