@@ -19,9 +19,9 @@ const { createConnection } = require('./db');
 const [, , username, password, role = 'pracownik'] = process.argv;
 
 const cleanUsername = (username || '').trim();
-const cleanPassword = (password || '').trim();
+const cleanPassword = password || '';
 
-if (!cleanUsername || !cleanPassword) {
+if (!cleanUsername || !cleanPassword.trim()) {
     console.error('❌ Użycie: node create-user.js <nazwa_uzytkownika> <haslo> [rola]');
     console.error('   Przykład: node create-user.js janek Haslo123 pracownik');
     process.exit(1);
@@ -37,7 +37,7 @@ if (cleanPassword.length < 8) {
     process.exit(1);
 }
 
-if (cleanPassword.length > 72) {
+if (Buffer.byteLength(cleanPassword) > 72) {
     console.error('❌ Błąd: Hasło nie może przekraczać 72 znaków.');
     process.exit(1);
 }

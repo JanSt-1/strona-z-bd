@@ -95,7 +95,7 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
 | `GET` | `/api/zgloszenia/:id` | JWT (any role) | Ticket details + `historia` + `dozwolone_akcje`. Protected by `canViewTicket(req.user, ticket)` (`404` if missing, `403` if unauthorized). |
 | `GET` | `/api/zgloszenia/:id/historia` | JWT (any role) | Chronological audit history for ticket `:id`. Protected by `canViewTicket(req.user, ticket)` (`404` / `403`). |
 | `PATCH` | `/api/zgloszenia/:id/przypisz` | JWT (`admin`, `serwisant`) | Assign/unassign worker (`{ pracownik_id }`). Target must be active `pracownik`/`serwisant` (or `admin` if caller is `admin`). Auto-transitions `nowe` → `w_realizacji`. |
-| `PATCH` | `/api/zgloszenia/:id/naprawione` | JWT (`pracownik`, `serwisant`, `admin`) | **Only forward path to `do_wysylki`**. Requires non-empty `opis_naprawy` (max 65,535 chars). Blocks `pracownik` on others' tickets (`403`) and `serwisant` on tickets assigned to another worker (`403`). |
+| `PATCH` | `/api/zgloszenia/:id/naprawione` | JWT (`pracownik`, `serwisant`, `admin`) | **Only forward path to `do_wysylki`**. Requires non-empty `opis_naprawy` (max 5,000 chars). Blocks `pracownik` on others' tickets (`403`) and `serwisant` on tickets assigned to another worker (`403`). |
 | `PATCH/PUT` | `/api/zgloszenia/:id/status` | JWT (RBAC) | Status change per `czyMoznaZmienic` (blocks forward `do_wysylki` with `400`). Handles admin rollbacks (with stage data cleanup) and `numer_listu` updates (max 100 chars). |
 | `DELETE` | `/api/zgloszenia/:id` | JWT (`admin`) | Logs `usunięcie` to `historia_zgloszen` and deletes ticket. |
 | `GET` | `/api/admin/users` | JWT (`admin`) | Lists users (`id, username, role, aktywny, created_at`) **without `password_hash`**. |

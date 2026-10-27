@@ -10,10 +10,16 @@ const { createConnection, dbConfig } = require('./db');
  * dlatego sprawdzamy obecność w information_schema przed wykonaniem.
  */
 async function executeMigrationSql(connection, sql) {
-    const statements = sql
+    // Usuń komentarze wieloliniowe (/* ... */) oraz jednoliniowe (-- ...) przed podziałem na instrukcje,
+    // aby instrukcje z komentarzami na początku (np. CREATE TABLE uzytkownicy) nie były odrzucane.
+    const cleanedSql = sql
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/--.*$/gm, '');
+
+    const statements = cleanedSql
         .split(';')
         .map(s => s.trim())
-        .filter(s => s.length > 0 && !s.startsWith('--'));
+        .filter(s => s.length > 0);
 
     for (const statement of statements) {
         // 1. Bezpieczne dodawanie kolumn (ALTER TABLE <table> ADD COLUMN IF NOT EXISTS ...)

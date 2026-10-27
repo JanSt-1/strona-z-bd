@@ -83,14 +83,14 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
   async function handleCreateUser(e) {
     e.preventDefault();
     setCreateError(null);
-    const cleanPass = newPassword.trim();
-    if (!newUsername.trim() || !cleanPass) {
+    const cleanPass = newPassword;
+    if (!newUsername.trim() || !newPassword.trim()) {
       return setCreateError('Wypełnij nazwę użytkownika oraz hasło.');
     }
     if (cleanPass.length < 8) {
       return setCreateError('Hasło musi mieć co najmniej 8 znaków.');
     }
-    if (cleanPass.length > 72) {
+    if (new TextEncoder().encode(cleanPass).length > 72) {
       return setCreateError('Hasło nie może przekraczać 72 znaków.');
     }
     setCreating(true);

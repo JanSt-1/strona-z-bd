@@ -281,8 +281,8 @@ Główne grupy przypadków testowych (łącznie **124 testy** w 18 suitach):
     - Ograniczenie do 5 zgłoszeń na godzinę z jednego IP na `POST /api/zgloszenia` (oraz 10 prób / 15 min na `POST /api/login`).
     - Blokowanie nadmiarowych zapytań z kodem HTTP 429 Too Many Requests i czytelnym komunikatem błędu w języku polskim.
 14. **Limit rozmiaru ciała żądania JSON (`express.json limit: 70kb`)**:
-    - Jawnie skonfigurowany limit `express.json({ limit: '70kb' })` dopasowany do najdłuższego dopuszczalnego opisu usterki (65535 znaków + narzut JSON), bez niepotrzebnego dopuszczania większych danych.
-    - Zgłoszenie z maksymalnym dozwolonym opisem (65535 znaków) mieści się w limicie i zwraca 201 Created.
+    - Jawnie skonfigurowany limit `express.json({ limit: '70kb' })` chroniący przed zbyt dużym payloadem oraz limity znaków dla pól tekstowych (`opis_usterki` i `opis_naprawy` do 5000 znaków, `adres` do 500 znaków), gwarantujące brak przekroczenia 65 535 bajtów kolumny `TEXT` przy wielobajtowych znakach UTF-8 (`utf8mb4`).
+    - Zgłoszenie z maksymalnym dozwolonym opisem (5000 znaków) mieści się w limicie i zwraca 201 Created.
     - Żądania przekraczające limit (np. 80KB) zwracają status 413 Payload Too Large z czytelnym komunikatem JSON.
     - Błędnie sformatowane JSON-y zwracają status 400 Bad Request.
 15. **Nagłówki bezpieczeństwa HTTP (`helmet`)**:

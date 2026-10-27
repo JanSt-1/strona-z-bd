@@ -17,14 +17,14 @@ export default function PasswordModal({ userToEdit = null, onClose, onPasswordCh
     if (isOwnPassword && !currentPassword) {
       return setError('Podaj aktualne hasło.');
     }
-    const cleanPass = password.trim();
-    if (!cleanPass) {
+    const cleanPass = password;
+    if (!password.trim()) {
       return setError('Podaj nowe hasło.');
     }
     if (cleanPass.length < 8) {
       return setError('Hasło musi mieć co najmniej 8 znaków.');
     }
-    if (cleanPass.length > 72) {
+    if (new TextEncoder().encode(cleanPass).length > 72) {
       return setError('Hasło nie może przekraczać 72 znaków.');
     }
     if (password !== confirm) {
@@ -34,8 +34,8 @@ export default function PasswordModal({ userToEdit = null, onClose, onPasswordCh
     setLoading(true);
     try {
       const data = isOwnPassword
-        ? await userApi.changeOwnPassword({ currentPassword, newPassword: password.trim() })
-        : await userApi.resetPassword(userToEdit.id, password.trim());
+        ? await userApi.changeOwnPassword({ currentPassword, newPassword: password })
+        : await userApi.resetPassword(userToEdit.id, password);
 
       if (!data) return;
 

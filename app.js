@@ -113,16 +113,51 @@ const canViewTicket = (user, ticket) => {
     return true;
 };
 
-async function dodajWpisHistorii(zgloszenieId, uzytkownikId, akcja, zStatusu = null, naStatus = null, szczegoly = null) {
-    try {
-        await currentPool.query(
-            `INSERT INTO historia_zgloszen (zgloszenie_id, uzytkownik_id, akcja, z_statusu, na_status, szczegoly)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [zgloszenieId, uzytkownikId || null, akcja, zStatusu || null, naStatus || null, szczegoly || null]
-        );
-    } catch (err) {
-        logError('Błąd podczas zapisywania historii zgłoszenia:', err);
-    }
+const CONFLICT_ERR = 'Zlecenie zostało w międzyczasie zmienione, odśwież widok.';
+
+async function getTransactionConnection() {
+    const rawConn = typeof currentPool.getConnection === 'function'
+        ? await currentPool.getConnection()
+        : null;
+    return {
+        query: (sql, params) => (rawConn && typeof rawConn.query === 'function')
+            ? rawConn.query(sql, params)
+            : currentPool.query(sql, params),
+        beginTransaction: async () => {
+            if (rawConn && typeof rawConn.beginTransaction === 'function') {
+                await rawConn.beginTransaction();
+            }
+        },
+        commit: async () => {
+            if (rawConn && typeof rawConn.commit === 'function') {
+                await rawConn.commit();
+            }
+        },
+        rollback: async () => {
+            if (rawConn && typeof rawConn.rollback === 'function') {
+                await rawConn.rollback();
+            }
+        },
+        release: () => {
+            if (rawConn && typeof rawConn.release === 'function') {
+                rawConn.release();
+            }
+        }
+    };
+}
+
+async function dodajWpisHistorii(connOrId, zgloszenieId, uzytkownikId, akcja, zStatusu = null, naStatus = null, szczegoly = null) {
+    const hasConn = connOrId && typeof connOrId === 'object' && typeof connOrId.query === 'function';
+    const conn = hasConn ? connOrId : currentPool;
+    const [id, userId, act, fromSt, toSt, details] = hasConn
+        ? [zgloszenieId, uzytkownikId, akcja, zStatusu, naStatus, szczegoly]
+        : [connOrId, zgloszenieId, uzytkownikId, akcja, zStatusu, naStatus];
+
+    await conn.query(
+        `INSERT INTO historia_zgloszen (zgloszenie_id, uzytkownik_id, akcja, z_statusu, na_status, szczegoly)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [id, userId || null, act, fromSt || null, toSt || null, details || null]
+    );
 }
 
 // --- Middleware autoryzacji JWT ---
@@ -264,9 +299,9 @@ const REQUIRED_FIELDS = [
     'email', 'przedmiot_zgloszenia', 'data_zakupu', 'opis_usterki', 'numer_fv', 'nip'
 ];
 const FIELD_MAX_LENGTHS = {
-    imie: 50, nazwisko: 50, adres: 65535, kod_pocztowy: 6, miasto: 100,
+    imie: 50, nazwisko: 50, adres: 500, kod_pocztowy: 6, miasto: 100,
     numer_telefonu: 20, email: 100, przedmiot_zgloszenia: 100, data_zakupu: 10,
-    opis_usterki: 65535, numer_fv: 50, nip: 10
+    opis_usterki: 5000, numer_fv: 50, nip: 10
 };
 
 // 2. POST /api/zgloszenia - Publiczne dodawanie nowego zgłoszenia serwisowego
@@ -299,6 +334,7 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
     // 2-10. Pozostałe walidacje (w kolejności sprawdzania; pierwszy błąd kończy żądanie)
     const nameRegex = /^[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ\s\-']+$/;
     const firmaProvided = nazwa_firmy !== undefined && nazwa_firmy !== null && nazwa_firmy !== '';
+    const canonicalPrzedmiot = ALLOWED_PRZEDMIOTY.find(item => item.toLowerCase() === c.przedmiot_zgloszenia.toLowerCase());
     const checks = [
         // imię i nazwisko: bez cyfr, wyłącznie litery
         [/\d/.test(c.imie), 'Pole "imie" nie może zawierać cyfr.'],
@@ -317,13 +353,14 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
         // numer telefonu (+48 i dokładnie 9 cyfr)
         [!/^\+48\d{9}$/.test(c.numer_telefonu), 'Pole "numer_telefonu" musi zawierać prefiks +48 oraz dokładnie 9 cyfr.'],
         // przedmiot zgłoszenia z listy
-        [!ALLOWED_PRZEDMIOTY.some(item => item.toLowerCase() === c.przedmiot_zgloszenia.toLowerCase()),
+        [!canonicalPrzedmiot,
         `Pole "przedmiot_zgloszenia" zawiera nieprawidłową wartość. Dozwolone: ${ALLOWED_PRZEDMIOTY.join(', ')}`],
         // data zakupu (RRRR-MM-DD, prawidłowa w kalendarzu, nie z przyszłości)
         [Boolean(validatePurchaseDate(c.data_zakupu)), validatePurchaseDate(c.data_zakupu)]
     ];
     const failed = checks.find(([invalid]) => invalid);
     if (failed) return fail(res, failed[1]);
+    c.przedmiot_zgloszenia = canonicalPrzedmiot;
 
     // 11. Walidacja numeru seryjnego (obowiązkowy dla monitorów i tablic interaktywnych, dla innych ignorowany)
     let cleanNumerSeryjny = null;
@@ -363,7 +400,11 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
         return fail(res, 'Pole "zgoda_rodo" jest wymagane: należy potwierdzić zapoznanie się z informacją o przetwarzaniu danych osobowych.');
     }
 
+    let conn;
     try {
+        conn = await getTransactionConnection();
+        await conn.beginTransaction();
+
         const query = `
             INSERT INTO zgloszenia (imie, nazwisko, nazwa_firmy, adres, kod_pocztowy, miasto, numer_telefonu, telefon_stacjonarny, email, przedmiot_zgloszenia, numer_seryjny, data_zakupu, zgoda_rodo_data, opis_usterki, numer_fv, nip, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, 'nowe')
@@ -386,9 +427,10 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
             c.nip
         ];
 
-        const [result] = await currentPool.query(query, values);
+        const [result] = await conn.query(query, values);
 
         await dodajWpisHistorii(
+            conn,
             result.insertId,
             null,
             'utworzenie',
@@ -397,13 +439,20 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
             'Utworzono zgłoszenie serwisowe.'
         );
 
+        await conn.commit();
+
         return res.status(201).json({
             message: 'Zgłoszenie serwisowe zostało pomyślnie przyjęte.',
             id: result.insertId
         });
     } catch (err) {
+        if (conn) {
+            try { await conn.rollback(); } catch (_) { /* ignore */ }
+        }
         logError('Błąd podczas zapisywania zgłoszenia:', err);
         return fail(res, 'Błąd serwera podczas zapisywania zgłoszenia do bazy danych.', 500);
+    } finally {
+        if (conn) conn.release();
     }
 });
 
@@ -428,7 +477,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
     const { username, password } = req.body || {};
     const loginUsername = typeof username === 'string' ? username.trim() : '';
 
-    if (!loginUsername || typeof password !== 'string' || !password) {
+    if (!loginUsername || typeof password !== 'string' || !password.trim()) {
         return fail(res, 'Podaj nazwę użytkownika oraz hasło.');
     }
 
@@ -704,8 +753,9 @@ app.get('/api/zgloszenia', authenticateToken,
             if (['nieprzypisane', '0', 'null'].includes(pracownikQuery.toLowerCase())) {
                 whereConditions.push('z.przypisany_pracownik_id IS NULL');
             } else {
-                const pracownikId = parseInt(pracownikQuery, 10);
-                if (!isNaN(pracownikId) && pracownikId > 0) {
+                const pracownikId = parsePositiveInt(pracownikQuery);
+                if (isNaN(pracownikId)) return fail(res, 'Nieprawidłowa wartość parametru "pracownik".', 400);
+                if (true) {
                     whereConditions.push('z.przypisany_pracownik_id = ?');
                     params.push(pracownikId);
                 }
@@ -714,7 +764,8 @@ app.get('/api/zgloszenia', authenticateToken,
 
         const szukajQuery = typeof req.query.szukaj === 'string' ? req.query.szukaj.trim() : '';
         if (szukajQuery) {
-            const likePattern = `%${szukajQuery}%`;
+            const escapedSzukaj = szukajQuery.replace(/[\\%_]/g, '\\$&');
+            const likePattern = `%${escapedSzukaj}%`;
             whereConditions.push(`(${SEARCH_COLUMNS.map(col => `${col} LIKE ?`).join(' OR ')})`);
             SEARCH_COLUMNS.forEach(() => params.push(likePattern));
         }
@@ -729,10 +780,13 @@ app.get('/api/zgloszenia', authenticateToken,
         `, params);
         const total = countRows?.[0]?.total ? Number(countRows[0].total) : 0;
 
-        const page = Math.max(1, parseInt(req.query.strona, 10) || 1);
+
+
         const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 25));
-        const offset = (page - 1) * limit;
         const totalPages = Math.ceil(total / limit) || 1;
+        const page = Math.min(Math.max(1, parseInt(req.query.strona, 10) || 1), totalPages);
+        const offset = (page - 1) * limit;
+
         const sortDirection = String(req.query.sort || '').trim().toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
         const [rows] = await currentPool.query(`
@@ -836,15 +890,42 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
             if (!check.allowed) return fail(res, check.error, check.status);
         }
 
-        await currentPool.query(
-            'UPDATE zgloszenia SET przypisany_pracownik_id = ?, status = ? WHERE id = ?',
-            [assignedId, targetStatus, id]
-        );
+        const conn = await getTransactionConnection();
+        try {
+            await conn.beginTransaction();
 
-        await dodajWpisHistorii(
-            id, req.user.id, 'przypisanie', ticket.status, targetStatus,
-            assignedId ? `Przypisano pracownika: ${assignedUsername}` : 'Cofnięto przypisanie pracownika'
-        );
+            const [assignResult] = await conn.query(
+                'UPDATE zgloszenia SET przypisany_pracownik_id = ? WHERE id = ?',
+                [assignedId, id]
+            );
+            if (assignResult && assignResult.affectedRows === 0) {
+                await conn.rollback();
+                return fail(res, CONFLICT_ERR, 409);
+            }
+
+            if (ticket.status === 'nowe' && assignedId !== null) {
+                const [statusResult] = await conn.query(
+                    "UPDATE zgloszenia SET status = 'w_realizacji' WHERE id = ? AND status = 'nowe'",
+                    [id]
+                );
+                if (statusResult && statusResult.affectedRows === 0) {
+                    await conn.rollback();
+                    return fail(res, CONFLICT_ERR, 409);
+                }
+            }
+
+            await dodajWpisHistorii(
+                conn, id, req.user.id, 'przypisanie', ticket.status, targetStatus,
+                assignedId ? `Przypisano pracownika: ${assignedUsername}` : 'Cofnięto przypisanie pracownika'
+            );
+
+            await conn.commit();
+        } catch (err) {
+            try { await conn.rollback(); } catch (_) { /* ignore */ }
+            throw err;
+        } finally {
+            conn.release();
+        }
 
         return res.json({
             message: assignedId
@@ -873,8 +954,8 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
             return fail(res, 'Przed oznaczeniem zlecenia jako naprawione wymagany jest opis wykonanych prac naprawczych (np. co zostało zrobione).');
         }
         const cleanOpis = opis_naprawy.trim();
-        if (cleanOpis.length > 65535) {
-            return fail(res, 'Pole "opis_naprawy" przekracza maksymalną dozwoloną długość (65535 znaków).');
+        if (cleanOpis.length > 5000) {
+            return fail(res, 'Pole "opis_naprawy" przekracza maksymalną dozwoloną długość (5000 znaków).');
         }
 
         const [rows] = await currentPool.query('SELECT id, status, przypisany_pracownik_id FROM zgloszenia WHERE id = ?', [id]);
@@ -894,19 +975,35 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
 
         const newAssignedId = req.user.role === 'serwisant' ? req.user.id : ticket.przypisany_pracownik_id;
 
-        await currentPool.query(
-            "UPDATE zgloszenia SET opis_naprawy = ?, opis_naprawy_data = NOW(), status = 'do_wysylki', przypisany_pracownik_id = ? WHERE id = ?",
-            [cleanOpis, newAssignedId, id]
-        );
+        const conn = await getTransactionConnection();
+        try {
+            await conn.beginTransaction();
 
-        if (ticket.przypisany_pracownik_id !== newAssignedId) {
-            await dodajWpisHistorii(
-                id, req.user.id, 'przypisanie', ticket.status, ticket.status,
-                `Automatycznie przypisano serwisanta: ${req.user.username}`
+            const [updateResult] = await conn.query(
+                "UPDATE zgloszenia SET opis_naprawy = ?, opis_naprawy_data = NOW(), status = 'do_wysylki', przypisany_pracownik_id = ? WHERE id = ? AND status = ?",
+                [cleanOpis, newAssignedId, id, ticket.status]
             );
-        }
+            if (updateResult && updateResult.affectedRows === 0) {
+                await conn.rollback();
+                return fail(res, CONFLICT_ERR, 409);
+            }
 
-        await dodajWpisHistorii(id, req.user.id, 'naprawa', ticket.status, 'do_wysylki', `Opis naprawy: ${cleanOpis}`);
+            if (ticket.przypisany_pracownik_id !== newAssignedId) {
+                await dodajWpisHistorii(
+                    conn, id, req.user.id, 'przypisanie', ticket.status, ticket.status,
+                    `Automatycznie przypisano serwisanta: ${req.user.username}`
+                );
+            }
+
+            await dodajWpisHistorii(conn, id, req.user.id, 'naprawa', ticket.status, 'do_wysylki', `Opis naprawy: ${cleanOpis}`);
+
+            await conn.commit();
+        } catch (err) {
+            try { await conn.rollback(); } catch (_) { /* ignore */ }
+            throw err;
+        } finally {
+            conn.release();
+        }
 
         return res.json({
             message: 'Zlecenie zostało opisane i przekazane do magazynu ze statusem "Do wysyłki".',
@@ -956,11 +1053,28 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
             if (req.user.role === 'magazynier' && !listu) {
                 return fail(res, 'Podanie numeru listu przewozowego jest obowiązkowe przy oznaczaniu zlecenia jako wysłane.');
             }
-            await currentPool.query('UPDATE zgloszenia SET numer_listu = ? WHERE id = ?', [listu, id]);
-            await dodajWpisHistorii(
-                id, req.user.id, 'zmiana_numeru_listu', status, status,
-                listu ? `Zaktualizowano numer listu: ${listu}` : 'Usunięto numer listu przewozowego'
-            );
+            const conn = await getTransactionConnection();
+            try {
+                await conn.beginTransaction();
+                const [updateResult] = await conn.query(
+                    'UPDATE zgloszenia SET numer_listu = ? WHERE id = ? AND status = ?',
+                    [listu, id, ticket.status]
+                );
+                if (updateResult && updateResult.affectedRows === 0) {
+                    await conn.rollback();
+                    return fail(res, CONFLICT_ERR, 409);
+                }
+                await dodajWpisHistorii(
+                    conn, id, req.user.id, 'zmiana_numeru_listu', status, status,
+                    listu ? `Zaktualizowano numer listu: ${listu}` : 'Usunięto numer listu przewozowego'
+                );
+                await conn.commit();
+            } catch (err) {
+                try { await conn.rollback(); } catch (_) { /* ignore */ }
+                throw err;
+            } finally {
+                conn.release();
+            }
             return res.json({
                 message: 'Numer listu przewozowego został zaktualizowany.',
                 id: Number(id),
@@ -986,8 +1100,8 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
         return fail(res, 'Możesz zmieniać status tylko zlecenia przypisanego do Ciebie.', 403);
     }
 
-    let updateQuery = 'UPDATE zgloszenia SET status = ? WHERE id = ?';
-    let updateParams = [status, id];
+    let updateQuery = 'UPDATE zgloszenia SET status = ? WHERE id = ? AND status = ?';
+    let updateParams = [status, id, ticket.status];
     let akcja = 'zmiana_statusu';
     let szczegoly = `Zmieniono status z "${ticket.status}" na "${status}"`;
 
@@ -1005,26 +1119,43 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
             if (ticket.opis_naprawy) szczegoly += `. Poprzedni opis naprawy: ${ticket.opis_naprawy}`;
         }
 
-        updateQuery = `UPDATE zgloszenia SET ${setClauses.join(', ')} WHERE id = ?`;
-        updateParams.push(id);
+        updateQuery = `UPDATE zgloszenia SET ${setClauses.join(', ')} WHERE id = ? AND status = ?`;
+        updateParams.push(id, ticket.status);
     } else if (status === 'zakończone') {
         const listu = (numer_listu && typeof numer_listu === 'string') ? numer_listu.trim() : null;
         if (req.user.role === 'magazynier' && !listu) {
             return fail(res, 'Podanie numeru listu przewozowego jest obowiązkowe przy oznaczaniu zlecenia jako wysłane.');
         }
-        updateQuery = 'UPDATE zgloszenia SET status = ?, data_wyslania = NOW(), numer_listu = ? WHERE id = ?';
-        updateParams = [status, listu, id];
+        updateQuery = 'UPDATE zgloszenia SET status = ?, data_wyslania = NOW(), numer_listu = ? WHERE id = ? AND status = ?';
+        updateParams = [status, listu, id, ticket.status];
         akcja = 'wysyłka';
         szczegoly = `Wysłano przesyłkę. Numer listu: ${listu || 'brak'}`;
     } else if (req.user.role === 'admin' && numer_listu !== undefined) {
         const listu = numer_listu ? numer_listu.trim() : null;
-        updateQuery = 'UPDATE zgloszenia SET status = ?, numer_listu = ? WHERE id = ?';
-        updateParams = [status, listu, id];
+        updateQuery = 'UPDATE zgloszenia SET status = ?, numer_listu = ? WHERE id = ? AND status = ?';
+        updateParams = [status, listu, id, ticket.status];
         szczegoly = `Zmieniono status z "${ticket.status}" na "${status}". Numer listu: ${listu || 'brak'}`;
     }
 
-    await currentPool.query(updateQuery, updateParams);
-    await dodajWpisHistorii(id, req.user.id, akcja, ticket.status, status, szczegoly);
+    const conn = await getTransactionConnection();
+    try {
+        await conn.beginTransaction();
+
+        const [updateResult] = await conn.query(updateQuery, updateParams);
+        if (updateResult && updateResult.affectedRows === 0) {
+            await conn.rollback();
+            return fail(res, CONFLICT_ERR, 409);
+        }
+
+        await dodajWpisHistorii(conn, id, req.user.id, akcja, ticket.status, status, szczegoly);
+
+        await conn.commit();
+    } catch (err) {
+        try { await conn.rollback(); } catch (_) { /* ignore */ }
+        throw err;
+    } finally {
+        conn.release();
+    }
 
     return res.json({
         message: 'Status zgłoszenia został zaktualizowany.',
@@ -1051,10 +1182,25 @@ app.delete('/api/zgloszenia/:id', authenticateToken, requireAdmin,
         if (!tickets || tickets.length === 0) return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
         const ticket = tickets[0];
 
-        await dodajWpisHistorii(id, req.user.id, 'usunięcie', ticket.status, null, `Wpis usunięty przez ${req.user.username}`);
+        const conn = await getTransactionConnection();
+        try {
+            await conn.beginTransaction();
 
-        const [result] = await currentPool.query('DELETE FROM zgloszenia WHERE id = ?', [id]);
-        if (result.affectedRows === 0) return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
+            await dodajWpisHistorii(conn, id, req.user.id, 'usunięcie', ticket.status, null, `Wpis usunięty przez ${req.user.username}`);
+
+            const [result] = await conn.query('DELETE FROM zgloszenia WHERE id = ?', [id]);
+            if (result && result.affectedRows === 0) {
+                await conn.rollback();
+                return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
+            }
+
+            await conn.commit();
+        } catch (err) {
+            try { await conn.rollback(); } catch (_) { /* ignore */ }
+            throw err;
+        } finally {
+            conn.release();
+        }
 
         return res.json({ message: 'Zgłoszenie zostało pomyślnie usunięte.', id });
     }));
@@ -1082,25 +1228,33 @@ app.post('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =
         return fail(res, 'Podaj nazwę użytkownika i hasło.');
     }
     const cleanUsername = username.trim();
-    const cleanPassword = password.trim();
+    const cleanPassword = password;
 
-    if (!cleanUsername || !cleanPassword) return fail(res, 'Podaj nazwę użytkownika i hasło.');
+    if (!cleanUsername || !password.trim()) return fail(res, 'Podaj nazwę użytkownika i hasło.');
     if (cleanUsername.length > 50) return fail(res, 'Pole "username" przekracza maksymalną dozwoloną długość (50 znaków).');
     if (cleanPassword.length < 8) return fail(res, 'Hasło musi mieć co najmniej 8 znaków.');
-    if (cleanPassword.length > 72) return fail(res, 'Hasło nie może przekraczać 72 znaków.');
+    if (Buffer.byteLength(cleanPassword) > 72) return fail(res, 'Hasło nie może przekraczać 72 znaków.');
     if (!ALLOWED_ROLES.includes(role)) {
         return fail(res, `Nieprawidłowa rola. Dozwolone: ${ALLOWED_ROLES.join(', ')}`);
     }
 
     return safe('Błąd podczas tworzenia użytkownika:', 'Błąd serwera podczas tworzenia użytkownika.', async () => {
         const [existing] = await currentPool.query('SELECT id FROM uzytkownicy WHERE username = ?', [cleanUsername]);
-        if (existing.length > 0) return fail(res, 'Użytkownik o tej nazwie już istnieje.', 409);
+        if (existing.length > 0) return fail(res, 'Taki użytkownik już istnieje.', 409);
 
-        const hashedPassword = await bcrypt.hash(cleanPassword, 10);
-        const [result] = await currentPool.query(
-            'INSERT INTO uzytkownicy (username, password_hash, role) VALUES (?, ?, ?)',
-            [cleanUsername, hashedPassword, role]
-        );
+        const hashedPassword = await bcrypt.hash(password, 10);
+        let result;
+        try {
+            [result] = await currentPool.query(
+                'INSERT INTO uzytkownicy (username, password_hash, role) VALUES (?, ?, ?)',
+                [cleanUsername, hashedPassword, role]
+            );
+        } catch (err) {
+            if (err && err.code === 'ER_DUP_ENTRY') {
+                return fail(res, 'Taki użytkownik już istnieje.', 409);
+            }
+            throw err;
+        }
 
         return res.status(201).json({
             message: 'Użytkownik został pomyślnie utworzony.',
@@ -1163,14 +1317,14 @@ app.patch('/api/admin/users/:id/haslo', authenticateToken, requireAdmin,
             return fail(res, 'Podaj nowe hasło dla użytkownika.');
         }
 
-        const cleanPassword = password.trim();
+        const cleanPassword = password;
         if (cleanPassword.length < 8) return fail(res, 'Hasło musi mieć co najmniej 8 znaków.');
-        if (cleanPassword.length > 72) return fail(res, 'Hasło nie może przekraczać 72 znaków.');
+        if (Buffer.byteLength(cleanPassword) > 72) return fail(res, 'Hasło nie może przekraczać 72 znaków.');
 
         const [users] = await currentPool.query('SELECT id, username FROM uzytkownicy WHERE id = ?', [id]);
         if (!users || users.length === 0) return fail(res, `Nie znaleziono użytkownika o ID ${id}.`, 404);
 
-        const hashedPassword = await bcrypt.hash(cleanPassword, 10);
+        const hashedPassword = await bcrypt.hash(password, 10);
         await currentPool.query('UPDATE uzytkownicy SET password_hash = ? WHERE id = ?', [hashedPassword, id]);
 
         return res.json({
@@ -1184,13 +1338,17 @@ const handleToggleUserStatus = safe('Błąd podczas zmiany statusu konta:', 'Bł
     const id = parsePositiveInt(req.params.id);
     if (isNaN(id)) return fail(res, USER_ID_ERR_INT);
 
+    if (req.body && Object.keys(req.body).length > 0 && typeof req.body.aktywny !== 'boolean') {
+        return fail(res, 'Pole "aktywny" musi mieć wartość true lub false.', 400);
+    }
+
     const [users] = await currentPool.query('SELECT id, username, role, aktywny FROM uzytkownicy WHERE id = ?', [id]);
     if (!users || users.length === 0) return fail(res, `Nie znaleziono użytkownika o ID ${id}.`, 404);
 
     const target = users[0];
     const currentActive = isUserActive(target);
-    const nextActive = req.body && req.body.aktywny !== undefined
-        ? isUserActive({ aktywny: req.body.aktywny })
+    const nextActive = typeof req.body?.aktywny === 'boolean'
+        ? req.body.aktywny
         : !currentActive;
 
     if (Number(req.user.id) === id && !nextActive) {
@@ -1236,9 +1394,9 @@ app.patch('/api/profil/haslo', authenticateToken, hasloLimiter,
             return fail(res, 'Podaj aktualne oraz nowe hasło.');
         }
 
-        const cleanNewPass = newPass.trim();
+        const cleanNewPass = newPass;
         if (cleanNewPass.length < 8) return fail(res, 'Nowe hasło musi mieć co najmniej 8 znaków.');
-        if (cleanNewPass.length > 72) return fail(res, 'Nowe hasło nie może przekraczać 72 znaków.');
+        if (Buffer.byteLength(cleanNewPass) > 72) return fail(res, 'Nowe hasło nie może przekraczać 72 znaków.');
 
         const [rows] = await currentPool.query(
             'SELECT id, username, password_hash, aktywny FROM uzytkownicy WHERE id = ?',
@@ -1253,7 +1411,7 @@ app.patch('/api/profil/haslo', authenticateToken, hasloLimiter,
 
         if (!isPasswordValid) return fail(res, 'Aktualne hasło jest nieprawidłowe.', 400);
 
-        const hashedPassword = await bcrypt.hash(cleanNewPass, 10);
+        const hashedPassword = await bcrypt.hash(newPass, 10);
         await currentPool.query('UPDATE uzytkownicy SET password_hash = ? WHERE id = ?', [hashedPassword, user.id]);
 
         return res.json({ message: 'Twoje hasło zostało pomyślnie zmienione.' });

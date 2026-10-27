@@ -32,6 +32,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
     let lastExecutedQuery = null;
     let lastExecutedParams = null;
     let allExecutedQueries = [];
+    let currentMockTotal = 1;
 
     const setMockTicket = (overrides) => {
         if (overrides === null) {
@@ -78,16 +79,16 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
 
                     // Tabela zgloszenia - zliczanie COUNT(*) dla paginacji
                     if (sql.includes('SELECT COUNT(*)') && sql.includes('FROM zgloszenia')) {
-                        return [[{ total: 1 }]];
+                        return [[{ total: currentMockTotal }]];
                     }
 
                     // Tabela zgloszenia - pobranie po ID
-                    if (sql.includes('FROM zgloszenia') && (sql.includes('WHERE id = ?') || sql.includes('WHERE z.id = ?'))) {
+                    if (sql.includes('SELECT') && sql.includes('FROM zgloszenia') && (sql.includes('WHERE id = ?') || sql.includes('WHERE z.id = ?'))) {
                         return currentMockTicket ? [[currentMockTicket]] : [[]];
                     }
 
                     // Tabela zgloszenia - pobranie listy (w tym z LEFT JOIN uzytkownicy)
-                    if (sql.includes('FROM zgloszenia')) {
+                    if (sql.includes('SELECT') && sql.includes('FROM zgloszenia')) {
                         return currentMockTicket ? [[currentMockTicket]] : [[]];
                     }
 
@@ -138,7 +139,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                     }
 
                     // Tabela zgloszenia - pobranie po ID gdy brak FROM (np. inne klauzule)
-                    if (sql.includes('zgloszenia') && (sql.includes('WHERE id = ?') || sql.includes('WHERE z.id = ?'))) {
+                    if (sql.includes('SELECT') && sql.includes('zgloszenia') && (sql.includes('WHERE id = ?') || sql.includes('WHERE z.id = ?'))) {
                         return currentMockTicket ? [[currentMockTicket]] : [[]];
                     }
 
@@ -151,6 +152,10 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 return [[]];
             },
             getConnection: async () => ({
+                query: (sql, values) => mockPool.query(sql, values),
+                beginTransaction: async () => { },
+                commit: async () => { },
+                rollback: async () => { },
                 release: () => { }
             })
         };
@@ -236,6 +241,32 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
 
             assert.strictEqual(response.status, 400);
             assert.strictEqual(response.body.error, 'Pole "data_zakupu" nie może być datą z przyszłości.');
+        });
+
+        it('POST /api/zgloszenia normalizuje przedmiot_zgloszenia do kanonicznej wartości z ALLOWED_PRZEDMIOTY (np. "inne" → "Inne")', async () => {
+            allExecutedQueries = [];
+            const response = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ul. Testowa 1',
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'inne',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Brak obrazu',
+                    zgoda_rodo: true
+                });
+
+            assert.strictEqual(response.status, 201);
+            const insertZgloszenie = allExecutedQueries.find(q => q.sql.includes('INSERT INTO zgloszenia'));
+            assert.ok(insertZgloszenie);
+            assert.strictEqual(insertZgloszenie.values[9], 'Inne');
         });
 
         it('POST /api/zgloszenia z wypełnionym honeypotem (pole website) zwraca 201 jak zwykle, ale nic nie zapisuje do bazy', async () => {
@@ -967,6 +998,50 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(resp.body.error, 'Hasło musi mieć co najmniej 8 znaków.');
         });
 
+        it('Dwa równoległe POST /api/admin/users na ten sam login (ER_DUP_ENTRY na INSERT) zwracają 201 i 409 "Taki użytkownik już istnieje." zamiast 500', async () => {
+            const currentPool = app.getPool();
+            let inserted = false;
+            const dupPool = {
+                query: async (sql, values) => {
+                    if (typeof sql === 'string' && sql.includes('SELECT id FROM uzytkownicy WHERE username = ?')) {
+                        // Oba równoległe żądania przechodzą SELECT zanim którekolwiek skończy bcrypt.hash (~70 ms)
+                        return [[]];
+                    }
+                    if (typeof sql === 'string' && sql.includes('INSERT INTO uzytkownicy')) {
+                        if (!inserted) {
+                            inserted = true;
+                            return [{ insertId: 777, affectedRows: 1 }];
+                        }
+                        const dupErr = new Error("Duplicate entry 'duplikat_user' for key 'username'");
+                        dupErr.code = 'ER_DUP_ENTRY';
+                        throw dupErr;
+                    }
+                    return currentPool.query(sql, values);
+                }
+            };
+
+            app.setPool(dupPool);
+            try {
+                const [res1, res2] = await Promise.all([
+                    request(app)
+                        .post('/api/admin/users')
+                        .set('Authorization', `Bearer ${adminToken}`)
+                        .send({ username: 'duplikat_user', password: 'Haslo12345!', role: 'pracownik' }),
+                    request(app)
+                        .post('/api/admin/users')
+                        .set('Authorization', `Bearer ${adminToken}`)
+                        .send({ username: 'duplikat_user', password: 'Haslo12345!', role: 'pracownik' })
+                ]);
+
+                const statuses = [res1.status, res2.status].sort((a, b) => a - b);
+                assert.deepStrictEqual(statuses, [201, 409]);
+                const conflictRes = res1.status === 409 ? res1 : res2;
+                assert.strictEqual(conflictRes.body.error, 'Taki użytkownik już istnieje.');
+            } finally {
+                app.setPool(currentPool);
+            }
+        });
+
         it('GET /api/zgloszenia filtruje zapytania zgodnie z rolą', async () => {
             // Pracownik: filtruje po przypisanym pracowniku
             const resP = await request(app).get('/api/zgloszenia').set('Authorization', `Bearer ${pracownikToken}`);
@@ -993,6 +1068,8 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
         });
 
         it('GET /api/zgloszenia obsługuje parametry filtrowania (?status, ?pracownik, ?szukaj) oraz paginację i sortowanie', async () => {
+            currentMockTotal = 25;
+            try {
             // Filtr statusu i pracownika
             await request(app)
                 .get('/api/zgloszenia?status=w_realizacji&pracownik=50&strona=2&limit=10&sort=asc')
@@ -1009,6 +1086,14 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 .set('Authorization', `Bearer ${adminToken}`);
             assert.ok(lastExecutedQuery.includes('z.przypisany_pracownik_id IS NULL'));
 
+            // Nieprawidłowe wartości ?pracownik= (np. 3abc, xyz, -5) zwracają 400 zamiast cichego ignorowania
+            for (const badPracownik of ['3abc', 'xyz', '-5']) {
+                const resBadPrac = await request(app)
+                    .get(`/api/zgloszenia?pracownik=${badPracownik}`)
+                    .set('Authorization', `Bearer ${adminToken}`);
+                assert.strictEqual(resBadPrac.status, 400, `pracownik=${badPracownik} powinno zwrócić 400`);
+            }
+
             // Filtr wyszukiwania (?szukaj=) - wyłącznie przez placeholdery ?
             await request(app)
                 .get('/api/zgloszenia?szukaj=Warszawa')
@@ -1019,6 +1104,12 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             // I że znajduje się wyłącznie w parametrach jako '%Warszawa%'
             assert.strictEqual(lastExecutedParams.filter(p => p === '%Warszawa%').length, 14);
 
+            // Escapowanie znaków specjalnych LIKE (\, %, _) w ?szukaj=
+            await request(app)
+                .get(`/api/zgloszenia?szukaj=${encodeURIComponent('FV_2026%\\test')}`)
+                .set('Authorization', `Bearer ${adminToken}`);
+            assert.strictEqual(lastExecutedParams.filter(p => p === '%FV\\_2026\\%\\\\test%').length, 14);
+
             // Łączenie reguły roli pracownika z filtrem statusu i szukaj
             await request(app)
                 .get('/api/zgloszenia?status=nowe&szukaj=myBoard')
@@ -1028,6 +1119,25 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.ok(lastExecutedQuery.includes('LIKE ?'));
             assert.strictEqual(lastExecutedParams[0], 1); // ID zalogowanego pracownika
             assert.strictEqual(lastExecutedParams[1], 'nowe'); // status
+            } finally {
+                currentMockTotal = 1;
+            }
+        });
+
+        it('GET /api/zgloszenia z ogromnym numerem strony (?strona=99999999999999999999) ogranicza page do totalPages i zwraca 200 bez błędu SQL', async () => {
+            currentMockTotal = 60; // przy limit=25 daje totalPages = 3
+            try {
+                const res = await request(app)
+                    .get('/api/zgloszenia?strona=99999999999999999999&limit=25')
+                    .set('Authorization', `Bearer ${adminToken}`);
+                assert.strictEqual(res.status, 200);
+                assert.strictEqual(res.body.totalPages, 3);
+                assert.strictEqual(res.body.page, 3);
+                // Parametry zapytania SELECT: [limit, offset] = [25, 50] (zamiast 2.5e+21)
+                assert.deepStrictEqual(lastExecutedParams, [25, 50]);
+            } finally {
+                currentMockTotal = 1;
+            }
         });
     });
 
@@ -1313,6 +1423,17 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(res.status, 404);
         });
 
+        it('PATCH /api/admin/users/:id/status: odrzuca wartości inne niż boolean (np. null, "nie", 0, 1) kodem 400', async () => {
+            for (const badVal of [null, 'nie', 'tak', 0, 1, {}, []]) {
+                const res = await request(app)
+                    .patch('/api/admin/users/1/status')
+                    .set('Authorization', `Bearer ${adminToken}`)
+                    .send({ aktywny: badVal });
+                assert.strictEqual(res.status, 400, `Wartość aktywny=${JSON.stringify(badVal)} powinna zwrócić 400`);
+                assert.strictEqual(res.body.error, 'Pole "aktywny" musi mieć wartość true lub false.');
+            }
+        });
+
         it('PATCH /api/admin/users/:id/status: 200 przy przełączaniu blokady innego użytkownika', async () => {
             const res = await request(app)
                 .patch('/api/admin/users/1/status')
@@ -1369,7 +1490,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             const resPadded = await request(app)
                 .post('/api/admin/users')
                 .set('Authorization', `Bearer ${adminToken}`)
-                .send({ username: 'user_padded', password: '  abc   ', role: 'pracownik' });
+                .send({ username: 'user_padded', password: '  abc  ', role: 'pracownik' });
             assert.strictEqual(resPadded.status, 400);
             assert.strictEqual(resPadded.body.error, 'Hasło musi mieć co najmniej 8 znaków.');
 
@@ -1386,7 +1507,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 .set('Authorization', `Bearer ${adminToken}`)
                 .send({ aktywny: '0' });
             assert.strictEqual(resSelfZero.status, 400);
-            assert.ok(resSelfZero.body.error.includes('własnego konta'));
+            assert.ok(resSelfZero.body.error.includes('true lub false'));
 
             const resSelfFalseStr = await request(app)
                 .patch('/api/admin/users/99/status')
@@ -1478,6 +1599,77 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                     app.hasloLimiter.resetKey('20');
                 }
             }
+        });
+
+        it('Hasło ze spacją na początku/końcu ("  Haslo123  ") nie jest przycinane przy tworzeniu konta, resecie ani zmianie hasła', async () => {
+            const passWithSpaces = '  Haslo123  ';
+
+            // 1. Tworzenie konta przez admina z hasłem "  Haslo123  "
+            allExecutedQueries = [];
+            const resCreate = await request(app)
+                .post('/api/admin/users')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ username: 'nowy_spacje', password: passWithSpaces, role: 'pracownik' });
+            assert.strictEqual(resCreate.status, 201);
+            const createInsert = allExecutedQueries.find(q => q.sql.includes('INSERT INTO uzytkownicy'));
+            assert.ok(createInsert, 'Powinien zapisać nowego użytkownika');
+            assert.strictEqual(await bcrypt.compare(passWithSpaces, createInsert.values[1]), true);
+            assert.strictEqual(await bcrypt.compare(passWithSpaces.trim(), createInsert.values[1]), false);
+
+            // 2. Reset hasła przez admina z hasłem "  Haslo123  "
+            allExecutedQueries = [];
+            const resReset = await request(app)
+                .patch('/api/admin/users/1/haslo')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ password: passWithSpaces });
+            assert.strictEqual(resReset.status, 200);
+            const resetUpdate = allExecutedQueries.find(q => q.sql.includes('UPDATE uzytkownicy SET password_hash'));
+            assert.ok(resetUpdate, 'Powinien zaktualizować password_hash');
+            assert.strictEqual(await bcrypt.compare(passWithSpaces, resetUpdate.values[0]), true);
+
+            // 3. Zmiana własnego hasła na "  Haslo123  "
+            allExecutedQueries = [];
+            const resOwn = await request(app)
+                .patch('/api/profil/haslo')
+                .set('Authorization', `Bearer ${pracownikToken}`)
+                .send({ currentPassword: 'prawidloweHaslo123', newPassword: passWithSpaces });
+            assert.strictEqual(resOwn.status, 200);
+            const ownUpdate = allExecutedQueries.find(q => q.sql.includes('UPDATE uzytkownicy SET password_hash'));
+            assert.ok(ownUpdate, 'Powinien zaktualizować własny password_hash');
+            assert.strictEqual(await bcrypt.compare(passWithSpaces, ownUpdate.values[0]), true);
+        });
+
+        it('Limit hasła liczony w bajtach (Buffer.byteLength <= 72): odrzuca 36 × "ą" + cokolwiek (81 bajtów) we wszystkich endpointach haseł', async () => {
+            const multiByteTooLong = 'ą'.repeat(36) + 'cokolwiek'; // 45 znaków, ale 81 bajtów w UTF-8 (> 72)
+            assert.strictEqual(multiByteTooLong.length, 45);
+            assert.strictEqual(Buffer.byteLength(multiByteTooLong), 81);
+
+            const resCreate = await request(app)
+                .post('/api/admin/users')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ username: 'user_utf8_pass', password: multiByteTooLong, role: 'pracownik' });
+            assert.strictEqual(resCreate.status, 400);
+
+            const resReset = await request(app)
+                .patch('/api/admin/users/1/haslo')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ password: multiByteTooLong });
+            assert.strictEqual(resReset.status, 400);
+
+            const resOwn = await request(app)
+                .patch('/api/profil/haslo')
+                .set('Authorization', `Bearer ${pracownikToken}`)
+                .send({ currentPassword: 'prawidloweHaslo123', newPassword: multiByteTooLong });
+            assert.strictEqual(resOwn.status, 400);
+
+            // Dokładnie 72 bajty (36 × "ą") jest akceptowane
+            const exact72Bytes = 'ą'.repeat(36);
+            assert.strictEqual(Buffer.byteLength(exact72Bytes), 72);
+            const resExact = await request(app)
+                .patch('/api/admin/users/1/haslo')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ password: exact72Bytes });
+            assert.strictEqual(resExact.status, 200);
         });
 
         it('PATCH /api/profil/haslo: poprawne aktualne i nowe hasło zwraca 200', async () => {
@@ -2068,9 +2260,9 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
     });
 
     describe('14. Limit rozmiaru ciała żądania JSON (express.json limit)', () => {
-        it('POST /api/zgloszenia z maksymalnym dozwolonym opisem usterki (65535 znaków) mieści się w limicie express.json (70kb) i zwraca 201', async () => {
+        it('POST /api/zgloszenia z maksymalnym dozwolonym opisem usterki (5000 znaków) i adresem (500 znaków) mieści się w limicie i zwraca 201', async () => {
             allExecutedQueries = [];
-            const maxOpis = 'a'.repeat(65535);
+            const maxOpis = 'ż'.repeat(5000);
             const response = await request(app)
                 .post('/api/zgloszenia')
                 .send({
@@ -2093,7 +2285,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(response.body.message, 'Zgłoszenie serwisowe zostało pomyślnie przyjęte.');
             const insertZgloszenie = allExecutedQueries.find(q => q.sql.includes('INSERT INTO zgloszenia'));
             assert.ok(insertZgloszenie, 'Powinno wykonać INSERT do tabeli zgloszenia');
-            assert.strictEqual(insertZgloszenie.values[12].length, 65535);
+            assert.strictEqual(insertZgloszenie.values[12].length, 5000);
         });
 
         it('Żądanie JSON przekraczające limit express.json (np. 80KB) zwraca błąd 413 Payload Too Large', async () => {
@@ -2109,8 +2301,8 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(response.body.error, 'Przesłany ładunek żądania (payload) przekracza dozwolony limit.');
         });
 
-        it('POST /api/zgloszenia z opisem usterki przekraczającym maksymalną dozwoloną długość (65536 znaków) zwraca błąd walidacji 400', async () => {
-            const invalidOpis = 'a'.repeat(65536);
+        it('POST /api/zgloszenia z opisem usterki przekraczającym maksymalną dozwoloną długość (5001 znaków lub 34 000 × "ż") zwraca błąd walidacji 400', async () => {
+            const invalidOpis = 'ż'.repeat(34000);
             const response = await request(app)
                 .post('/api/zgloszenia')
                 .send({
@@ -2132,7 +2324,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(response.status, 400);
             assert.strictEqual(
                 response.body.error,
-                'Pole "opis_usterki" przekracza maksymalną dozwoloną długość (65535 znaków).'
+                'Pole "opis_usterki" przekracza maksymalną dozwoloną długość (5000 znaków).'
             );
         });
 
@@ -2155,6 +2347,35 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(response.text.includes('URIError'), false);
             assert.strictEqual(response.text.includes('node_modules'), false);
             assert.strictEqual(response.text.includes('<!DOCTYPE html>'), false);
+        });
+
+        it('POST /api/zgloszenia z adresem > 500 znaków oraz PATCH /naprawione z opisem naprawy > 5000 znaków zwracają 400', async () => {
+            const resAdres = await request(app)
+                .post('/api/zgloszenia')
+                .send({
+                    imie: 'Jan',
+                    nazwisko: 'Kowalski',
+                    adres: 'ż'.repeat(501),
+                    kod_pocztowy: '00-001',
+                    miasto: 'Warszawa',
+                    numer_telefonu: '+48123456789',
+                    email: 'jan@example.com',
+                    przedmiot_zgloszenia: 'Projektory',
+                    data_zakupu: '2026-01-01',
+                    numer_fv: 'FV/123/2026',
+                    nip: '1234567890',
+                    opis_usterki: 'Brak obrazu',
+                    zgoda_rodo: true
+                });
+            assert.strictEqual(resAdres.status, 400);
+            assert.strictEqual(resAdres.body.error, 'Pole "adres" przekracza maksymalną dozwoloną długość (500 znaków).');
+
+            const resNaprawa = await request(app)
+                .patch('/api/zgloszenia/1/naprawione')
+                .set('Authorization', `Bearer ${pracownikToken}`)
+                .send({ opis_naprawy: 'ż'.repeat(5001) });
+            assert.strictEqual(resNaprawa.status, 400);
+            assert.strictEqual(resNaprawa.body.error, 'Pole "opis_naprawy" przekracza maksymalną dozwoloną długość (5000 znaków).');
         });
 
         it('.env.example zawiera zdefiniowaną zmienną NODE_ENV=production wraz z opisem', () => {
@@ -2480,6 +2701,329 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 assert.ok(loggedOutput.includes('Przekroczono limit połączeń'));
             } finally {
                 console.error = originalConsoleError;
+            }
+        });
+    });
+
+    describe('21. Transakcje bazodanowe, ochrona przed wyścigami (CAS / 409) i pełna historia 65 000 znaków', () => {
+        beforeEach(() => {
+            allExecutedQueries = [];
+        });
+
+        it('Gdy UPDATE zwraca affectedRows: 0 (ktoś wyprzedził żądanie), endpointy zwracają 409 i robią rollback transakcji', async () => {
+            const currentPool = app.getPool();
+            let rollbackCount = 0;
+            let commitCount = 0;
+            let historyInsertCount = 0;
+
+            const casConflictPool = {
+                query: async (sql, values) => currentPool.query(sql, values),
+                getConnection: async () => ({
+                    query: async (sql, values) => {
+                        if (typeof sql === 'string' && sql.includes('UPDATE zgloszenia')) {
+                            return [{ affectedRows: 0 }];
+                        }
+                        if (typeof sql === 'string' && sql.includes('INSERT INTO historia_zgloszen')) {
+                            historyInsertCount++;
+                        }
+                        return currentPool.query(sql, values);
+                    },
+                    beginTransaction: async () => { },
+                    commit: async () => { commitCount++; },
+                    rollback: async () => { rollbackCount++; },
+                    release: () => { }
+                })
+            };
+
+            app.setPool(casConflictPool);
+            try {
+                // 1. PATCH /api/zgloszenia/:id/status (np. wysyłka)
+                setMockTicket({ id: 1, status: 'do_wysylki' });
+                const resStatus = await request(app)
+                    .patch('/api/zgloszenia/1/status')
+                    .set('Authorization', `Bearer ${magazynierToken}`)
+                    .send({ status: 'zakończone', numer_listu: 'DPD-CONFLICT-1' });
+                assert.strictEqual(resStatus.status, 409);
+                assert.strictEqual(resStatus.body.error, 'Zlecenie zostało w międzyczasie zmienione, odśwież widok.');
+
+                // 2. PATCH /api/zgloszenia/:id/naprawione
+                setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
+                const resNaprawione = await request(app)
+                    .patch('/api/zgloszenia/1/naprawione')
+                    .set('Authorization', `Bearer ${pracownikToken}`)
+                    .send({ opis_naprawy: 'Naprawa podczas wyścigu' });
+                assert.strictEqual(resNaprawione.status, 409);
+                assert.strictEqual(resNaprawione.body.error, 'Zlecenie zostało w międzyczasie zmienione, odśwież widok.');
+
+                // 3. PATCH /api/zgloszenia/:id/przypisz (gdy automatyczna zmiana nowe -> w_realizacji ma affectedRows: 0)
+                setMockTicket({ id: 1, status: 'nowe', przypisany_pracownik_id: null });
+                const resPrzypisz = await request(app)
+                    .patch('/api/zgloszenia/1/przypisz')
+                    .set('Authorization', `Bearer ${serwisantToken}`)
+                    .send({ pracownik_id: 1 });
+                assert.strictEqual(resPrzypisz.status, 409);
+                assert.strictEqual(resPrzypisz.body.error, 'Zlecenie zostało w międzyczasie zmienione, odśwież widok.');
+
+                assert.strictEqual(rollbackCount, 3, 'Każdy konflikt CAS powinien wywołać rollback()');
+                assert.strictEqual(commitCount, 0, 'Żaden konflikt CAS nie może wywołać commit()');
+                assert.strictEqual(historyInsertCount, 0, 'Przy konflikcie CAS wpis historii nie może powstać');
+            } finally {
+                app.setPool(currentPool);
+            }
+        });
+
+        it('Gdy INSERT do historia_zgloszen rzuca błąd, endpoint zwraca 500 i wykonuje rollback(), a nie commit()', async () => {
+            const currentPool = app.getPool();
+            let beginCount = 0;
+            let rollbackCount = 0;
+            let commitCount = 0;
+            let releaseCount = 0;
+
+            const failingHistoryPool = {
+                query: async (sql, values) => currentPool.query(sql, values),
+                getConnection: async () => ({
+                    query: async (sql, values) => {
+                        if (typeof sql === 'string' && sql.includes('INSERT INTO historia_zgloszen')) {
+                            const err = new Error("Data too long for column 'szczegoly' at row 1");
+                            err.code = 'ER_DATA_TOO_LONG';
+                            throw err;
+                        }
+                        return currentPool.query(sql, values);
+                    },
+                    beginTransaction: async () => { beginCount++; },
+                    commit: async () => { commitCount++; },
+                    rollback: async () => { rollbackCount++; },
+                    release: () => { releaseCount++; }
+                })
+            };
+
+            const origConsoleError = console.error;
+            console.error = () => { };
+            app.setPool(failingHistoryPool);
+            try {
+                // 1. PATCH /api/zgloszenia/:id/naprawione
+                setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
+                const resNaprawione = await request(app)
+                    .patch('/api/zgloszenia/1/naprawione')
+                    .set('Authorization', `Bearer ${pracownikToken}`)
+                    .send({ opis_naprawy: 'Opis naprawy powodujący błąd historii' });
+                assert.strictEqual(resNaprawione.status, 500);
+
+                // 2. PATCH /api/zgloszenia/:id/status
+                setMockTicket({ id: 1, status: 'do_wysylki', przypisany_pracownik_id: 1 });
+                const resStatus = await request(app)
+                    .patch('/api/zgloszenia/1/status')
+                    .set('Authorization', `Bearer ${magazynierToken}`)
+                    .send({ status: 'zakończone', numer_listu: 'DPD-ERR-500' });
+                assert.strictEqual(resStatus.status, 500);
+
+                // 3. PATCH /api/zgloszenia/:id/przypisz
+                setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: null });
+                const resPrzypisz = await request(app)
+                    .patch('/api/zgloszenia/1/przypisz')
+                    .set('Authorization', `Bearer ${serwisantToken}`)
+                    .send({ pracownik_id: 1 });
+                assert.strictEqual(resPrzypisz.status, 500);
+
+                // 4. DELETE /api/zgloszenia/:id
+                setMockTicket({ id: 1, status: 'nowe' });
+                const resDelete = await request(app)
+                    .delete('/api/zgloszenia/1')
+                    .set('Authorization', `Bearer ${adminToken}`);
+                assert.strictEqual(resDelete.status, 500);
+
+                // 5. POST /api/zgloszenia
+                const resCreate = await request(app)
+                    .post('/api/zgloszenia')
+                    .send({
+                        imie: 'Jan',
+                        nazwisko: 'Kowalski',
+                        adres: 'ul. Testowa 1',
+                        kod_pocztowy: '00-001',
+                        miasto: 'Warszawa',
+                        numer_telefonu: '+48123456789',
+                        email: 'jan@example.com',
+                        przedmiot_zgloszenia: 'Projektory',
+                        data_zakupu: '2026-01-01',
+                        numer_fv: 'FV/123/2026',
+                        nip: '1234567890',
+                        opis_usterki: 'Brak obrazu',
+                        zgoda_rodo: true
+                    });
+                assert.strictEqual(resCreate.status, 500);
+
+                assert.strictEqual(beginCount, 5, 'Powinno rozpocząć 5 transakcji');
+                assert.strictEqual(rollbackCount, 5, 'Każdy błąd zapisu historii musi wywołać rollback()');
+                assert.strictEqual(commitCount, 0, 'Żadna transakcja z błędem historii nie może wywołać commit()');
+                assert.strictEqual(releaseCount, 5, 'Każde połączenie musi zostać zwolnione (release)');
+            } finally {
+                console.error = origConsoleError;
+                app.setPool(currentPool);
+            }
+        });
+
+        it('W DELETE /api/zgloszenia/:id wpis historii i usunięcie są w jednej transakcji: błąd DELETE wycofuje wpis "usunięcie"', async () => {
+            const currentPool = app.getPool();
+            let rollbackCount = 0;
+            let commitCount = 0;
+
+            const failingDeletePool = {
+                query: async (sql, values) => currentPool.query(sql, values),
+                getConnection: async () => ({
+                    query: async (sql, values) => {
+                        if (typeof sql === 'string' && sql.includes('DELETE FROM zgloszenia')) {
+                            throw new Error('Deadlock found when trying to get lock');
+                        }
+                        return currentPool.query(sql, values);
+                    },
+                    beginTransaction: async () => { },
+                    commit: async () => { commitCount++; },
+                    rollback: async () => { rollbackCount++; },
+                    release: () => { }
+                })
+            };
+
+            const origConsoleError = console.error;
+            console.error = () => { };
+            app.setPool(failingDeletePool);
+            try {
+                setMockTicket({ id: 1, status: 'nowe' });
+                const res = await request(app)
+                    .delete('/api/zgloszenia/1')
+                    .set('Authorization', `Bearer ${adminToken}`);
+
+                assert.strictEqual(res.status, 500);
+                assert.strictEqual(rollbackCount, 1, 'Błąd DELETE musi wycofać transakcję wraz z wpisem historii');
+                assert.strictEqual(commitCount, 0);
+            } finally {
+                console.error = origConsoleError;
+                app.setPool(currentPool);
+            }
+        });
+
+        it('PATCH /api/zgloszenia/:id/przypisz nie nadpisuje statusu gdy status się nie zmienia, a dla "nowe" zmienia status warunkowo WHERE status = "nowe"', async () => {
+            // 1. Zlecenie w statusie 'w_realizacji' -> UPDATE tylko przypisany_pracownik_id (bez status = ?)
+            allExecutedQueries = [];
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: null });
+            const resWRealizacji = await request(app)
+                .patch('/api/zgloszenia/1/przypisz')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ pracownik_id: 1 });
+            assert.strictEqual(resWRealizacji.status, 200);
+
+            const updatesWRealizacji = allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia'));
+            assert.strictEqual(updatesWRealizacji.length, 1);
+            assert.strictEqual(updatesWRealizacji[0].sql.includes('status ='), false, 'Samo przypisanie nie może nadpisywać kolumny status');
+            assert.deepStrictEqual(updatesWRealizacji[0].values, [1, 1]);
+
+            // 2. Zlecenie w statusie 'nowe' -> osobny UPDATE statusu z WHERE status = 'nowe'
+            allExecutedQueries = [];
+            setMockTicket({ id: 1, status: 'nowe', przypisany_pracownik_id: null });
+            const resNowe = await request(app)
+                .patch('/api/zgloszenia/1/przypisz')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ pracownik_id: 1 });
+            assert.strictEqual(resNowe.status, 200);
+
+            const updatesNowe = allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia'));
+            assert.strictEqual(updatesNowe.length, 2);
+            assert.ok(updatesNowe[0].sql.includes('SET przypisany_pracownik_id = ? WHERE id = ?'));
+            assert.ok(updatesNowe[1].sql.includes("WHERE id = ? AND status = 'nowe'"));
+        });
+
+        it('Opis naprawy na 65 000 znaków zapisuje pełny wpis "naprawa" w historii, a po cofnięciu statusu pełny opis pozostaje w historii (MEDIUMTEXT)', async () => {
+            const longOpis = 'N'.repeat(5000);
+
+            // 1. Zatwierdzenie naprawy na 65 000 znaków
+            allExecutedQueries = [];
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
+            const resRepair = await request(app)
+                .patch('/api/zgloszenia/1/naprawione')
+                .set('Authorization', `Bearer ${pracownikToken}`)
+                .send({ opis_naprawy: longOpis });
+
+            assert.strictEqual(resRepair.status, 200);
+            const repairHistory = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen') && q.values[2] === 'naprawa');
+            assert.ok(repairHistory, 'Wpis "naprawa" musi zostać zapisany w historia_zgloszen');
+            assert.strictEqual(repairHistory.values[5], `Opis naprawy: ${longOpis}`);
+            assert.strictEqual(repairHistory.values[5].length, 5014);
+
+            // 2. Cofnięcie statusu przez admina z do_wysylki do w_realizacji
+            allExecutedQueries = [];
+            setMockTicket({ id: 1, status: 'do_wysylki', przypisany_pracownik_id: 1, opis_naprawy: longOpis });
+            const resRollback = await request(app)
+                .patch('/api/zgloszenia/1/status')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ status: 'w_realizacji' });
+
+            assert.strictEqual(resRollback.status, 200);
+            const rollbackHistory = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen') && q.values[2] === 'zmiana_statusu');
+            assert.ok(rollbackHistory, 'Wpis cofnięcia statusu musi zostać zapisany w historia_zgloszen');
+            assert.ok(rollbackHistory.values[5].includes(longOpis), 'Pełny 65 000-znakowy opis naprawy musi zachować się w historii po cofnięciu');
+
+            // 3. Weryfikacja migracji i schematu (MEDIUMTEXT dla historia_zgloszen.szczegoly)
+            const migrationSql = fs.readFileSync(path.join(__dirname, 'migrations', '003_historia_szczegoly_mediumtext.sql'), 'utf8');
+            assert.match(migrationSql, /ALTER TABLE historia_zgloszen MODIFY COLUMN szczegoly MEDIUMTEXT NULL/i);
+            const schematSql = fs.readFileSync(path.join(__dirname, 'schemat.sql'), 'utf8');
+            assert.match(schematSql, /szczegoly\s+MEDIUMTEXT\s+NULL/i);
+        });
+
+        it('Promise.all z dwóch równoległych żądań "wyślij" na to samo zlecenie zwraca dokładnie jedno 200 i jedno 409 oraz tworzy tylko jeden wpis "wysyłka"', async () => {
+            const currentPool = app.getPool();
+            let currentDbStatus = 'do_wysylki';
+            const recordedHistory = [];
+
+            const concurrentPool = {
+                query: async (sql, values) => {
+                    if (typeof sql === 'string' && sql.includes('SELECT') && sql.includes('FROM zgloszenia')) {
+                        // Oba równoległe żądania odczytują stan początkowy 'do_wysylki'
+                        return [[{ id: 1, status: 'do_wysylki', przypisany_pracownik_id: 1, opis_naprawy: 'Naprawiono' }]];
+                    }
+                    return currentPool.query(sql, values);
+                },
+                getConnection: async () => ({
+                    query: async (sql, values) => {
+                        if (typeof sql === 'string' && sql.includes('UPDATE zgloszenia') && sql.includes('AND status = ?')) {
+                            const expectedStatus = values[values.length - 1];
+                            if (currentDbStatus !== expectedStatus) {
+                                return [{ affectedRows: 0 }];
+                            }
+                            currentDbStatus = values[0];
+                            return [{ affectedRows: 1 }];
+                        }
+                        if (typeof sql === 'string' && sql.includes('INSERT INTO historia_zgloszen')) {
+                            recordedHistory.push({ akcja: values[2], szczegoly: values[5] });
+                            return [{ affectedRows: 1, insertId: recordedHistory.length }];
+                        }
+                        return currentPool.query(sql, values);
+                    },
+                    beginTransaction: async () => { },
+                    commit: async () => { },
+                    rollback: async () => { },
+                    release: () => { }
+                })
+            };
+
+            app.setPool(concurrentPool);
+            try {
+                const api = request(app);
+                const [res1, res2] = await Promise.all([
+                    api
+                        .patch('/api/zgloszenia/1/status')
+                        .set('Authorization', `Bearer ${magazynierToken}`)
+                        .send({ status: 'zakończone', numer_listu: 'DPD-111' }),
+                    api
+                        .patch('/api/zgloszenia/1/status')
+                        .set('Authorization', `Bearer ${magazynierToken}`)
+                        .send({ status: 'zakończone', numer_listu: 'DPD-222' })
+                ]);
+
+                const statuses = [res1.status, res2.status].sort((a, b) => a - b);
+                assert.deepStrictEqual(statuses, [200, 409]);
+                assert.strictEqual(recordedHistory.length, 1);
+                assert.strictEqual(recordedHistory[0].akcja, 'wysyłka');
+            } finally {
+                app.setPool(currentPool);
             }
         });
     });

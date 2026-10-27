@@ -104,6 +104,7 @@ const makeToken = (role, id = 1, username = 'test_user') =>
 
             assert.ok(versions.includes('001_init.sql'), 'Brak 001_init.sql w schema_migrations');
             assert.ok(versions.includes('002_aktualizacja_kolumn_i_indeksow.sql'), 'Brak 002_aktualizacja_kolumn_i_indeksow.sql w schema_migrations');
+            assert.ok(versions.includes('003_historia_szczegoly_mediumtext.sql'), 'Brak 003_historia_szczegoly_mediumtext.sql w schema_migrations');
 
             const pending = await checkPendingMigrations(pool);
             assert.strictEqual(pending.length, 0, 'Oczekiwano 0 oczekujących migracji');
@@ -329,6 +330,76 @@ const makeToken = (role, id = 1, username = 'test_user') =>
             await dbConnection.query('INSERT INTO schema_migrations (wersja) VALUES (?)', ['002_aktualizacja_kolumn_i_indeksow.sql']);
             const pendingAfter = await checkPendingMigrations(pool);
             assert.strictEqual(pendingAfter.length, 0);
+        });
+
+        it('9. Równoległe dwa żądania "wyślij" (Promise.all) na to samo zlecenie: dokładnie jedno 200 i jedno 409, jeden wpis "wysyłka"', async () => {
+            const [ins] = await dbConnection.query(
+                `INSERT INTO zgloszenia (imie, nazwisko, adres, kod_pocztowy, miasto, numer_telefonu, email, opis_usterki, numer_fv, nip, przedmiot_zgloszenia, data_zakupu, zgoda_rodo_data, status, przypisany_pracownik_id, opis_naprawy, opis_naprawy_data)
+                 VALUES ('Adam', 'Nowak', 'ul. Prosta 1', '00-001', 'Warszawa', '+48500100200', 'adam@nowak.pl', 'Brak dźwięku', 'FV/2026/RACE', '1234567890', 'Projektory', '2026-01-10', NOW(), 'do_wysylki', ?, 'Wymieniono układ audio', NOW())`,
+                [pracownikUser.id]
+            );
+            const ticketId = ins.insertId;
+
+            const api = request(app);
+            const [res1, res2] = await Promise.all([
+                api
+                    .patch(`/api/zgloszenia/${ticketId}/status`)
+                    .set('Authorization', `Bearer ${magazynierToken}`)
+                    .send({ status: 'zakończone', numer_listu: 'DPD-RACE-1' }),
+                api
+                    .patch(`/api/zgloszenia/${ticketId}/status`)
+                    .set('Authorization', `Bearer ${magazynierToken}`)
+                    .send({ status: 'zakończone', numer_listu: 'DPD-RACE-2' })
+            ]);
+
+            const statuses = [res1.status, res2.status].sort((a, b) => a - b);
+            assert.deepStrictEqual(statuses, [200, 409], `Oczekiwano dokładnie jednego 200 i jednego 409, otrzymano: ${statuses.join(', ')}`);
+
+            const conflictRes = res1.status === 409 ? res1 : res2;
+            assert.strictEqual(conflictRes.body.error, 'Zlecenie zostało w międzyczasie zmienione, odśwież widok.');
+
+            const [historyRows] = await dbConnection.query(
+                'SELECT akcja, szczegoly FROM historia_zgloszen WHERE zgloszenie_id = ?',
+                [ticketId]
+            );
+            const wysylkaEntries = historyRows.filter(h => h.akcja === 'wysyłka');
+            assert.strictEqual(wysylkaEntries.length, 1, 'W historii musi być dokładnie jeden wpis "wysyłka"');
+        });
+
+        it('10. Opis naprawy na 65 000 znaków zapisuje wpis "naprawa" w historii, a po cofnięciu opis pozostaje w historii (MEDIUMTEXT)', async () => {
+            const [ins] = await dbConnection.query(
+                `INSERT INTO zgloszenia (imie, nazwisko, adres, kod_pocztowy, miasto, numer_telefonu, email, opis_usterki, numer_fv, nip, przedmiot_zgloszenia, data_zakupu, zgoda_rodo_data, status, przypisany_pracownik_id)
+                 VALUES ('Ewa', 'Wiśniewska', 'ul. Długa 5', '00-002', 'Warszawa', '+48500300400', 'ewa@wisniewska.pl', 'Uszkodzone podświetlenie', 'FV/2026/65K', '1234567890', 'Projektory', '2026-01-12', NOW(), 'w_realizacji', ?)`,
+                [pracownikUser.id]
+            );
+            const ticketId = ins.insertId;
+            const longOpis = 'ż'.repeat(5000);
+
+            const resRepair = await request(app)
+                .patch(`/api/zgloszenia/${ticketId}/naprawione`)
+                .set('Authorization', `Bearer ${pracownikToken}`)
+                .send({ opis_naprawy: longOpis });
+            assert.strictEqual(resRepair.status, 200);
+
+            const [histAfterRepair] = await dbConnection.query(
+                "SELECT akcja, szczegoly FROM historia_zgloszen WHERE zgloszenie_id = ? AND akcja = 'naprawa'",
+                [ticketId]
+            );
+            assert.strictEqual(histAfterRepair.length, 1, 'W historii musi istnieć wpis "naprawa"');
+            assert.strictEqual(histAfterRepair[0].szczegoly, `Opis naprawy: ${longOpis}`);
+
+            const resRollback = await request(app)
+                .patch(`/api/zgloszenia/${ticketId}/status`)
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ status: 'w_realizacji' });
+            assert.strictEqual(resRollback.status, 200);
+
+            const [histAfterRollback] = await dbConnection.query(
+                "SELECT akcja, szczegoly FROM historia_zgloszen WHERE zgloszenie_id = ? AND akcja = 'zmiana_statusu'",
+                [ticketId]
+            );
+            assert.strictEqual(histAfterRollback.length, 1, 'W historii musi istnieć wpis cofnięcia statusu');
+            assert.ok(histAfterRollback[0].szczegoly.includes(longOpis), 'Pełny 65 000-znakowy opis naprawy musi być zachowany w historii po cofnięciu');
         });
     });
 })();

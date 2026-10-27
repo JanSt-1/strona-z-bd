@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS historia_zgloszen (
     akcja VARCHAR(100) NOT NULL,
     z_statusu VARCHAR(50) NULL,
     na_status VARCHAR(50) NULL,
-    szczegoly TEXT NULL,
+    szczegoly MEDIUMTEXT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_historia_zgloszen_zgloszenie_id (zgloszenie_id),
     FOREIGN KEY (uzytkownik_id) REFERENCES uzytkownicy (id) ON DELETE SET NULL
