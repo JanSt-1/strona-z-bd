@@ -687,6 +687,15 @@ function wyznaczDozwoloneAkcje(user, ticket) {
 
     }
 
+    if (currentStatus === 'w_realizacji' && (role === 'admin' || role === 'serwisant')) {
+        akcje.push({
+            akcja: 'przypisz',
+            na_status: 'w_realizacji',
+            etykieta: 'Zmień przypisanie',
+            typ: 'przypisanie'
+        });
+    }
+
     return akcje;
 }
 
@@ -873,6 +882,23 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
         if (!tickets || tickets.length === 0) return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
         const ticket = tickets[0];
 
+        if (!canViewTicket(req.user, ticket)) {
+            return fail(res, 'Brak uprawnień do przeglądania tego zgłoszenia.', 403);
+        }
+
+        if (ticket.status !== 'nowe' && ticket.status !== 'w_realizacji') {
+            return fail(res, `Zmiana przypisania pracownika jest dozwolona tylko dla zleceń w statusie "nowe" lub "w_realizacji" (aktualny status: "${ticket.status}").`, 409);
+        }
+
+        if (req.user.role === 'serwisant' && isAssignedToOther(ticket, req.user.id)) {
+            if (ticket.status !== 'w_realizacji') {
+                return fail(res, 'Serwisant może zmienić przypisanie cudzego zlecenia tylko w statusie "w_realizacji".', 403);
+            }
+            if (assignedId === null || Number(assignedId) === Number(req.user.id)) {
+                return fail(res, 'Serwisant nie może przepisać na siebie ani odpiąć zlecenia przypisanego do innego pracownika.', 403);
+            }
+        }
+
         if (ticket.status === 'nowe' && assignedId === null) {
             return fail(res, 'Nie można cofnąć przypisania dla nowego zlecenia. Wybierz pracownika do realizacji.', 400);
         }
@@ -897,6 +923,7 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
             targetStatus = 'w_realizacji';
             const check = czyMoznaZmienic(req.user.role, ticket.status, targetStatus);
             if (!check.allowed) return fail(res, check.error, check.status);
+    
         }
 
         const conn = await getTransactionConnection();
@@ -953,7 +980,7 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
     }));
 
 // 7. PATCH /api/zgloszenia/:id/naprawione - Opisanie naprawy przez przypisanego pracownika, serwisanta lub admina
-app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
+app.patch('/api/zgloszenia/:id/naprawione', authenticateToken, requireRoles('admin', 'serwisant', 'pracownik'),
     safe('Błąd podczas zatwierdzania naprawy:', 'Błąd serwera podczas zatwierdzania naprawy zgłoszenia.', async (req, res) => {
         const id = parsePositiveInt(req.params.id);
         if (isNaN(id)) return fail(res, ID_ERR);
@@ -971,8 +998,20 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
         if (!rows || rows.length === 0) return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
         const ticket = rows[0];
 
-        const check = czyMoznaZmienic(req.user.role, ticket.status, 'do_wysylki');
-        if (!check.allowed) return fail(res, check.error, check.status);
+        if (!canViewTicket(req.user, ticket)) {
+            return fail(
+                res,
+                req.user.role === 'pracownik'
+                    ? 'Możesz oznaczyć jako naprawione tylko zlecenie przypisane do Ciebie.'
+                    : 'Brak uprawnień do przeglądania tego zgłoszenia.',
+                403
+            );
+        }
+
+        if (ticket.status !== 'w_realizacji') {
+            return fail(res, `Nie można zmienić statusu z »${ticket.status}« na »do_wysylki«.`, 409);
+        }
+
 
         if (req.user.role === 'pracownik' && Number(ticket.przypisany_pracownik_id) !== Number(req.user.id)) {
             return fail(res, 'Możesz oznaczyć jako naprawione tylko zlecenie przypisane do Ciebie.', 403);
@@ -1050,6 +1089,16 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
     if (!rows || rows.length === 0) return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
     const ticket = rows[0];
 
+    if (!canViewTicket(req.user, ticket)) {
+        return fail(
+            res,
+            req.user.role === 'pracownik'
+                ? 'Możesz zmieniać status tylko zlecenia przypisanego do Ciebie.'
+                : 'Brak uprawnień do przeglądania tego zgłoszenia.',
+            403
+        );
+    }
+
     if (ticket.status === status) {
         if (numer_listu !== undefined) {
             if (req.user.role !== 'magazynier' && req.user.role !== 'admin') {
@@ -1118,6 +1167,7 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
         const targetIndex = STATUS_ORDER.indexOf(status);
         const clearWysylka = targetIndex < STATUS_ORDER.indexOf('zakończone');
         const clearNaprawa = targetIndex < STATUS_ORDER.indexOf('do_wysylki');
+        const clearPrzypisanie = targetIndex < STATUS_ORDER.indexOf('w_realizacji');
 
         const setClauses = ['status = ?'];
         updateParams = [status];
@@ -1126,6 +1176,18 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
         if (clearNaprawa) {
             setClauses.push('opis_naprawy = NULL', 'opis_naprawy_data = NULL');
             if (ticket.opis_naprawy) szczegoly += `. Poprzedni opis naprawy: ${ticket.opis_naprawy}`;
+        }
+
+        if (clearPrzypisanie) {
+            setClauses.push('przypisany_pracownik_id = NULL');
+            if (ticket.przypisany_pracownik_id) {
+                let prevWorker = ticket.przypisany_pracownik_username;
+                if (!prevWorker) {
+                    const [uRows] = await currentPool.query('SELECT username FROM uzytkownicy WHERE id = ?', [ticket.przypisany_pracownik_id]);
+                    prevWorker = uRows?.[0]?.username || `ID ${ticket.przypisany_pracownik_id}`;
+                }
+                szczegoly += `. Poprzednio przypisany pracownik: ${prevWorker}`;
+            }
         }
 
         updateQuery = `UPDATE zgloszenia SET ${setClauses.join(', ')} WHERE id = ? AND status = ?`;
@@ -1168,12 +1230,13 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
 
     return res.json({
         message: 'Status zgłoszenia został zaktualizowany.',
+        przypisany_pracownik_id: (check.isRollback && status === 'nowe') ? null : ticket.przypisany_pracownik_id,
         id: Number(id),
         status,
         dozwolone_akcje: wyznaczDozwoloneAkcje(req.user, {
             id: Number(id),
             status,
-            przypisany_pracownik_id: ticket.przypisany_pracownik_id
+            przypisany_pracownik_id: (check.isRollback && status === 'nowe') ? null : ticket.przypisany_pracownik_id
         })
     });
 });

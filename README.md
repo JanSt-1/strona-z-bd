@@ -7,7 +7,7 @@ To pełna aplikacja webowa (SPA) umożliwiająca klientom szybkie rejestrowanie 
 ## Architektura i Separation of Concerns
 
 Aplikacja jest rozdzielona zgodnie z zasadą separacji odpowiedzialności:
-- **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (nagłówki bezpieczeństwa helmet, limit rozmiaru JSON, serwowanie plików statycznych z `frontend/dist/`), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
+- **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (nagłówki bezpieczeństwa helmet, limit rozmiaru JSON, serwowanie plików statycznych z `frontend/dist/`), autoryzacji JWT, kontroli dostępu RBAC, transakcji bazodanowych i ochrony przed wyścigami (CAS / `409 Conflict`), bezpiecznego logowania bez danych osobowych (`logError`), rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
 - **`db.js`**: Centralny moduł konfiguracji bazy danych MySQL uwzględniający `DB_PORT`, `DB_HOST`, `DB_USER`, `DB_PASSWORD` oraz `DB_NAME`. Udostępnia metody `createPool()` oraz `createConnection()`, z których korzystają `app.js`, `migrate.js`, `seed.js` oraz `create-user.js`.
 - **`migrate.js` & `migrations/`**: Lekki (~50 linii), bez-ORM system migracji SQL. Skrypt `npm run migrate` aplikuje oczekujące migracje po kolei w transakcjach, zapisując stan w tabeli `schema_migrations`. Zapewnia pełną idempotencję i kompatybilność z MariaDB oraz MySQL 8 (bezpieczne dodawanie kolumn i indeksów).
 - **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację obecności `JWT_SECRET`, test połączenia z bazą MySQL, **sprawdzenie czy wszystkie migracje zostały wykonane** oraz uruchomienie nasłuchiwania HTTP (`app.listen()`).
@@ -59,7 +59,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
 ### Krok 3: Inicjalizacja i migracje bazy danych
-Uruchom migracje bazy danych, które utworzą bazę (zgodnie z `DB_NAME` w `.env`) oraz zaaplikują wszystkie migracje z katalogu `migrations/` (w tym bezpieczne dodanie kolumn takich jak `telefon_stacjonarny` oraz indeksu na `historia_zgloszen`):
+Uruchom migracje bazy danych, które utworzą bazę (zgodnie z `DB_NAME` w `.env`) oraz zaaplikują wszystkie migracje z katalogu `migrations/` (w tym bezpieczne dodanie kolumn takich jak `telefon_stacjonarny`, indeksu na `historia_zgloszen` oraz rozszerzenie kolumny `szczegoly` w `historia_zgloszen` do `MEDIUMTEXT`):
 ```bash
 npm run migrate
 ```
@@ -195,7 +195,7 @@ Frontend aplikacji został zaprojektowany z dbałością o estetykę, responsywn
   - `.btn-danger` – czerwony (akcje niebezpieczne / usuwanie).
 - **Zasada „Jedna akcja = jeden przycisk w jednym miejscu”**:
   - Zamiast przeładowanych list rozwijanych statusów i ciasnych formularzy w komórkach tabeli, interfejs udostępnia dokładnie jeden, intuicyjny przycisk głównej akcji dla danego etapu zlecenia:
-    - **„Przypisz”** (etap `nowe`) – otwiera modal przypisania pracownika (`AssignWorkerModal`), a wybór pracownika automatycznie zmienia status na `w_realizacji`,
+    - **„Przypisz”** (etap `nowe`) oraz **„Zmień przypisanie”** (etap `w_realizacji` dla administratora i serwisanta) – otwiera modal przypisania pracownika (`AssignWorkerModal`), a wybór pracownika na zleceniu `nowe` automatycznie zmienia status na `w_realizacji` (na etapie `w_realizacji` pozwala przepiąć zlecenie np. w razie choroby lub blokady konta pracownika),
     - **„Oznacz jako naprawione”** (etap `w_realizacji`) – otwiera modal raportu naprawy (`RepairModal`), w którym wprowadza się opis wykonanych prac (dla serwisanta automatycznie przypisuje zlecenie do niego),
     - **„Oznacz jako wysłane”** (etap `do_wysylki`) – otwiera dedykowany modal wysyłki (`ShipModal`) z polem na numer listu przewozowego i podsumowaniem adresu odbiorcy,
     - **„Cofnij status”** – osobny przycisk dostępny wyłącznie dla administratora na etapach zaawansowanych, otwierający modal potwierdzenia (`RollbackStatusModal`) z wyborem docelowego statusu i czytelnym ostrzeżeniem o wyczyszczeniu danych późniejszych etapów (np. numeru listu czy archiwizacji opisu naprawy).
@@ -246,7 +246,7 @@ npm test
 ```
 *Skrypt wykonuje polecenie `node --test` z użyciem `supertest`. Dzięki wbudowanemu mockowaniu puli bazy danych w `app.test.js`, testy wykonują się błyskawicznie i nie wymagają aktywnego serwera MySQL.*
 
-Główne grupy przypadków testowych (łącznie **124 testy** w 18 suitach):
+Główne grupy przypadków testowych (łącznie **174 testy** w 22 suitach):
 1. **Uwierzytelnianie, logowanie, ochrona Honeypot, klauzula RODO i walidacja zgłoszeń**: walidacja pól obowiązkowych, obsługa opcjonalnego telefonu stacjonarnego (`telefon_stacjonarny` – zapis z prefiksem `+48` po podaniu 9 cyfr, dopuszczenie `null` gdy brak, błąd 400 przy niepoprawnym formacie), obowiązkowy checkbox zgody RODO (odrzucenie 400 przy braku lub false, utrwalenie znacznika czasu w `zgoda_rodo_data` przy akceptacji), ochrona antyspamowa Honeypot (wypełnione pole `website` zwraca 201 bez zapisu do bazy), brak tokenu (401), błędne dane logowania (401), poprawny token JWT (200), blokada nieprawidłowych formatów i dat z przyszłości (400).
 2. **Przejście `nowe` → `w_realizacji`**: automatyczne przypisanie zlecenia, uprawnienia serwisanta i admina (200), blokada pracownika i magazyniera (403).
 3. **Przejście `w_realizacji` → `do_wysylki`**: wyłączność dedykowanego endpointu `/naprawione`, wymóg opisu prac, uprawnienia przypisanego pracownika/serwisanta/admina (200; zatwierdzenie naprawy przez serwisanta automatycznie przypisuje do niego to zlecenie), blokada magazyniera (403) oraz blokada przejścia ze statusu `nowe` (409 Conflict).
@@ -275,7 +275,8 @@ Główne grupy przypadków testowych (łącznie **124 testy** w 18 suitach):
     - Pobieranie pełnych danych zgłoszenia wraz z powiązaną historią audytową. Egzekwowanie uprawnień RBAC (pracownik widzi tylko swoje, magazynier tylko `do_wysylki` i `zakończone`, admin/serwisant wszystkie).
     - Przy cofaniu statusu wstecz (przez administratora) automatyczne czyszczenie danych późniejszych etapów:
       - cofnięcie przed `zakończone` resetuje `data_wyslania = NULL` oraz `numer_listu = NULL`,
-      - cofnięcie przed `do_wysylki` resetuje `opis_naprawy = NULL` oraz `opis_naprawy_data = NULL`, a poprzednia treść naprawy jest bezpiecznie utrwalana w historii zdarzeń.
+      - cofnięcie przed `do_wysylki` resetuje `opis_naprawy = NULL` oraz `opis_naprawy_data = NULL`, a poprzednia treść naprawy jest bezpiecznie utrwalana w historii zdarzeń,
+      - cofnięcie do `nowe` resetuje `przypisany_pracownik_id = NULL`, a poprzednio przypisany pracownik jest zapisywany w historii zdarzeń.
 13. **Rate limiting (`POST /api/zgloszenia` oraz `POST /api/login`)**:
     - Pomijany w środowisku testowym (`skip: () => process.env.NODE_ENV === 'test'`).
     - Ograniczenie do 5 zgłoszeń na godzinę z jednego IP na `POST /api/zgloszenia` (oraz 10 prób / 15 min na `POST /api/login`).
@@ -297,6 +298,18 @@ Główne grupy przypadków testowych (łącznie **124 testy** w 18 suitach):
     - `index.html`: nagłówek `Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate`, `Pragma: no-cache`, `Expires: 0` – wymusza pobieranie zawsze świeżego punktu wejścia SPA przy każdym wejściu użytkownika.
     - Pliki z buildu z hashem w nazwie (np. `bundle.a1b2c3d4.js`, `style-D7x2v_4z.css`): długie cache'owanie `Cache-Control: public, max-age=31536000, immutable` (1 rok), eliminujące ponowne pobieranie niezmienionych assetów produkcyjnych.
     - Pozostałe pliki statyczne bez hasha (np. `logo_mentor4.svg`): standardowe cache'owanie (`public, max-age=86400`) bez flagi `no-store`.
+18. **Konfiguracja adresu nasłuchiwania (`HOST`)**:
+    - Domyślne bindowanie serwera wyłącznie do `127.0.0.1` (bezpieczne uruchomienie za Reverse Proxy), z możliwością jawnego ustawienia `HOST=0.0.0.0`.
+19. **Walidacja bezpieczeństwa sekretu JWT (`JWT_SECRET`)**:
+    - Blokada startu serwera w przypadku braku `JWT_SECRET`, użycia wartości szablonowych (`wygeneruj_wlasny`, `twoj_klucz_jtw`) lub klucza krótszego niż 32 znaki.
+20. **Bezpieczne logowanie błędów bez danych osobowych (RODO/GDPR)**:
+    - Funkcja `logError` loguje wyłącznie `err.code` oraz `err.message`, nigdy nie wypisując `err.sql` ani `err.sqlMessage` zawierających dane osobowe klientów.
+21. **Transakcje bazodanowe, ochrona przed wyścigami (CAS / `409 Conflict`), pełna historia (`MEDIUMTEXT`) oraz ścisłe reguły `/przypisz` i `/naprawione`**:
+    - Atomowe transakcje (`beginTransaction` -> `commit` / `rollback`) dla każdej zmiany zlecenia i wpisu w `historia_zgloszen` (błąd zapisu historii wycofuje zmianę zlecenia i zwraca `500`).
+    - Warunkowe zapytania `UPDATE ... WHERE id = ? AND status = ?` (Compare-And-Swap) zwracające `409 Conflict` przy równoległej modyfikacji zlecenia (np. ochrona przed podwójną wysyłką).
+    - Obsługa długich opisów naprawy (do 65 000 znaków) w kolumnie `historia_zgloszen.szczegoly` (`MEDIUMTEXT`) bez obcinania i bez cichego gubienia wpisów historii.
+    - Weryfikacja `canViewTicket` jako pierwszego kroku w `/status`, `/naprawione` i `/przypisz` (brak wycieku statusu cudzych zleceń).
+    - Ograniczenie `/naprawione` wyłącznie do statusu `w_realizacji` (`409` na innych statusach) i ról `admin`, `serwisant`, `pracownik` (`403` dla magazyniera) oraz `/przypisz` wyłącznie do statusów `nowe` i `w_realizacji` (`409` na późniejszych etapach).
 
 ---
 
@@ -304,8 +317,8 @@ Główne grupy przypadków testowych (łącznie **124 testy** w 18 suitach):
 
 W systemie reguły cyklu życia zgłoszeń znajdują się w jednym miejscu na backendzie (`czyMoznaZmienic` i `PRZEJSCIA`). Przy każdym zgłoszeniu zwracana jest dynamicznie obliczona tablica `dozwolone_akcje` (z uwzględnieniem roli użytkownika, statusu oraz przypisania). Dzięki temu frontend (`StatusControl.jsx` i `TicketDetailsDrawer.jsx`) nie powiela reguł i wyświetla wyłącznie legalne przyciski/akcje, eliminując ryzyko wywołania błędów `403 Forbidden` czy `409 Conflict`:
 
-- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie zadań dowolnym użytkownikom (w tym serwisantom, pracownikom i magazynierom na dowolnym etapie), zmiana i cofanie statusów (w panelu pojawia się wyłącznie lista dozwolonych statusów cofnięcia), dodawanie/edycja numeru listu przewozowego na dowolnym etapie, wysyłka paczek, usuwanie zgłoszeń (`DELETE`), zakładka **„Użytkownicy”** do pełnego zarządzania kontami (tworzenie, zmiana roli, zmiana hasła, blokowanie/odblokowywanie kont). Admin może przeprowadzić każdą poprawną operację w cyklu życia zgłoszenia.
-- **`serwisant`**: Przegląd wszystkich zleceń i przypisywanie ich pracownikom, serwisantom lub magazynierom (przypisanie zlecenia o statusie "nowe" automatycznie zmienia status na "w realizacji" lub rozpoczęcie realizacji przyciskiem). Może również oznaczyć zlecenie jako naprawione ("w realizacji" -> "do wysyłki") z opisem naprawy.
+- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie zadań aktywnym pracownikom i serwisantom (na etapach `nowe` oraz `w_realizacji`), zmiana i cofanie statusów (w panelu pojawia się wyłącznie lista dozwolonych statusów cofnięcia; cofnięcie do `nowe` czyści przypisanego pracownika), dodawanie/edycja numeru listu przewozowego na dowolnym etapie, wysyłka paczek, usuwanie zgłoszeń (`DELETE`), zakładka **„Użytkownicy”** do pełnego zarządzania kontami (tworzenie, zmiana roli, zmiana hasła, blokowanie/odblokowywanie kont). Admin może przeprowadzić każdą poprawną operację w cyklu życia zgłoszenia.
+- **`serwisant`**: Przegląd wszystkich zleceń i przypisywanie ich aktywnym pracownikom lub serwisantom na etapach `nowe` oraz `w_realizacji` (przypisanie zlecenia o statusie `nowe` automatycznie zmienia status na `w_realizacji`). W statusie `w_realizacji` może zmienić przypisanie zlecenia innego pracownika na innego pracownika/serwisanta (np. podczas L4 lub po zablokowaniu konta), natomiast nie może przepisać cudzego zlecenia na samego siebie ani odpiąć pracownika (`403`), co chroni przed obejściem zakazu opisywania cudzej naprawy. Może oznaczyć jako naprawione (`w_realizacji` -> `do_wysylki`) zlecenie przypisane do siebie lub nieprzypisane.
 - **`pracownik`**: Domyślnie widzi wyłącznie zlecenia przypisane do siebie. Gdy zadanie jest w statusie "w realizacji" i jest przypisane do danego pracownika, otrzymuje przycisk "Oznacz jako naprawione" ze sporządzeniem wymaganego opisu prac. Panel nigdy nie wyświetla pracownikowi nielegalnych przycisków startu czy cofania.
 - **`magazynier`**: Widzi zlecenia gotowe do wysyłki ("do wysyłki") oraz zakończone. Dla zleceń do wysyłki otrzymuje przycisk „Oznacz jako wysłane” (`ShipModal`), umożliwiający oznaczenie jako wysłane z podaniem numeru listu przewozowego (`numer_listu`).
 

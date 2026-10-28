@@ -1214,16 +1214,20 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
 
             // Serwisant na 'w_realizacji': dla zlecenia nieprzypisanego widzi akcję 'naprawione' (automatycznie przypisze go przy naprawie)
             const sRealizacjiUnassigned = wyznacz(serwisant, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: null });
-            assert.strictEqual(sRealizacjiUnassigned.length, 1);
+            assert.strictEqual(sRealizacjiUnassigned.length, 2);
+            assert.strictEqual(sRealizacjiUnassigned.some(a => a.akcja === 'przypisz' && a.etykieta === 'Zmień przypisanie'), true);
             assert.strictEqual(sRealizacjiUnassigned[0].akcja, 'naprawione');
             assert.strictEqual(sRealizacjiUnassigned[0].na_status, 'do_wysylki');
 
             // Dla zlecenia przypisanego do siebie serwisant widzi akcję 'naprawione', ale dla przypisanego komuś innemu - brak akcji
             const sRealizacjiOwn = wyznacz(serwisant, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 20 });
-            assert.strictEqual(sRealizacjiOwn.length, 1);
+            assert.strictEqual(sRealizacjiOwn.length, 2);
+            assert.strictEqual(sRealizacjiOwn.some(a => a.akcja === 'przypisz' && a.etykieta === 'Zmień przypisanie'), true);
             assert.strictEqual(sRealizacjiOwn[0].akcja, 'naprawione');
             assert.strictEqual(sRealizacjiOwn[0].na_status, 'do_wysylki');
-            assert.deepStrictEqual(wyznacz(serwisant, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 5 }), []);
+            assert.deepStrictEqual(wyznacz(serwisant, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 5 }), [
+                { akcja: 'przypisz', na_status: 'w_realizacji', etykieta: 'Zmień przypisanie', typ: 'przypisanie' }
+            ]);
 
             assert.deepStrictEqual(wyznacz(serwisant, { id: 1, status: 'do_wysylki', przypisany_pracownik_id: 5 }), []);
             assert.deepStrictEqual(wyznacz(serwisant, { id: 1, status: 'zakończone', przypisany_pracownik_id: 5 }), []);
@@ -1247,7 +1251,8 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(aNowe[0].etykieta, 'Przypisz');
 
             const aRealizacji = wyznacz(admin, { id: 1, status: 'w_realizacji' });
-            assert.strictEqual(aRealizacji.length, 2);
+            assert.strictEqual(aRealizacji.length, 3);
+            assert.strictEqual(aRealizacji.some(a => a.typ === 'przypisanie' && a.etykieta === 'Zmień przypisanie'), true);
             assert.strictEqual(aRealizacji.some(a => a.typ === 'cofnij' && a.na_status === 'nowe'), true);
             assert.strictEqual(aRealizacji.some(a => a.typ === 'naprawa' && a.na_status === 'do_wysylki'), true);
 
@@ -1280,7 +1285,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             // Admin widzi cofnięcie oraz naprawę
             const resDetailsA = await request(app).get('/api/zgloszenia/1').set('Authorization', `Bearer ${adminToken}`);
             assert.strictEqual(resDetailsA.status, 200);
-            assert.strictEqual(resDetailsA.body.dozwolone_akcje.length, 2);
+            assert.strictEqual(resDetailsA.body.dozwolone_akcje.length, 3);
         });
     });
 
@@ -3226,6 +3231,130 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             } finally {
                 app.setPool(currentPool);
             }
+        });
+
+        it('magazynier, pracownik, serwisant i admin wołają /naprawione na do_wysylki i zakończone -> 403 albo 409, żaden UPDATE nie poszedł', async () => {
+            const roles = [
+                { name: 'magazynier', token: magazynierToken, expectedStatus: 403 },
+                { name: 'pracownik', token: pracownikToken, expectedStatus: 409 },
+                { name: 'serwisant', token: serwisantToken, expectedStatus: 409 },
+                { name: 'admin', token: adminToken, expectedStatus: 409 }
+            ];
+
+            for (const status of ['do_wysylki', 'zakończone']) {
+                for (const role of roles) {
+                    allExecutedQueries = [];
+                    setMockTicket({ id: 1, status, przypisany_pracownik_id: 1 });
+                    const res = await request(app)
+                        .patch('/api/zgloszenia/1/naprawione')
+                        .set('Authorization', `Bearer ${role.token}`)
+                        .send({ opis_naprawy: 'Próba nadpisania opisu' });
+                    assert.strictEqual(
+                        res.status,
+                        role.expectedStatus,
+                        `Oczekiwano ${role.expectedStatus} dla roli ${role.name} na statusie ${status}, otrzymano ${res.status}`
+                    );
+                    const updates = allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia'));
+                    assert.strictEqual(updates.length, 0, `Nie powinien pójść żaden UPDATE dla ${role.name} na statusie ${status}`);
+                }
+            }
+        });
+
+        it('serwisant nie może przepisać cudzego zlecenia na siebie i opisać naprawy (403, brak UPDATE), ale może przepisać na innego pracownika w w_realizacji', async () => {
+            allExecutedQueries = [];
+            // Zlecenie przypisane do pracownika ID 1, serwisant ma ID 50 w serwisantToken
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
+
+            const resAssignSelf = await request(app)
+                .patch('/api/zgloszenia/1/przypisz')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ pracownik_id: 50 });
+            assert.strictEqual(resAssignSelf.status, 403);
+
+            const resRepair = await request(app)
+                .patch('/api/zgloszenia/1/naprawione')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ opis_naprawy: 'Próba obejścia zakazu' });
+            assert.strictEqual(resRepair.status, 403);
+
+            const updates = allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia'));
+            assert.strictEqual(updates.length, 0);
+
+            // Natomiast przepięcie na innego pracownika (ID 20 w mockUsers) w w_realizacji przechodzi (np. przy L4/blokadzie)
+            const resReassignOther = await request(app)
+                .patch('/api/zgloszenia/1/przypisz')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ pracownik_id: 20 });
+            assert.strictEqual(resReassignOther.status, 200);
+            assert.strictEqual(resReassignOther.body.przypisany_pracownik_id, 20);
+        });
+
+        it('/przypisz na do_wysylki oraz zakończone zwraca 409 i nie wykonuje UPDATE', async () => {
+            for (const status of ['do_wysylki', 'zakończone']) {
+                for (const token of [serwisantToken, adminToken]) {
+                    allExecutedQueries = [];
+                    setMockTicket({ id: 1, status, przypisany_pracownik_id: 1 });
+                    const res = await request(app)
+                        .patch('/api/zgloszenia/1/przypisz')
+                        .set('Authorization', `Bearer ${token}`)
+                        .send({ pracownik_id: 1 });
+                    assert.strictEqual(res.status, 409, `Oczekiwano 409 na statusie ${status}`);
+                    const updates = allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia'));
+                    assert.strictEqual(updates.length, 0);
+                }
+            }
+        });
+
+        it('cofnięcie do nowe czyści przypisany_pracownik_id (NULL w UPDATE) i zapisuje poprzedniego pracownika w historii', async () => {
+            allExecutedQueries = [];
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1, opis_naprawy: null });
+
+            const res = await request(app)
+                .patch('/api/zgloszenia/1/status')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({ status: 'nowe' });
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual(res.body.status, 'nowe');
+            assert.strictEqual(res.body.przypisany_pracownik_id, null);
+
+            const updateQ = allExecutedQueries.find(q => q.sql.includes('UPDATE zgloszenia'));
+            assert.ok(updateQ, 'Powinno pójść zapytanie UPDATE zgloszenia');
+            assert.ok(updateQ.sql.includes('przypisany_pracownik_id = NULL'), 'UPDATE powinien ustawiać przypisany_pracownik_id = NULL');
+
+            const histQ = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.ok(histQ, 'Powinien powstać wpis w historii');
+            assert.ok(histQ.values[5].includes('Poprzednio przypisany pracownik: user_testowy'));
+        });
+
+        it('magazynier PATCH /status na zleceniu nowe zwraca 403 bez wycieku statusu w odpowiedzi', async () => {
+            allExecutedQueries = [];
+            setMockTicket({ id: 1, status: 'nowe', przypisany_pracownik_id: null });
+
+            for (const targetStatus of ['nowe', 'w_realizacji', 'zakończone']) {
+                const res = await request(app)
+                    .patch('/api/zgloszenia/1/status')
+                    .set('Authorization', `Bearer ${magazynierToken}`)
+                    .send({ status: targetStatus });
+                assert.strictEqual(res.status, 403);
+                assert.strictEqual(res.body.status, undefined);
+                assert.strictEqual(res.body.error.includes('nowe'), false, `Komunikat błędu nie może zdradzać statusu "nowe": ${res.body.error}`);
+            }
+        });
+
+        it('w panelu serwisant i admin widzą "Zmień przypisanie" na zleceniu w w_realizacji (z dozwolone_akcje)', () => {
+            const wyznacz = app.wyznaczDozwoloneAkcje;
+            const sActions = wyznacz({ id: 50, role: 'serwisant' }, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
+            assert.ok(sActions.some(a => a.akcja === 'przypisz' && a.etykieta === 'Zmień przypisanie'));
+
+            const aActions = wyznacz({ id: 99, role: 'admin' }, { id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
+            assert.ok(aActions.some(a => a.akcja === 'przypisz' && a.etykieta === 'Zmień przypisanie'));
+
+            const constantsJs = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'constants.js'), 'utf8');
+            assert.ok(constantsJs.includes("const assignAction = actions.find((a) => a.typ === 'przypisanie' || a.akcja === 'przypisz') || null;"));
+            assert.strictEqual(constantsJs.includes("curStatus === 'nowe'"), false, 'constants.js nie powinien hardkodować curStatus === nowe');
+
+            const statusControlJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'StatusControl.jsx'), 'utf8');
+            assert.ok(statusControlJsx.includes("assignAction?.etykieta || (curStatus === 'w_realizacji' ? 'Zmień przypisanie' : 'Przypisz')"));
         });
     });
 });

@@ -139,42 +139,25 @@ export const EMPTY_TICKET_FORM = {
   zgoda_rodo: false
 };
 
-export function getTicketActionState(ticket, user) {
+export function getTicketActionState(ticket) {
   const curStatus = ticket?.status || 'nowe';
   const actions = Array.isArray(ticket?.dozwolone_akcje) ? ticket.dozwolone_akcje : [];
-  const forwardAction = actions.find((a) => a.typ !== 'cofnij');
+  const assignAction = actions.find((a) => a.typ === 'przypisanie' || a.akcja === 'przypisz') || null;
+  const repairAction = actions.find((a) => a.typ === 'naprawa' || a.akcja === 'naprawione') || null;
+  const shipAction = actions.find((a) => a.typ === 'wysylka' || a.akcja === 'wyslij') || null;
+  const forwardAction = repairAction || shipAction || assignAction;
   const rollbackActions = actions.filter((a) => a.typ === 'cofnij');
-  const canAssign = user?.role === 'admin' || user?.role === 'serwisant';
 
-  const isAssignAction =
-    curStatus === 'nowe' &&
-    (canAssign ||
-      forwardAction?.typ === 'przypisanie' ||
-      forwardAction?.akcja === 'przypisz');
-
-
-  const isAssignedToOther =
-    user?.role === 'serwisant' &&
-    ticket?.przypisany_pracownik_id !== null &&
-    ticket?.przypisany_pracownik_id !== undefined &&
-    Number(ticket.przypisany_pracownik_id) !== Number(user.id);
-
-  const isRepairAction =
-    curStatus === 'w_realizacji' &&
-    !isAssignedToOther &&
-    (forwardAction?.typ === 'naprawa' ||
-      forwardAction?.akcja === 'naprawione' ||
-      forwardAction?.na_status === 'do_wysylki');
-
-  const isShipAction =
-    curStatus === 'do_wysylki' &&
-    (forwardAction?.typ === 'wysylka' ||
-      forwardAction?.akcja === 'wyslij' ||
-      forwardAction?.na_status === 'zakończone');
+  const isAssignAction = Boolean(assignAction);
+  const isRepairAction = Boolean(repairAction);
+  const isShipAction = Boolean(shipAction);
 
   return {
     curStatus,
     actions,
+    assignAction,
+    repairAction,
+    shipAction,
     forwardAction,
     rollbackActions,
     isAssignAction,
