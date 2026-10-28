@@ -4,7 +4,8 @@ import {
   NUMERY_KIERUNKOWE,
   EMPTY_TICKET_FORM,
   isSerialNumberAllowed,
-  validatePurchaseDate
+  validatePurchaseDate,
+  formatDateTime
 } from '../constants';
 import { ticketApi } from '../api';
 import Alert from '../components/Alert';
@@ -48,7 +49,7 @@ export default function PublicTicketForm() {
       sessionStorage.removeItem('serwis_last_submitted');
     } catch {}
     setSubmittedTicket(null);
-    setFormData({ ...EMPTY_TICKET_FORM, numer_telefonu: '+48 ' });
+    setFormData(EMPTY_TICKET_FORM);
     setAlert(null);
   }
 
@@ -172,7 +173,7 @@ export default function PublicTicketForm() {
         numer_telefonu: formData.numer_telefonu,
         telefon_stacjonarny: stacjonarnyFormatted,
         przedmiot_zgloszenia: payload.przedmiot_zgloszenia,
-        createdAt: new Date().toLocaleString('pl-PL')
+        createdAt: new Date().toISOString()
       };
       try {
         sessionStorage.setItem('serwis_last_submitted', JSON.stringify(ticketInfo));
@@ -198,12 +199,12 @@ export default function PublicTicketForm() {
         ? [['Telefon stacjonarny:', submittedTicket.telefon_stacjonarny]]
         : []),
       ...(submittedTicket.createdAt
-        ? [['Data złożenia:', submittedTicket.createdAt, true]]
+        ? [['Data złożenia:', formatDateTime(submittedTicket.createdAt), true]]
         : [])
     ];
 
     return (
-      <main className="app-card max-w-2xl mx-auto my-4 sm:my-8 p-6 sm:p-10 space-y-6">
+      <div className="app-card max-w-2xl mx-auto my-4 sm:my-8 p-6 sm:p-10 space-y-6">
         <div className="text-center space-y-3">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary-dark mx-auto shadow-sm">
             <svg className="w-9 h-9" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -270,12 +271,12 @@ export default function PublicTicketForm() {
             ← Powrót na stronę główną
           </button>
         </div>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="app-card">
+    <div className="app-card">
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-ink mb-1">Zgłoś problem serwisowy</h2>
         <p className="text-sm text-ink">
@@ -599,6 +600,6 @@ export default function PublicTicketForm() {
           </button>
         </div>
       </form>
-    </main>
+    </div>
   );
 }

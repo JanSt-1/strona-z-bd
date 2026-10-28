@@ -685,13 +685,6 @@ function wyznaczDozwoloneAkcje(user, ticket) {
             continue;
         }
 
-        // D. Inne dozwolone zmiany statusu
-        akcje.push({
-            akcja: 'zmien_status',
-            na_status: targetStatus,
-            etykieta: `Zmień na: ${STATUS_LABELS[targetStatus] || targetStatus}`,
-            typ: 'status'
-        });
     }
 
     return akcje;
@@ -705,8 +698,8 @@ const TICKET_SELECT_FIELDS = `
     z.przypisany_pracownik_id,
     u.username AS przypisany_pracownik_username,
     z.opis_naprawy,
-    DATE_FORMAT(z.opis_naprawy_data, '%Y-%m-%d %H:%i:%s') AS opis_naprawy_data,
-    DATE_FORMAT(z.data_wyslania, '%Y-%m-%d %H:%i:%s') AS data_wyslania,
+    z.opis_naprawy_data,
+    z.data_wyslania,
     z.numer_listu
 `;
 
@@ -719,7 +712,7 @@ const SEARCH_COLUMNS = [
 async function pobierzHistorieZgloszenia(zgloszenieId) {
     const [rows] = await currentPool.query(`
         SELECT h.id, h.zgloszenie_id, h.uzytkownik_id, u.username, h.akcja, h.z_statusu, h.na_status, h.szczegoly,
-                DATE_FORMAT(h.created_at, '%Y-%m-%d %H:%i:%s') AS created_at
+                h.created_at
         FROM historia_zgloszen h
         LEFT JOIN uzytkownicy u ON h.uzytkownik_id = u.id
         WHERE h.zgloszenie_id = ?
@@ -808,8 +801,7 @@ app.get('/api/zgloszenia', authenticateToken,
             page,
             limit,
             totalPages,
-            data: rowsWithActions,
-            zgloszenia: rowsWithActions
+            data: rowsWithActions
         });
     }));
 
@@ -866,9 +858,7 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
             if (!users || users.length === 0) return fail(res, 'Nie znaleziono wybranego pracownika.', 404);
 
             const candidate = users[0];
-            const assignableRoles = req.user.role === 'admin'
-                ? ['pracownik', 'serwisant', 'admin']
-                : ['pracownik', 'serwisant'];
+            const assignableRoles = ['pracownik', 'serwisant'];
             if (!assignableRoles.includes(candidate.role)) {
                 return fail(res, 'Zlecenie można przypisać wyłącznie do pracownika lub serwisanta.', 400);
             }
@@ -879,9 +869,28 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
             assignedUsername = candidate.username;
         }
 
-        const [tickets] = await currentPool.query('SELECT id, status FROM zgloszenia WHERE id = ?', [id]);
+        const [tickets] = await currentPool.query('SELECT id, status, przypisany_pracownik_id FROM zgloszenia WHERE id = ?', [id]);
         if (!tickets || tickets.length === 0) return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
         const ticket = tickets[0];
+
+        if (ticket.status === 'nowe' && assignedId === null) {
+            return fail(res, 'Nie można cofnąć przypisania dla nowego zlecenia. Wybierz pracownika do realizacji.', 400);
+        }
+
+        if (!ticket.przypisany_pracownik_id && assignedId === null) {
+            return fail(res, 'Zlecenie nie ma przypisanego pracownika — nie można cofnąć przypisania.', 400);
+        }
+
+        if (ticket.przypisany_pracownik_id && Number(ticket.przypisany_pracownik_id) === Number(assignedId)) {
+            return res.json({
+                message: `Zlecenie #${id} jest już przypisane do pracownika ${assignedUsername}.`,
+                id,
+                przypisany_pracownik_id: assignedId,
+                przypisany_pracownik_username: assignedUsername,
+                status: ticket.status,
+                dozwolone_akcje: wyznaczDozwoloneAkcje(req.user, ticket)
+            });
+        }
 
         let targetStatus = ticket.status;
         if (ticket.status === 'nowe' && assignedId !== null) {

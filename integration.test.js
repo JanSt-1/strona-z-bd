@@ -373,7 +373,7 @@ const makeToken = (role, id = 1, username = 'test_user') =>
                 [pracownikUser.id]
             );
             const ticketId = ins.insertId;
-            const longOpis = 'ż'.repeat(5000);
+            const longOpis = 'N'.repeat(65000);
 
             const resRepair = await request(app)
                 .patch(`/api/zgloszenia/${ticketId}/naprawione`)

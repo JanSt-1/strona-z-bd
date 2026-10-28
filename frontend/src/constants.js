@@ -71,6 +71,16 @@ export const NUMERY_KIERUNKOWE = [
   ['95', 'Gorzów Wielkopolski']
 ].map(([code, miasto]) => ({ code, miasto }));
 
+export const HISTORY_ACTION_LABELS = {
+  utworzenie: 'Utworzenie',
+  przypisanie: 'Przypisanie',
+  naprawa: 'Naprawa',
+  wysyłka: 'Wysyłka',
+  zmiana_numeru_listu: 'Zmiana numeru listu',
+  zmiana_statusu: 'Zmiana statusu',
+  usunięcie: 'Usunięcie'
+};
+
 export const STATUS_LABELS = {
   nowe: 'Nowe',
   w_realizacji: 'W realizacji',
@@ -78,11 +88,41 @@ export const STATUS_LABELS = {
   zakończone: 'Zakończone'
 };
 
+export function formatDateTime(dateVal) {
+  if (!dateVal) return '—';
+  const dt = new Date(dateVal);
+  if (isNaN(dt.getTime())) {
+    const fallback = new Date(String(dateVal).replace(' ', 'T'));
+    if (!isNaN(fallback.getTime())) {
+      return fallback.toLocaleString('pl-PL');
+    }
+    return String(dateVal);
+  }
+  return dt.toLocaleString('pl-PL');
+}
+
+export function formatDate(dateVal) {
+  if (!dateVal) return '—';
+  if (typeof dateVal === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+    const [y, m, d] = dateVal.split('-');
+    return `${d}.${m}.${y}`;
+  }
+  const dt = new Date(dateVal);
+  if (isNaN(dt.getTime())) {
+    const fallback = new Date(String(dateVal).replace(' ', 'T'));
+    if (!isNaN(fallback.getTime())) {
+      return fallback.toLocaleDateString('pl-PL');
+    }
+    return String(dateVal);
+  }
+  return dt.toLocaleDateString('pl-PL');
+}
+
 export const EMPTY_TICKET_FORM = {
   imie: '',
   nazwisko: '',
   nazwa_firmy: '',
-  numer_telefonu: '',
+  numer_telefonu: '+48 ',
   email: '',
   adres: '',
   kod_pocztowy: '',
@@ -110,8 +150,8 @@ export function getTicketActionState(ticket, user) {
     curStatus === 'nowe' &&
     (canAssign ||
       forwardAction?.typ === 'przypisanie' ||
-      forwardAction?.akcja === 'przypisz' ||
-      forwardAction?.akcja === 'rozpocznij_realizacje');
+      forwardAction?.akcja === 'przypisz');
+
 
   const isAssignedToOther =
     user?.role === 'serwisant' &&

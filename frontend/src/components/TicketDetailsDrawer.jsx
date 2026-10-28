@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import StatusBadge from './StatusBadge';
 import StatusControl from './StatusControl';
 import { ticketApi } from '../api';
+import { STATUS_LABELS, HISTORY_ACTION_LABELS, formatDate, formatDateTime } from '../constants';
 
 const ACTION_ICONS = {
   utworzenie: '📝',
@@ -26,6 +27,7 @@ export default function TicketDetailsDrawer({
 }) {
   const [fetchedData, setFetchedData] = useState(null);
   const [loadingHistory, setLoadingHistory] = useState(Boolean(ticket?.id));
+  const [historyError, setHistoryError] = useState(null);
 
   useEffect(() => {
     const originalOverflow = document.body.style.overflow;
@@ -36,25 +38,34 @@ export default function TicketDetailsDrawer({
     };
     window.addEventListener('keydown', handleKeyDown);
 
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose]);
+
+  useEffect(() => {
     let isMounted = true;
     if (ticket?.id) {
+      setLoadingHistory(true);
+      setHistoryError(null);
       ticketApi
         .getTicketById(ticket.id)
         .then((res) => {
           if (isMounted && res) setFetchedData(res);
         })
-        .catch(() => {})
+        .catch((err) => {
+          if (isMounted) setHistoryError(err?.message || 'Nie udało się pobrać historii zgłoszenia.');
+        })
         .finally(() => {
           if (isMounted) setLoadingHistory(false);
         });
     }
 
     return () => {
-      document.body.style.overflow = originalOverflow;
-      window.removeEventListener('keydown', handleKeyDown);
       isMounted = false;
     };
-  }, [ticket?.id, onClose]);
+  }, [ticket?.id]);
 
   if (!ticket) return null;
   const currentTicket = fetchedData ? { ...ticket, ...fetchedData } : ticket;
@@ -78,7 +89,7 @@ export default function TicketDetailsDrawer({
             </div>
             <div className="text-xs text-muted mt-1">
               Data przyjęcia:{' '}
-              {ticket.created_at ? new Date(ticket.created_at).toLocaleString('pl-PL') : '—'}
+              {formatDateTime(ticket.created_at)}
             </div>
           </div>
 
@@ -205,7 +216,7 @@ export default function TicketDetailsDrawer({
               <div>
                 <span className="text-muted block text-[0.7rem] uppercase">Data zakupu</span>
                 <span className="font-medium text-ink">
-                  {currentTicket.data_zakupu || 'Nie podano'}
+                  {currentTicket.data_zakupu ? formatDate(currentTicket.data_zakupu) : 'Nie podano'}
                 </span>
               </div>
             </div>
@@ -255,7 +266,7 @@ export default function TicketDetailsDrawer({
                 {currentTicket.opis_naprawy_data && (
                   <div className="text-[0.7rem] text-ink font-medium mt-2 pt-1.5 border-t border-primary/30 flex items-center gap-1">
                     <span>🕒</span>
-                    <span>Zatwierdzono: {currentTicket.opis_naprawy_data}</span>
+                    <span>Zatwierdzono: {formatDateTime(currentTicket.opis_naprawy_data)}</span>
                   </div>
                 )}
               </div>
@@ -277,7 +288,7 @@ export default function TicketDetailsDrawer({
                 <span className="text-muted block text-[0.7rem] uppercase">Data wysłania</span>
                 <span className="font-medium text-ink">
                   {currentTicket.data_wyslania
-                    ? `📦 ${currentTicket.data_wyslania}`
+                    ? `📦 ${formatDateTime(currentTicket.data_wyslania)}`
                     : 'Jeszcze nie wysłano'}
                 </span>
               </div>
@@ -314,6 +325,10 @@ export default function TicketDetailsDrawer({
               <div className="text-xs text-muted italic py-3 text-center">
                 Ładowanie historii zdarzeń...
               </div>
+            ) : historyError ? (
+              <div className="bg-danger/10 border border-danger/30 text-danger p-3 rounded-lg text-xs">
+                {historyError}
+              </div>
             ) : history.length > 0 ? (
               <div className="relative pl-6 space-y-4 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-line">
                 {history.map((h) => (
@@ -327,16 +342,16 @@ export default function TicketDetailsDrawer({
                         <span className="font-semibold text-ink">
                           {h.username ? `@${h.username}` : 'System'}
                         </span>
-                        <span className="text-muted text-[0.7rem]">{h.created_at}</span>
+                        <span className="text-muted text-[0.7rem]">{formatDateTime(h.created_at)}</span>
                       </div>
 
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-medium text-primary-dark uppercase text-[0.7rem]">
-                          {h.akcja}
+                        <span className="font-semibold text-primary-dark text-xs">
+                          {HISTORY_ACTION_LABELS[h.akcja] || HISTORY_ACTION_LABELS[h.akcja?.toLowerCase()] || h.akcja}
                         </span>
                         {h.z_statusu && h.na_status && (
                           <span className="text-muted text-[0.7rem] bg-card px-1.5 py-0.5 rounded border border-line">
-                            {h.z_statusu} &rarr; {h.na_status}
+                            {(STATUS_LABELS[h.z_statusu] || h.z_statusu)} &rarr; {(STATUS_LABELS[h.na_status] || h.na_status)}
                           </span>
                         )}
                       </div>

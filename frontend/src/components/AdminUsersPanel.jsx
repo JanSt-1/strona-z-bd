@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { userApi } from '../api';
 import PasswordModal from './PasswordModal';
+import { formatDateTime } from '../constants';
 
 const ROLES = ['pracownik', 'serwisant', 'magazynier', 'admin'];
 
-export default function AdminUsersPanel({ currentUser, showAlert }) {
+export default function AdminUsersPanel({ currentUser, showAlert, onWorkersChanged }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -29,15 +30,11 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
     }
   }, [showAlert]);
 
+  const handleClosePasswordModal = useCallback(() => setPasswordModalUser(null), []);
+
   useEffect(() => {
-    userApi
-      .getUsers()
-      .then((data) => {
-        if (Array.isArray(data)) setUsers(data);
-      })
-      .catch((err) => showAlert(err.message, 'error'))
-      .finally(() => setLoading(false));
-  }, [showAlert]);
+    fetchUsers();
+  }, [fetchUsers]);
 
   async function handleRoleChange(targetUser, nextRole) {
     if (targetUser.id === currentUser?.id && nextRole !== 'admin') {
@@ -49,6 +46,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
       if (!data) return;
       showAlert(data.message, 'success');
       setUsers((prev) => prev.map((u) => (u.id === targetUser.id ? { ...u, role: nextRole } : u)));
+      onWorkersChanged?.();
     } catch (err) {
       showAlert(err.message, 'error');
     } finally {
@@ -70,9 +68,8 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
       const data = await userApi.toggleStatus(targetUser.id, !targetUser.aktywny);
       if (!data) return;
       showAlert(data.message, 'success');
-      setUsers((prev) =>
-        prev.map((u) => (u.id === targetUser.id ? { ...u, aktywny: data.aktywny } : u))
-      );
+      setUsers((prev) => prev.map((u) => (u.id === targetUser.id ? { ...u, aktywny: data.aktywny } : u)));
+      onWorkersChanged?.();
     } catch (err) {
       showAlert(err.message, 'error');
     } finally {
@@ -109,6 +106,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
       setShowCreateForm(false);
       setLoading(true);
       fetchUsers();
+      onWorkersChanged?.();
     } catch (err) {
       setCreateError(err.message);
     } finally {
@@ -372,7 +370,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                     <td>{renderStatusPill(u.aktywny)}</td>
                     <td>
                       <small className="text-muted">
-                        {u.created_at ? new Date(u.created_at).toLocaleString('pl-PL') : '-'}
+                        {formatDateTime(u.created_at)}
                       </small>
                     </td>
                     <td>{renderActionButtons(u, isSelf, isBusy)}</td>
@@ -417,7 +415,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                       )}
                     </div>
                     <div className="text-[0.7rem] text-muted mt-0.5">
-                      Utworzono: {u.created_at ? new Date(u.created_at).toLocaleString('pl-PL') : '-'}
+                      Utworzono: {formatDateTime(u.created_at)}
                     </div>
                   </div>
                   <div className="shrink-0">{renderStatusPill(u.aktywny)}</div>
@@ -442,7 +440,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
       {passwordModalUser && (
         <PasswordModal
           userToEdit={passwordModalUser}
-          onClose={() => setPasswordModalUser(null)}
+          onClose={handleClosePasswordModal}
           onPasswordChanged={fetchUsers}
           showAlert={showAlert}
         />

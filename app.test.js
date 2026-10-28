@@ -2950,7 +2950,8 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
 
             // 2. Cofnięcie statusu przez admina z do_wysylki do w_realizacji
             allExecutedQueries = [];
-            setMockTicket({ id: 1, status: 'do_wysylki', przypisany_pracownik_id: 1, opis_naprawy: longOpis });
+            const opis65k = 'N'.repeat(65000);
+            setMockTicket({ id: 1, status: 'do_wysylki', przypisany_pracownik_id: 1, opis_naprawy: opis65k });
             const resRollback = await request(app)
                 .patch('/api/zgloszenia/1/status')
                 .set('Authorization', `Bearer ${adminToken}`)
@@ -2959,7 +2960,8 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(resRollback.status, 200);
             const rollbackHistory = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen') && q.values[2] === 'zmiana_statusu');
             assert.ok(rollbackHistory, 'Wpis cofnięcia statusu musi zostać zapisany w historia_zgloszen');
-            assert.ok(rollbackHistory.values[5].includes(longOpis), 'Pełny 65 000-znakowy opis naprawy musi zachować się w historii po cofnięciu');
+            assert.ok(rollbackHistory.values[5].includes(opis65k), 'Pełny 65 000-znakowy opis naprawy musi zachować się w historii po cofnięciu');
+            assert.ok(rollbackHistory.values[5].length > 65000);
 
             // 3. Weryfikacja migracji i schematu (MEDIUMTEXT dla historia_zgloszen.szczegoly)
             const migrationSql = fs.readFileSync(path.join(__dirname, 'migrations', '003_historia_szczegoly_mediumtext.sql'), 'utf8');
@@ -2995,6 +2997,176 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             const appJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'App.jsx'), 'utf8');
             assert.strictEqual(appJsx.includes('this.state.error?.message'), false);
             assert.ok(appJsx.includes('Nieoczekiwany błąd w interfejsie użytkownika.'));
+        });
+
+        it('Usunięcie ostatniego zgłoszenia na stronie w Dashboard.jsx przełącza na poprzednią stronę i pobiera świeżą listę z serwera', () => {
+            const dashboardJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'Dashboard.jsx'), 'utf8');
+            assert.ok(dashboardJsx.includes('remainingOnPage === 0 && page > 1 ? page - 1 : page'));
+            assert.ok(dashboardJsx.includes('fetchTickets({ page: targetPage })'));
+            assert.strictEqual(dashboardJsx.includes('setTotal((prev) => Math.max(0, prev - 1))'), false);
+        });
+
+        it('Szybka zmiana filtrów w Dashboard.jsx ignoruje nieaktualne odpowiedzi sieciowe (ochrona przed race condition / fetchRequestIdRef)', () => {
+            const dashboardJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'Dashboard.jsx'), 'utf8');
+            assert.ok(dashboardJsx.includes('fetchRequestIdRef'));
+            assert.ok(dashboardJsx.includes('requestId !== fetchRequestIdRef.current'));
+        });
+
+        it('TicketDetailsDrawer nie wykonuje powtórnych zapytań przy zmianie onClose i wyświetla błąd pobierania historii', () => {
+            const drawerJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'TicketDetailsDrawer.jsx'), 'utf8');
+            assert.ok(drawerJsx.includes('historyError'));
+            assert.strictEqual(drawerJsx.includes('.catch(() => {})'), false);
+            assert.ok(drawerJsx.includes('}, [ticket?.id]);'));
+            const dashboardJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'Dashboard.jsx'), 'utf8');
+            assert.ok(dashboardJsx.includes('onClose={handleCloseDrawer}'));
+            assert.ok(dashboardJsx.includes('handleCloseDrawer = useCallback'));
+        });
+
+        it('Polskie etykiety ze STATUS_LABELS i HISTORY_ACTION_LABELS są używane zamiast surowych kodów technicznych', () => {
+            const dashboardJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'Dashboard.jsx'), 'utf8');
+            assert.ok(dashboardJsx.includes('STATUS_LABELS[targetStatus] || targetStatus'));
+
+            const assignModalJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'AssignWorkerModal.jsx'), 'utf8');
+            assert.ok(assignModalJsx.includes('STATUS_LABELS[ticket.status] || ticket.status'));
+
+            const drawerJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'TicketDetailsDrawer.jsx'), 'utf8');
+            assert.ok(drawerJsx.includes('HISTORY_ACTION_LABELS[h.akcja]'));
+            assert.ok(drawerJsx.includes('STATUS_LABELS[h.z_statusu]'));
+            assert.ok(drawerJsx.includes('STATUS_LABELS[h.na_status]'));
+        });
+
+        it('Daty są ujednolicone: serwer zwraca standardowe kolumny timestamp, a frontend używa formatDate i formatDateTime', async () => {
+            const appSource = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+            assert.strictEqual(appSource.includes("DATE_FORMAT(z.opis_naprawy_data, '%Y-%m-%d %H:%i:%s')"), false);
+            assert.strictEqual(appSource.includes("DATE_FORMAT(z.data_wyslania, '%Y-%m-%d %H:%i:%s')"), false);
+            assert.strictEqual(appSource.includes("DATE_FORMAT(h.created_at, '%Y-%m-%d %H:%i:%s')"), false);
+
+            const { formatDate, formatDateTime } = await import('./frontend/src/constants.js');
+            assert.strictEqual(formatDate('2026-10-21'), '21.10.2026');
+            assert.strictEqual(formatDate(null), '—');
+            assert.ok(formatDateTime('2026-10-21T10:08:42.000Z').includes('2026'));
+
+            const drawerJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'TicketDetailsDrawer.jsx'), 'utf8');
+            assert.ok(drawerJsx.includes('formatDateTime(currentTicket.opis_naprawy_data)'));
+            assert.ok(drawerJsx.includes('formatDateTime(currentTicket.data_wyslania)'));
+            assert.ok(drawerJsx.includes('formatDateTime(h.created_at)'));
+            assert.ok(drawerJsx.includes('formatDate(currentTicket.data_zakupu)'));
+        });
+
+        it('Lista pracowników do przypisania i filtrowania jest zawsze świeża po zmianach w panelu użytkowników i w modalu przypisania', () => {
+            const dashboardJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'Dashboard.jsx'), 'utf8');
+            assert.ok(dashboardJsx.includes('fetchWorkers = useCallback'));
+            assert.ok(dashboardJsx.includes('onWorkersChanged={fetchWorkers}'));
+            assert.ok(dashboardJsx.includes('onWorkersLoaded={setWorkers}'));
+            assert.ok(dashboardJsx.includes("dashboardTab === 'tickets'"));
+
+            const adminPanelJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'AdminUsersPanel.jsx'), 'utf8');
+            assert.ok(adminPanelJsx.includes('onWorkersChanged'));
+            assert.ok(adminPanelJsx.includes('onWorkersChanged?.()'));
+
+            const assignModalJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'AssignWorkerModal.jsx'), 'utf8');
+            assert.ok(assignModalJsx.includes('workerApi.getWorkers()'));
+            assert.ok(assignModalJsx.includes('onWorkersLoaded?.(freshWorkers)'));
+            assert.ok(assignModalJsx.includes('konto zablokowane / nieaktywne'));
+            assert.ok(assignModalJsx.includes('Wybrany pracownik jest zablokowany lub nieaktywny'));
+        });
+
+        it('Cofnięcie przypisania na zleceniu "nowe" lub nieprzypisanym zwraca 400 i nie tworzy wpisu historii, a na przypisanym unieważnia przypisanie', async () => {
+            // 1. Zlecenie w statusie 'nowe' bez pracownika - próba cofnięcia zwraca 400 i nie dodaje historii
+            allExecutedQueries = [];
+            setMockTicket({ id: 1, status: 'nowe', przypisany_pracownik_id: null });
+            const resNoweEmpty = await request(app)
+                .patch('/api/zgloszenia/1/przypisz')
+                .set('Authorization', `${adminToken}`)
+                .send({ pracownik_id: null });
+            assert.strictEqual(resNoweEmpty.status, 400);
+            assert.ok(resNoweEmpty.body.error.includes('nowego zlecenia'));
+            const historyNowe = allExecutedQueries.filter(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.strictEqual(historyNowe.length, 0, 'Nie wolno dodawać wpisu historii przy błędnym cofnięciu na nowym zleceniu');
+
+            // 2. Zlecenie w statusie 'w_realizacji' bez przypisanego pracownika - próba cofnięcia zwraca 400
+            allExecutedQueries = [];
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: null });
+            const resUnassigned = await request(app)
+                .patch('/api/zgloszenia/1/przypisz')
+                .set('Authorization', `${adminToken}`)
+                .send({ pracownik_id: '' });
+            assert.strictEqual(resUnassigned.status, 400);
+            assert.ok(resUnassigned.body.error.includes('nie ma przypisanego pracownika'));
+            const historyUnassigned = allExecutedQueries.filter(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.strictEqual(historyUnassigned.length, 0);
+
+            // 3. Zlecenie w statusie 'w_realizacji' z przypisanym pracownikiem 1 - cofnięcie przypisania zwraca 200 i dodaje wpis
+            allExecutedQueries = [];
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
+            const resAssigned = await request(app)
+                .patch('/api/zgloszenia/1/przypisz')
+                .set('Authorization', `${adminToken}`)
+                .send({ pracownik_id: null });
+            assert.strictEqual(resAssigned.status, 200);
+            assert.strictEqual(resAssigned.body.przypisany_pracownik_id, null);
+            const historySuccess = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+            assert.ok(historySuccess);
+            assert.strictEqual(historySuccess.values[5], 'Cofnięto przypisanie pracownika');
+        });
+
+        it('AssignWorkerModal dla nieprzypisanego zlecenia ma wyłączony placeholder, blokuje zatwierdzenie i nie pozwala wybrać "Cofnij przypisanie"', () => {
+            const assignModalJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'AssignWorkerModal.jsx'), 'utf8');
+            assert.ok(assignModalJsx.includes('const isAssigned = Boolean(ticket?.przypisany_pracownik_id);'));
+            assert.ok(assignModalJsx.includes('!isAssigned ? ('));
+            assert.ok(assignModalJsx.includes('— Wybierz pracownika z listy —'));
+            assert.ok(assignModalJsx.includes('disabled={saving || (!isAssigned && !selectedWorkerId)}'));
+            assert.ok(assignModalJsx.includes("setError('Wybierz pracownika do realizacji zlecenia.');"));
+        });
+
+        it('Weryfikacja usunięcia martwego kodu, zagnieżdżonych main, dvh oraz spójności filtrów i resetu telefonu', async () => {
+            // 1. Serwer: GET /api/zgloszenia nie zawiera zdublowanego pola zgloszenia
+            const listRes = await request(app).get('/api/zgloszenia').set('Authorization', `${adminToken}`);
+            assert.strictEqual(listRes.status, 200);
+            assert.ok(Array.isArray(listRes.body.data));
+            assert.strictEqual(listRes.body.zgloszenia, undefined, 'Pole zgloszenia nie powinno dublować data');
+
+            // 2. Serwer: wyznaczDozwoloneAkcje nie ma nieosiągalnej gałęzi zmien_status
+            const appCode = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+            assert.strictEqual(appCode.includes("akcja: 'zmien_status'"), false);
+
+            // 3. Serwer: próba przypisania zlecenia do admina zwraca 400
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: null });
+            const resAssignAdmin = await request(app)
+                .patch('/api/zgloszenia/1/przypisz')
+                .set('Authorization', `${adminToken}`)
+                .send({ pracownik_id: 99 }); // ID 99 to admin w mockUsers
+            assert.strictEqual(resAssignAdmin.status, 400);
+            assert.strictEqual(resAssignAdmin.body.error, 'Zlecenie można przypisać wyłącznie do pracownika lub serwisanta.');
+
+            // 4. Frontend constants: EMPTY_TICKET_FORM ma numer_telefonu '+48 ' i brak 'rozpocznij_realizacje'
+            const constantsCode = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'constants.js'), 'utf8');
+            assert.ok(constantsCode.includes("numer_telefonu: '+48 '"));
+            assert.strictEqual(constantsCode.includes("'rozpocznij_realizacje'"), false);
+
+            // 5. Frontend PublicTicketForm: brak zagnieżdżonych tagów <main>
+            const formCode = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'PublicTicketForm.jsx'), 'utf8');
+            assert.strictEqual(formCode.includes('<main'), false);
+            assert.strictEqual(formCode.includes('</main'), false);
+
+            // 6. Frontend CSS: .modal-card używa 100dvh
+            const cssCode = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'index.css'), 'utf8');
+            assert.ok(cssCode.includes('max-height: calc(100dvh - 2rem);'));
+
+            // 7. Frontend modal i dashboard filtrują pracowników bez roli admin
+            const assignModalCode = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'AssignWorkerModal.jsx'), 'utf8');
+            assert.ok(assignModalCode.includes(".filter((w) => w.role === 'pracownik' || w.role === 'serwisant')"));
+            assert.strictEqual(assignModalCode.includes("w.role === 'admin'"), false);
+
+            const dashCode = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'Dashboard.jsx'), 'utf8');
+            assert.ok(dashCode.includes(".filter((w) => w.role === 'pracownik' || w.role === 'serwisant')"));
+            assert.strictEqual(dashCode.includes('data.zgloszenia'), false);
+            assert.strictEqual(dashCode.includes('Array.isArray(data) ?'), false);
+
+            // 8. AdminUsersPanel nie ma podwójnego pobierania w useEffect
+            const adminPanelCode = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'AdminUsersPanel.jsx'), 'utf8');
+            assert.ok(adminPanelCode.includes('fetchUsers();'));
+            assert.strictEqual(/userApi\s*\.getUsers\(\)\s*\.then/.test(adminPanelCode), false);
         });
 
         it('Promise.all z dwóch równoległych żądań "wyślij" na to samo zlecenie zwraca dokładnie jedno 200 i jedno 409 oraz tworzy tylko jeden wpis "wysyłka"', async () => {

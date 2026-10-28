@@ -10,6 +10,7 @@ import PasswordModal from '../components/PasswordModal';
 import AdminUsersPanel from '../components/AdminUsersPanel';
 import TicketDetailsDrawer from '../components/TicketDetailsDrawer';
 import StatusBadge from '../components/StatusBadge';
+import { STATUS_LABELS, formatDate, formatDateTime } from '../constants';
 
 function readFiltersFromUrl() {
   const sp = new URLSearchParams(window.location.search);
@@ -186,6 +187,7 @@ export default function Dashboard({ user, token, onLogout }) {
   const [sortOrder, setSortOrder] = useState(initialFilters.sort);
 
   const filtersRef = useRef(initialFilters);
+  const fetchRequestIdRef = useRef(0);
   useEffect(() => {
     filtersRef.current = {
       page,
@@ -203,6 +205,7 @@ export default function Dashboard({ user, token, onLogout }) {
 
   const fetchTickets = useCallback(
     async (overrides = {}) => {
+      const requestId = ++fetchRequestIdRef.current;
       try {
         const base = filtersRef.current;
         const current = {
@@ -214,41 +217,47 @@ export default function Dashboard({ user, token, onLogout }) {
         };
 
         const data = await ticketApi.getTickets({ ...current, limit: 25 });
+        if (requestId !== fetchRequestIdRef.current) return;
         if (!data) return;
 
-        const list = Array.isArray(data) ? data : data.data || data.zgloszenia || [];
+        const list = Array.isArray(data?.data) ? data.data : [];
         setTickets(list);
 
-        if (data && typeof data === 'object' && !Array.isArray(data)) {
-          setTotal(typeof data.total === 'number' ? data.total : list.length);
-          const resolvedPage = data.page || current.page || 1;
-          setPage(resolvedPage);
-          setTotalPages(data.totalPages || 1);
-          syncUrlWithFilters({ ...current, page: resolvedPage }, true);
-        } else {
-          setTotal(list.length);
-          setTotalPages(1);
-        }
+        setTotal(typeof data?.total === 'number' ? data.total : list.length);
+        const resolvedPage = data?.page || current.page || 1;
+        setPage(resolvedPage);
+        setTotalPages(data?.totalPages || 1);
+        syncUrlWithFilters({ ...current, page: resolvedPage }, true);
       } catch (err) {
-        showAlert(err.message, 'error');
+        if (requestId === fetchRequestIdRef.current) showAlert(err.message, 'error');
       } finally {
-        setLoading(false);
+        if (requestId === fetchRequestIdRef.current) setLoading(false);
       }
     },
     [showAlert]
   );
 
+  const fetchWorkers = useCallback(async () => {
+    if (user?.role === 'admin' || user?.role === 'serwisant') {
+      try {
+        const data = await workerApi.getWorkers();
+        if (Array.isArray(data)) setWorkers(data);
+      } catch (err) {
+        console.error('Błąd pobierania pracowników:', err);
+      }
+    }
+  }, [user?.role]);
+
   useEffect(() => {
     fetchTickets();
-    if (user?.role === 'admin' || user?.role === 'serwisant') {
-      workerApi
-        .getWorkers()
-        .then((data) => {
-          if (Array.isArray(data)) setWorkers(data);
-        })
-        .catch((err) => console.error('Błąd pobierania pracowników:', err));
+    fetchWorkers();
+  }, [fetchTickets, fetchWorkers, token]);
+
+  useEffect(() => {
+    if (dashboardTab === 'tickets') {
+      fetchWorkers();
     }
-  }, [fetchTickets, user?.role, token]);
+  }, [dashboardTab, fetchWorkers]);
 
   useEffect(() => {
     function handlePopState() {
@@ -324,6 +333,14 @@ export default function Dashboard({ user, token, onLogout }) {
     }
   }
 
+  const handleCloseDrawer = useCallback(() => setDetailsDrawerTicket(null), []);
+  const handleCloseAssignModal = useCallback(() => setAssignModalTicket(null), []);
+  const handleCloseRepairModal = useCallback(() => setRepairModalTicket(null), []);
+  const handleCloseShipModal = useCallback(() => setShipModalTicket(null), []);
+  const handleCloseRollbackModal = useCallback(() => setRollbackModalData(null), []);
+  const handleCloseTrackingModal = useCallback(() => setTrackingModalTicket(null), []);
+  const handleCloseOwnPasswordModal = useCallback(() => setShowOwnPasswordModal(false), []);
+
   const handleAssignWorker = (ticketId, pracownikId) =>
     runTicketMutation(
       ticketId,
@@ -333,7 +350,7 @@ export default function Dashboard({ user, token, onLogout }) {
           pracownikId === '' || pracownikId === null ? null : Number(pracownikId)
         ),
       (data) => data.message,
-      () => setAssignModalTicket(null)
+      handleCloseAssignModal
     );
 
   const handleRepairSubmit = (ticketId, opisNaprawy) =>
@@ -341,7 +358,7 @@ export default function Dashboard({ user, token, onLogout }) {
       ticketId,
       () => ticketApi.submitRepair(ticketId, opisNaprawy),
       () => `Zgłoszenie #${ticketId} zostało opisane i przekazane do magazynu jako "Do wysyłki"!`,
-      () => setRepairModalTicket(null),
+      handleCloseRepairModal,
       true
     );
 
@@ -350,15 +367,15 @@ export default function Dashboard({ user, token, onLogout }) {
       ticketId,
       () => ticketApi.updateStatus(ticketId, 'zakończone', { numer_listu: numerListu }),
       () => `Zgłoszenie #${ticketId} zostało oznaczone jako wysłane.`,
-      () => setShipModalTicket(null)
+      handleCloseShipModal
     );
 
   const handleRollbackSubmit = (ticketId, targetStatus) =>
     runTicketMutation(
       ticketId,
       () => ticketApi.updateStatus(ticketId, targetStatus),
-      () => `Status zgłoszenia #${ticketId} został cofnięty do "${targetStatus}".`,
-      () => setRollbackModalData(null)
+      () => `Status zgłoszenia #${ticketId} został cofnięty do "${STATUS_LABELS[targetStatus] || targetStatus}".`,
+      handleCloseRollbackModal
     );
 
   const handleSaveTrackingNumber = (id, numerListu) => {
@@ -367,7 +384,7 @@ export default function Dashboard({ user, token, onLogout }) {
       id,
       () => ticketApi.saveTrackingNumber(id, currentStatus, numerListu),
       () => `Zgłoszenie #${id}: numer listu przewozowego został pomyślnie zapisany.`,
-      () => setTrackingModalTicket(null)
+      handleCloseTrackingModal
     );
   };
 
@@ -382,8 +399,15 @@ export default function Dashboard({ user, token, onLogout }) {
       const data = await ticketApi.deleteTicket(id);
       if (!data) return;
       showAlert(`Zgłoszenie #${id} zostało pomyślnie usunięte.`, 'success');
-      setTickets((prev) => prev.filter((t) => t.id !== id));
-      setTotal((prev) => Math.max(0, prev - 1));
+      const remainingOnPage = tickets.filter((t) => t.id !== id).length;
+      const targetPage = remainingOnPage === 0 && page > 1 ? page - 1 : page;
+      if (targetPage !== page) {
+        setLoading(true);
+        setPage(targetPage);
+      } else {
+        setTickets((prev) => prev.filter((t) => t.id !== id));
+      }
+      await fetchTickets({ page: targetPage });
       if (detailsDrawerTicket?.id === id) setDetailsDrawerTicket(null);
     } catch (err) {
       showAlert(err.message, 'error');
@@ -406,7 +430,10 @@ export default function Dashboard({ user, token, onLogout }) {
   const currentTab = user?.role === 'admin' ? dashboardTab : 'tickets';
 
   const modalHandlers = {
-    onOpenAssignModal: setAssignModalTicket,
+    onOpenAssignModal: (ticket) => {
+      fetchWorkers();
+      setAssignModalTicket(ticket);
+    },
     onOpenRepairModal: setRepairModalTicket,
     onOpenShipModal: setShipModalTicket,
     onOpenRollbackModal: (ticket, actions) => setRollbackModalData({ ticket, actions })
@@ -521,7 +548,7 @@ export default function Dashboard({ user, token, onLogout }) {
       <Alert alert={alert} />
 
       {currentTab === 'users' && user?.role === 'admin' ? (
-        <AdminUsersPanel currentUser={user} showAlert={showAlert} />
+        <AdminUsersPanel currentUser={user} showAlert={showAlert} onWorkersChanged={fetchWorkers} />
       ) : (
         <>
           {/* Pasek kontrolny filtrów i stronicowania nad listą */}
@@ -584,7 +611,9 @@ export default function Dashboard({ user, token, onLogout }) {
                 >
                   <option value="">Wszyscy pracownicy</option>
                   <option value="nieprzypisane">Nieprzypisane</option>
-                  {workers.map((w) => (
+                  {workers
+                    .filter((w) => w.role === 'pracownik' || w.role === 'serwisant')
+                    .map((w) => (
                     <option key={w.id} value={w.id}>
                       {w.username} ({w.role})
                     </option>
@@ -726,7 +755,7 @@ export default function Dashboard({ user, token, onLogout }) {
                       </td>
                       <td>
                         <div className="text-xs text-ink font-medium whitespace-nowrap">
-                          {t.created_at ? new Date(t.created_at).toLocaleDateString('pl-PL') : '-'}
+                          {formatDate(t.created_at)}
                         </div>
                         <div className="text-[0.7rem] text-muted">
                           {t.created_at
@@ -780,7 +809,7 @@ export default function Dashboard({ user, token, onLogout }) {
                     <div>
                       <span className="text-base font-bold text-ink">#{t.id}</span>
                       <div className="text-[0.7rem] text-muted mt-0.5">
-                        {t.created_at ? new Date(t.created_at).toLocaleString('pl-PL') : '-'}
+                        {formatDateTime(t.created_at)}
                       </div>
                     </div>
                     <StatusBadge status={t.status} />
@@ -894,7 +923,7 @@ export default function Dashboard({ user, token, onLogout }) {
               key={detailsDrawerTicket.id}
               ticket={detailsDrawerTicket}
               user={user}
-              onClose={() => setDetailsDrawerTicket(null)}
+              onClose={handleCloseDrawer}
               {...modalHandlers}
               onOpenTrackingModal={setTrackingModalTicket}
             />
@@ -905,8 +934,9 @@ export default function Dashboard({ user, token, onLogout }) {
               key={assignModalTicket.id}
               ticket={assignModalTicket}
               workers={workers}
-              onClose={() => setAssignModalTicket(null)}
+              onClose={handleCloseAssignModal}
               onAssign={handleAssignWorker}
+              onWorkersLoaded={setWorkers}
             />
           )}
 
@@ -914,7 +944,7 @@ export default function Dashboard({ user, token, onLogout }) {
             <RepairModal
               key={repairModalTicket.id}
               ticket={repairModalTicket}
-              onClose={() => setRepairModalTicket(null)}
+              onClose={handleCloseRepairModal}
               onSubmit={handleRepairSubmit}
             />
           )}
@@ -924,7 +954,7 @@ export default function Dashboard({ user, token, onLogout }) {
               key={shipModalTicket.id}
               ticket={shipModalTicket}
               mode="ship"
-              onClose={() => setShipModalTicket(null)}
+              onClose={handleCloseShipModal}
               onShip={handleShipSubmit}
             />
           )}
@@ -934,7 +964,7 @@ export default function Dashboard({ user, token, onLogout }) {
               key={rollbackModalData.ticket.id}
               ticket={rollbackModalData.ticket}
               rollbackActions={rollbackModalData.actions}
-              onClose={() => setRollbackModalData(null)}
+              onClose={handleCloseRollbackModal}
               onConfirm={handleRollbackSubmit}
             />
           )}
@@ -944,7 +974,7 @@ export default function Dashboard({ user, token, onLogout }) {
               key={`edit-${trackingModalTicket.id}`}
               ticket={trackingModalTicket}
               mode="edit"
-              onClose={() => setTrackingModalTicket(null)}
+              onClose={handleCloseTrackingModal}
               onSave={handleSaveTrackingNumber}
             />
           )}
@@ -953,7 +983,7 @@ export default function Dashboard({ user, token, onLogout }) {
 
       {showOwnPasswordModal && (
         <PasswordModal
-          onClose={() => setShowOwnPasswordModal(false)}
+          onClose={handleCloseOwnPasswordModal}
           showAlert={showAlert}
         />
       )}
