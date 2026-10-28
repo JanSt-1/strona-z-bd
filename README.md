@@ -178,9 +178,9 @@ Projekt posiada dwa zestawy testów:
 
 ---
 
-## Interfejs użytkownika (UI/UX) i dostępność (WCAG AA)
+## Interfejs użytkownika (UI/UX) i responsywność
 
-Frontend aplikacji został zaprojektowany z dbałością o estetykę, responsywność oraz ścisłe standardy dostępności WCAG AA:
+Frontend aplikacji został zaprojektowany z dbałością o estetykę, czytelność oraz responsywność:
 - **Trwały ekran potwierdzenia przyjęcia zgłoszenia (`PublicTicketForm`)**:
   - Po pomyślnym przesłaniu formularza przez klienta zamiast znikającego po kilku sekundach alertu pojawia się dedykowany, estetyczny ekran potwierdzenia, który **nie znika samoczynnie**.
   - Zawiera wyróżniony nagłówek **„Zgłoszenie nr {id} przyjęte”** z ikoną sukcesu,
