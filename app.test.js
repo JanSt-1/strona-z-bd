@@ -3260,8 +3260,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             }
         });
 
-        it('serwisant może przepisać zgłoszenie w statusie w_realizacji oraz nowe, a następne statusy zwracają 409', async () => {
-            allExecutedQueries = [];
+        it('serwisant nie może przejąć ani odpiąć cudzego zlecenia (blokada obejścia /naprawione), ale może przepiąć je na innego pracownika', async () => {
             // 1. Zlecenie w_realizacji przypisane do pracownika ID 1, serwisant ma ID 50 w serwisantToken
             setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
 
@@ -3272,15 +3271,27 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 .send({ opis_naprawy: 'Próba opisu cudzego zlecenia' });
             assert.strictEqual(resDirectRepair.status, 403);
 
-            // Serwisant przepisuje zgłoszenie w statusie w_realizacji na siebie (ID 50) -> 200
-            const resAssignSelf = await request(app)
-                .patch('/api/zgloszenia/1/przypisz')
-                .set('Authorization', `Bearer ${serwisantToken}`)
-                .send({ pracownik_id: 50 });
-            assert.strictEqual(resAssignSelf.status, 200);
-            assert.strictEqual(resAssignSelf.body.przypisany_pracownik_id, 50);
+            // Przepięcie na siebie oraz odpięcie cudzego zlecenia -> 403, bez UPDATE
+            for (const pracownik_id of [50, null]) {
+                allExecutedQueries = [];
+                const res = await request(app)
+                    .patch('/api/zgloszenia/1/przypisz')
+                    .set('Authorization', `Bearer ${serwisantToken}`)
+                    .send({ pracownik_id });
+                assert.strictEqual(res.status, 403, `Oczekiwano 403 dla pracownik_id=${pracownik_id}`);
+                assert.strictEqual(allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia')).length, 0);
+            }
 
-            // Serwisant przepisuje zgłoszenie w statusie w_realizacji na innego pracownika (ID 20) -> 200
+            // Zlecenie dalej przypisane do innego pracownika, więc /naprawione nadal zwraca 403
+            allExecutedQueries = [];
+            const resRepairAfter = await request(app)
+                .patch('/api/zgloszenia/1/naprawione')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ opis_naprawy: 'Próba opisu po nieudanym przejęciu' });
+            assert.strictEqual(resRepairAfter.status, 403);
+            assert.strictEqual(allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia')).length, 0);
+
+            // Serwisant przepisuje zgłoszenie w statusie w_realizacji na innego pracownika (ID 20) -> 200 (np. L4, zablokowane konto)
             const resReassignOther = await request(app)
                 .patch('/api/zgloszenia/1/przypisz')
                 .set('Authorization', `Bearer ${serwisantToken}`)
@@ -3288,8 +3299,16 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(resReassignOther.status, 200);
             assert.strictEqual(resReassignOther.body.przypisany_pracownik_id, 20);
 
-            // 2. Zlecenie w statusie nowe (przypisane lub nieprzypisane) -> serwisant może przepisać
-            setMockTicket({ id: 1, status: 'nowe', przypisany_pracownik_id: 1 });
+            // Zlecenie przypisane do samego serwisanta może przepiąć na innego pracownika
+            setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 50 });
+            const resReassignOwn = await request(app)
+                .patch('/api/zgloszenia/1/przypisz')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ pracownik_id: 20 });
+            assert.strictEqual(resReassignOwn.status, 200);
+
+            // 2. Nieprzypisane zlecenie w statusie nowe -> serwisant może przypisać siebie lub innego pracownika
+            setMockTicket({ id: 1, status: 'nowe', przypisany_pracownik_id: null });
             const resAssignNowe = await request(app)
                 .patch('/api/zgloszenia/1/przypisz')
                 .set('Authorization', `Bearer ${serwisantToken}`)

@@ -890,6 +890,12 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
             return fail(res, `Zmiana przypisania pracownika jest dozwolona tylko dla zleceń w statusie "nowe" lub "w_realizacji" (aktualny status: "${ticket.status}").`, 409);
         }
 
+        // Serwisant może przepiąć cudze zlecenie tylko na innego pracownika - przejęcie lub odpięcie obchodziłoby zakaz opisu cudzej naprawy w /naprawione
+        if (req.user.role === 'serwisant' && isAssignedToOther(ticket, req.user.id)
+            && (assignedId === null || Number(assignedId) === Number(req.user.id))) {
+            return fail(res, 'Serwisant nie może przepisać na siebie ani odpiąć zlecenia przypisanego do innego pracownika.', 403);
+        }
+
         if (ticket.status === 'nowe' && assignedId === null) {
             return fail(res, 'Nie można cofnąć przypisania dla nowego zlecenia. Wybierz pracownika do realizacji.', 400);
         }
