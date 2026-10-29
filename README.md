@@ -9,7 +9,7 @@ To pełna aplikacja webowa (SPA) umożliwiająca klientom szybkie rejestrowanie 
 Aplikacja jest rozdzielona zgodnie z zasadą separacji odpowiedzialności:
 - **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (nagłówki bezpieczeństwa helmet, limit rozmiaru JSON, serwowanie plików statycznych z `frontend/dist/`), autoryzacji JWT, kontroli dostępu RBAC, transakcji bazodanowych i ochrony przed wyścigami (CAS / `409 Conflict`), bezpiecznego logowania bez danych osobowych (`logError`), rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
 - **`db.js`**: Centralny moduł konfiguracji bazy danych MySQL uwzględniający `DB_PORT`, `DB_HOST`, `DB_USER`, `DB_PASSWORD` oraz `DB_NAME`. Udostępnia metody `createPool()` oraz `createConnection()`, z których korzystają `app.js`, `migrate.js`, `seed.js` oraz `create-user.js`.
-- **`migrate.js` & `migrations/`**: Lekki (~50 linii), bez-ORM system migracji SQL. Skrypt `npm run migrate` aplikuje oczekujące migracje po kolei w transakcjach, zapisując stan w tabeli `schema_migrations`. Zapewnia pełną idempotencję i kompatybilność z MariaDB oraz MySQL 8 (bezpieczne dodawanie kolumn i indeksów).
+- **`migrate.js` & `migrations/`**: Lekki, bez-ORM system migracji SQL. Skrypt `npm run migrate` aplikuje oczekujące migracje po kolei w transakcjach, zapisując stan w tabeli `schema_migrations`. Zapewnia pełną idempotencję i kompatybilność z MariaDB oraz MySQL 8 (bezpieczne dodawanie kolumn i indeksów).
 - **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację obecności `JWT_SECRET`, test połączenia z bazą MySQL, **sprawdzenie czy wszystkie migracje zostały wykonane** oraz uruchomienie nasłuchiwania HTTP (`app.listen()`).
 - **`frontend/`**: Źródła interfejsu użytkownika SPA napisane w React 19 z bundlerem Vite i nowoczesnym stylem Tailwind CSS v4 opartym na zmiennych CSS. Kod został podzielony modularnie na komponenty (`components/`), strony (`pages/`), scentralizowaną warstwę API (`api.js`) oraz stałe biznesowe (`constants.js`). Aplikacja zabezpieczona jest komponentem `ErrorBoundary`. Wynik kompilacji trafia do katalogu `frontend/dist/`.
 - **`frontend/dist/`**: Katalog dystrybucyjny serwowany przez Express. Zawiera skompilowany, zoptymalizowany pakiet produkcyjny wygenerowany poleceniem `npm run build` (`index.html`, zhaszowane `assets/index-*.js`, `assets/index-*.css`, `favicon.svg` oraz `logo_mentor4.svg`).
@@ -21,7 +21,7 @@ Aplikacja jest rozdzielona zgodnie z zasadą separacji odpowiedzialności:
 ## Wymagania wstępne
 
 Przed uruchomieniem projektu upewnij się, że masz zainstalowane:
-- **Node.js** (wersja 18 lub nowsza, zalecana 20+ z obsługą `node:test`) oraz menedżer pakietów **npm**
+- **Node.js** w wersji 20.19+ lub 22.12+ (wymaganie Vite 8; backend z Express 5 działa od Node 18) oraz menedżer pakietów **npm**
 - **MySQL** lub **MariaDB** (np. zainstalowany lokalnie serwer MySQL, pakiet XAMPP, Laragon lub kontener Docker)
 
 ---
@@ -67,7 +67,7 @@ npm run migrate
 
 
 ### Krok 3a: Konfiguracja środowiska testowego (konta + 200 nowych zgłoszeń)
-Aby utworzyć 4 konta testowe (`admin`, `pracownik`, `serwisant`, `magazynier` z hasłem `admin123`) oraz wypełnić bazę 200 zgłoszeniami serwisowymi ze statusem `"nowe"`, uruchom lokalny skrypt (ignorowany przez Git):
+Aby utworzyć 4 konta testowe (`admin`, `pracownik`, `serwisant`, `magazynier` z hasłem `admin123`) oraz wypełnić bazę 200 zgłoszeniami serwisowymi ze statusem `"nowe"`, uruchom skrypt testowy (`config-testowy.js`, tylko do środowiska lokalnego – nie uruchamiaj go na produkcji):
 ```bash
 npm run config:testowy
 # lub bezpośrednio:
@@ -99,7 +99,6 @@ node create-user.js nazwa_magazyniera HasloMagazyniera magazynier
 Najpierw skompiluj aplikację React za pomocą Vite (wygeneruje zoptymalizowane pliki w katalogu `frontend/dist/` serwowanym bezpośrednio przez Express):
 ```bash
 npm run build
-# (alias: npm run build:frontend)
 ```
 
 Następnie uruchom aplikację w trybie produkcyjnym:
@@ -114,8 +113,7 @@ npm run dev
 #### Praca nad frontendem (Live HMR)
 Jeśli rozwijasz interfejs użytkownika, możesz uruchomić niezależny serwer deweloperski Vite z natychmiastowym odświeżaniem HMR na porcie 5173:
 ```bash
-npm run dev:front
-# (alias: npm run dev:frontend)
+npm run dev:frontend
 ```
 *Vite posiada skonfigurowany w `vite.config.js` proxy (`server.proxy`), który automatycznie przekierowuje zapytania do `/api` na adres `http://localhost:3000` uruchomionego backendu Express.*
 
@@ -167,7 +165,7 @@ Projekt posiada dwa zestawy testów:
    ```bash
    npm test
    ```
-   Weryfikują wszystkie endpointy REST API, logikę biznesową, autoryzację ról (admin, pracownik, serwisant, magazynier) oraz nagłówki bezpieczeństwa bez konieczności uruchamiania bazy danych.
+   Weryfikują wszystkie endpointy REST API, logikę biznesową, autoryzację ról (admin, pracownik, serwisant, magazynier) oraz nagłówki bezpieczeństwa bez konieczności uruchamiania bazy danych. `npm test` (`node --test`) uruchamia wszystkie pliki `*.test.js`, więc również `integration.test.js` – jego testy są pomijane, gdy baza nie jest osiągalna. Same testy z mockiem: `node --test app.test.js`.
 
 2. **Testy integracyjne z prawdziwą bazą danych (MySQL / MariaDB)**:
    ```bash
@@ -212,9 +210,9 @@ Frontend aplikacji został zaprojektowany z dbałością o estetykę, czytelnoś
     - Po odświeżeniu strony (`F5`) lub przesłaniu linku innemu pracownikowi filtry i strona nie znikają i zostają automatycznie załadowane z adresu.
     - Obsługiwana jest również pełna nawigacja historii przeglądarki (przyciski *Wstecz* / *Dalej* przez zdarzenie `popstate`).
 - **Tabela desktopowa (`md+`) i podgląd usterki**:
-  - Zwięzła tabela o 6 kolumnach (*Nr*, *Klient*, *Produkt / Usterka*, *Przypisany*, *Status i akcja*, *Data*).
+  - Zwięzła tabela o 6 kolumnach (*Nr*, *Klient*, *Produkt / Usterka*, *Przypisany*, *Status*, *Data*).
   - Kolumna *Produkt / Usterka* zawiera 2-linijkowy skrót zgłoszenia (`.ticket-excerpt` z atrybutem `title`), co pozwala natychmiast rozróżnić zlecenia od tego samego klienta przy zachowaniu równej, stabilnej wysokości wierszy.
-  - Kolumna *Przypisany* prezentuje czytelny tekst pracownika (lub informację *— Nieprzypisane —*), bez dodatkowych przycisków – zgodnie z zasadą jednej akcji całe sterowanie etapem zlecenia skupione jest w kolumnie *Status i akcja*.
+  - Kolumna *Przypisany* prezentuje czytelny tekst pracownika (lub informację *— Nieprzypisane —*), bez dodatkowych przycisków – zgodnie z zasadą jednej akcji całe sterowanie etapem zlecenia skupione jest w kolumnie *Status*.
   - Cały wiersz tabeli jest klikalny i otwiera panel boczny ze szczegółami (zastąpiono osobny przycisk „Szczegóły”).
   - Tabela bez problemu mieści się na ekranach laptopów (1366 px) bez konieczności przewijania w bok.
 - **Karty mobilne (wąskie ekrany / telefon 375 px)**:
@@ -224,7 +222,7 @@ Frontend aplikacji został zaprojektowany z dbałością o estetykę, czytelnoś
 - **Wysuwany panel boczny szczegółów zgłoszenia (`TicketDetailsDrawer`)**:
   - Kliknięcie w dowolne zgłoszenie (wiersz na desktopie lub kartę na telefonie) wysuwa estetyczny panel boczny z animacją slajdu.
   - Panel zawiera: pełne dane klienta i rozliczenia (NIP, faktura/paragon, adres wysyłki, telefon komórkowy oraz opcjonalny telefon stacjonarny, email), pełne dane urządzenia i numer seryjny, kompletny opis usterki, sekcję realizacji z raportem prac naprawczych i datą zatwierdzenia, sekcję wysyłki z numerem listu przewozowego (oraz opcją edycji dla admina) oraz **graficzną pionową oś czasu zdarzeń (historię audytową)** z dedykowanymi ikonami pobieraną z `GET /api/zgloszenia/:id`.
-  - Posiada zintegrowany górny pasek akcji z pojedynczym przyciskiem etapu („Przypisz”, „Oznacz jako naprawione”, „Oznacz jako wysłane”, a dla admina „Cofnij status”), co pozwala przeprowadzić operację bezpośrednio podczas analizy szczegółów zlecenia.
+  - Posiada zintegrowany górny pasek akcji z pojedynczym przyciskiem etapu („Przypisz” / „Zmień przypisanie”, „Oznacz jako naprawione”, „Oznacz jako wysłane”, a dla admina „Cofnij status”), co pozwala przeprowadzić operację bezpośrednio podczas analizy szczegółów zlecenia.
 - **Puste stany i elegancki szkielet ładowania (Skeletons & Spinners)**:
   - W przypadku braku wyników dla wybranych kryteriów filtrowania lub wyszukiwania, użytkownik widzi estetyczny komunikat **„Brak zgłoszeń dla wybranych filtrów”** wraz z przyciskiem **„Wyczyść filtry”**, który natychmiast przywraca pełną listę.
   - Podczas pobierania danych z serwera (`loading`) tabela oraz karty zastępowane są płynnym szkieletem animowanym (`TableSkeleton` / `CardsSkeleton` z `animate-pulse`) oraz wskaźnikiem ładowania (`animate-spin`), eliminując migotanie i przesunięcia układu (CLS).
@@ -244,7 +242,7 @@ Uruchomienie testów:
 ```bash
 npm test
 ```
-*Skrypt wykonuje polecenie `node --test` z użyciem `supertest`. Dzięki wbudowanemu mockowaniu puli bazy danych w `app.test.js`, testy wykonują się błyskawicznie i nie wymagają aktywnego serwera MySQL.*
+*Skrypt wykonuje polecenie `node --test` z użyciem `supertest`. Dzięki wbudowanemu mockowaniu puli bazy danych w `app.test.js`, testy wykonują się błyskawicznie i nie wymagają aktywnego serwera MySQL (testy z `integration.test.js` są wtedy pomijane).*
 
 Główne grupy przypadków testowych (łącznie **174 testy** w 22 suitach):
 1. **Uwierzytelnianie, logowanie, ochrona Honeypot, klauzula RODO i walidacja zgłoszeń**: walidacja pól obowiązkowych, obsługa opcjonalnego telefonu stacjonarnego (`telefon_stacjonarny` – zapis z prefiksem `+48` po podaniu 9 cyfr, dopuszczenie `null` gdy brak, błąd 400 przy niepoprawnym formacie), obowiązkowy checkbox zgody RODO (odrzucenie 400 przy braku lub false, utrwalenie znacznika czasu w `zgoda_rodo_data` przy akceptacji), ochrona antyspamowa Honeypot (wypełnione pole `website` zwraca 201 bez zapisu do bazy), brak tokenu (401), błędne dane logowania (401), poprawny token JWT (200), blokada nieprawidłowych formatów i dat z przyszłości (400).
@@ -287,7 +285,7 @@ Główne grupy przypadków testowych (łącznie **174 testy** w 22 suitach):
     - Żądania przekraczające limit (np. 80KB) zwracają status 413 Payload Too Large z czytelnym komunikatem JSON.
     - Błędnie sformatowane JSON-y zwracają status 400 Bad Request.
 15. **Nagłówki bezpieczeństwa HTTP (`helmet`)**:
-    - Zabezpieczenie serwera Express za pomocą biblioteki `helmet` z wyłączonym `contentSecurityPolicy`. Frontend kompilowany jest z wyprzedzeniem przez Vite (brak Babel Standalone w przeglądarce).
+    - Zabezpieczenie serwera Express za pomocą biblioteki `helmet` z własną polityką `contentSecurityPolicy` (`default-src 'self'`, skrypty wyłącznie z `'self'`, style i fonty dodatkowo z Google Fonts, `object-src 'none'`, `frame-ancestors 'self'`). Frontend kompilowany jest z wyprzedzeniem przez Vite (brak Babel Standalone w przeglądarce).
     - Aktywne nagłówki ochronne: `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Strict-Transport-Security`, `X-Download-Options: noopen`, `X-Permitted-Cross-Domain-Policies: none`.
 16. **Endpoint `/api/health` (bezpieczny health check)**:
     - Weryfikacja działania bazy danych (`SELECT 1`).
@@ -335,7 +333,7 @@ W projekcie dostępny jest skrypt `create-user.js`, który bezpiecznie haszuje h
 node create-user.js <nazwa_uzytkownika> <haslo> [rola]
 ```
 - Dostępne role: `admin`, `serwisant`, `pracownik`, `magazynier` (domyślnie: `pracownik`).
-- **Wymagania dla hasła**: minimum 8 znaków (hasła krótsze zostaną odrzucone).
+- **Wymagania dla hasła**: minimum 8 znaków, maksymalnie 72 bajty (limit bcrypt).
 - Przykłady:
   ```bash
   node create-user.js admin HasloAdmina123 admin
@@ -475,7 +473,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 
 #### Inicjalizacja schematu bazy danych i pierwsze konto administratora
 ```bash
-# Utworzenie struktury tabel (schemat.sql)
+# Utworzenie bazy i tabel (seed uruchamia migracje z katalogu migrations/)
 npm run seed
 
 # Utworzenie głównego konta administratora

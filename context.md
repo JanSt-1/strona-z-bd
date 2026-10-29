@@ -13,13 +13,14 @@ strona_z_bd/
 ├── app.js                   # Express app: middleware, RBAC, validation, JWT, transactions/CAS, routes, DB pool, static serving of frontend/dist/
 ├── db.js                    # Centralized MySQL config (DB_PORT, createPool, createConnection)
 ├── migrate.js               # Lightweight SQL migration runner (`npm run migrate`) & pending migration check
-├── migrations/              # SQL migrations (001_initial_schema.sql, 002_add_telefon_stacjonarny_and_indexes.sql, 003_historia_szczegoly_mediumtext.sql)
+├── migrations/              # SQL migrations (001_init.sql, 002_aktualizacja_kolumn_i_indeksow.sql, 003_historia_szczegoly_mediumtext.sql)
+├── jwt-validation.js        # validateJwtSecret + INSECURE_JWT_SECRETS (used by index.js, re-exported as app.validateJwtSecret)
 ├── index.js                 # Server entrypoint: .env & JWT_SECRET validation, DB connection & pending migrations check, app.listen(PORT, HOST)
 ├── app.test.js              # Unit & integration tests (node:test + supertest, 174 tests in 22 suites, mocked DB via app.setPool())
 ├── integration.test.js      # Real MySQL/MariaDB integration & concurrency tests (`npm run test:db` on serwis_db_test)
 ├── schemat.sql              # Current full MySQL schema (tables: uzytkownicy, zgloszenia, historia_zgloszen)
 ├── seed.js                  # DB initialization & migration runner (`npm run seed`)
-├── config-testowy.js        # Local test setup (in .gitignore): seeds 4 accounts (pass: admin123) + 'nowe' tickets (`npm run config:testowy`)
+├── config-testowy.js        # Local test setup (committed, never run in production): seeds 4 accounts (pass: admin123) + 'nowe' tickets (`npm run config:testowy`)
 ├── create-user.js           # CLI user creator with bcrypt hashing (`node create-user.js <user> <pass> [role]`)
 ├── frontend/                # React 19 + Vite + Tailwind CSS v4 SPA
 │   ├── src/                 # App.jsx (with ErrorBoundary), main.jsx, components/, pages/, api.js, constants.js, index.css
@@ -99,16 +100,16 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
 | `GET` | `/api/zgloszenia` | JWT (any role) | Paginated ticket list. Query params: `?szukaj=` (parameterized `LIKE ?` across 14 columns), `?status=`, `?pracownik=` (ID or `nieprzypisane`), `?strona=` (default 1), `?limit=` (default 25, max 100), `?sort=` (`asc`/`desc` on `created_at`). Enforces RBAC visibility (`AND`). Each row includes `dozwolone_akcje` computed by `wyznaczDozwoloneAkcje(req.user, t)`. Returns `{ total, page, limit, totalPages, data }`. |
 | `GET` | `/api/zgloszenia/:id` | JWT (any role) | Ticket details + `historia` + `dozwolone_akcje`. Protected by `canViewTicket(req.user, ticket)` (`404` if missing, `403` if unauthorized). |
 | `GET` | `/api/zgloszenia/:id/historia` | JWT (any role) | Chronological audit history for ticket `:id`. Protected by `canViewTicket(req.user, ticket)` (`404` / `403`). |
-| `PATCH` | `/api/zgloszenia/:id/przypisz` | JWT (`admin`, `serwisant`) | Assign/unassign worker (`{ pracownik_id }`). Checked by `canViewTicket` first. Allowed only in `nowe` and `w_realizacji` (`409` on `do_wysylki` / `zakończone`). Target must be active `pracownik` or `serwisant` (`400` otherwise). Unassigning (`pracownik_id: null`) on `nowe` or already unassigned tickets returns `400`. `serwisant` can reassign another worker's ticket to a different worker, **but is forbidden (`403`) from reassigning another worker's ticket to self or unassigning it** (preventing bypass of the `/naprawione` restriction). Updates `przypisany_pracownik_id` without overwriting `status`, then conditionally transitions `nowe` → `w_realizacji` (`WHERE id = ? AND status = 'nowe'`) inside a transaction. |
+| `PATCH` | `/api/zgloszenia/:id/przypisz` | JWT (`admin`, `serwisant`) | Assign/unassign worker (`{ pracownik_id }`). Checked by `canViewTicket` first. Allowed only in `nowe` and `w_realizacji` (`409` on `do_wysylki` / `zakończone`). Target must be active `pracownik` or `serwisant` (`400` otherwise). Unassigning (`pracownik_id: null`) on `nowe` or already unassigned tickets returns `400`. `serwisant` can reassign another worker's ticket to a different worker, **but is forbidden (`403`) from reassigning another worker's ticket to self or unassigning it** (preventing bypass of the `/naprawione` restriction). Updates `przypisany_pracownik_id` without overwriting `status`, guarded by CAS `WHERE id = ? AND status = ? AND przypisany_pracownik_id <=> ?` (`409` if the status or the previous assignee changed concurrently), then conditionally transitions `nowe` → `w_realizacji` (`WHERE id = ? AND status = 'nowe'`) inside a transaction. |
 | `PATCH` | `/api/zgloszenia/:id/naprawione` | JWT (`pracownik`, `serwisant`, `admin`) | **Only forward path to `do_wysylki`**. Enforced by `requireRoles('admin', 'serwisant', 'pracownik')`, `canViewTicket` first, and hard condition `ticket.status === 'w_realizacji'` (`409` on `nowe`, `do_wysylki`, `zakończone`). Requires non-empty `opis_naprawy` (max 5,000 chars). Blocks `pracownik` on others' tickets (`403`) and `serwisant` on tickets assigned to another worker (`403`). Runs `UPDATE ... WHERE id = ? AND status = ?` + `dodajWpisHistorii` in a transaction (`409` if `affectedRows === 0`). |
 | `PATCH/PUT` | `/api/zgloszenia/:id/status` | JWT (RBAC) | Checked by `canViewTicket` first (preventing status leaks on unauthorized tickets). Status change per `czyMoznaZmienic` (blocks forward `do_wysylki` with `400`). Handles admin rollbacks (clearing `data_wyslania`/`numer_listu` before `zakończone`, `opis_naprawy`/`opis_naprawy_data` before `do_wysylki`, and `przypisany_pracownik_id` on `nowe`) and `numer_listu` updates (max 100 chars). Runs `UPDATE ... WHERE id = ? AND status = ?` + `dodajWpisHistorii` in a transaction (`409` if `affectedRows === 0`). |
 | `DELETE` | `/api/zgloszenia/:id` | JWT (`admin`) | Logs `usunięcie` to `historia_zgloszen` and executes `DELETE FROM zgloszenia WHERE id = ?` inside a single transaction (`409` if `affectedRows === 0`, rolling back the history entry on failure). |
 | `GET` | `/api/admin/users` | JWT (`admin`) | Lists users (`id, username, role, aktywny, created_at`) **without `password_hash`**. |
-| `POST` | `/api/admin/users` | JWT (`admin`) | Create user (`username` max 50, `password` 8–72 chars after `.trim()`, `role` in `ALLOWED_ROLES`). Bcrypt salt 10. `409` on duplicate username. |
+| `POST` | `/api/admin/users` | JWT (`admin`) | Create user (`username` max 50, `password` min 8 chars / max 72 bytes, whitespace-only rejected, `role` in `ALLOWED_ROLES`). Bcrypt salt 10. `409` on duplicate username. |
 | `PATCH` | `/api/admin/users/:id` | JWT (`admin`) | Change role (`{ role }`). Admin cannot demote self (`400`). |
-| `PATCH` | `/api/admin/users/:id/haslo` | JWT (`admin`) | Reset user password (`password`/`haslo` 8–72 chars after `.trim()`). |
+| `PATCH` | `/api/admin/users/:id/haslo` | JWT (`admin`) | Reset user password (`password`/`haslo` min 8 chars / max 72 bytes, whitespace-only rejected). |
 | `PATCH` | `/api/admin/users/:id/status` | JWT (`admin`) | Toggle/set `aktywny` via `isUserActive` (alias: `/aktywny`). Admin cannot block self (`400`). |
-| `PATCH` | `/api/profil/haslo` | JWT (any role) | Self-service password change (`currentPassword`, `newPassword` 8–72 chars after `.trim()`). Verifies old password via bcrypt. |
+| `PATCH` | `/api/profil/haslo` | JWT (any role) | Self-service password change (`currentPassword`/`stare_haslo`, `newPassword`/`nowe_haslo` min 8 chars / max 72 bytes). Verifies old password via bcrypt. Rate limit: 5/15m per `req.user.id` (`hasloLimiter`, skipped in `NODE_ENV === 'test'`). |
 | `GET` | `/api/health` | Public | DB health check: `200 { status: 'ok' }` or `500 { status: 'error' }` (never leaks `err.message`). |
 
 ---
@@ -117,7 +118,7 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
 
 - **Single Source of Truth for Actions:** Backend computes `ticket.dozwolone_akcje` via `wyznaczDozwoloneAkcje`. `StatusControl.jsx` (used both in `Dashboard.jsx` and `TicketDetailsDrawer.jsx`) and `constants.js` (`getTicketActionState`) derive `isAssignAction`, `isRepairAction`, `isShipAction`, and `rollbackActions` directly from `dozwolone_akcje` (rendering `"Przypisz"` in `nowe` and `"Zmień przypisanie"` in `w_realizacji` alongside `"Oznacz jako naprawione"`).
 - **Key Components (`frontend/src/components/`):**
-  - `Modal.jsx`: Shared portal modal base (`createPortal`, `Escape` key via `onCloseRef`, scroll lock, `.modal-card` using `100dvh` for mobile Safari compatibility).
+  - `Modal.jsx`: Shared portal modal base (`createPortal`, `Escape` key via a `keydown` listener, scroll lock, `.modal-card` using `100dvh` for mobile Safari compatibility).
   - `PasswordModal.jsx`: Unified modal for own password change (`userToEdit = null`) and admin password reset (`userToEdit = user`).
   - `ShipModal.jsx`: Unified modal for shipping (`mode="ship"`) and tracking number editing (`mode="edit"`).
   - `AssignWorkerModal.jsx`: Requires choosing an active `pracownik` or `serwisant` when the ticket is unassigned (`— Wybierz pracownika z listy —`); only offers `"— Brak (Cofnij przypisanie) —"` when the ticket is already assigned (`w_realizacji`).
@@ -140,16 +141,16 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
 npm install                                # Install root + frontend workspace dependencies
 npm run build                              # Build Vite SPA into frontend/dist/
 npm run lint                               # Run oxlint on frontend/src/
-npm test                                   # Run 174 unit/integration tests (node --test)
+npm test                                   # node --test: runs all *.test.js (174 mocked tests in app.test.js; integration.test.js is skipped when no DB is reachable)
 npm run test:db                            # Run real MySQL/MariaDB tests (integration.test.js on serwis_db_test)
 npm run migrate                            # Apply pending SQL migrations from migrations/
 npm run seed && npm run config:testowy     # Initialize schema, 4 test accounts (pass: admin123) & 200 'nowe' tickets
-node create-user.js admin Haslo123 admin   # Create admin account (password min 8 chars after .trim())
+node create-user.js admin Haslo123 admin   # Create admin account (password min 8 chars, max 72 bytes)
 npm start                                  # Start production server on HOST:PORT (default 127.0.0.1:3000)
 ```
 
-1. **Strong `JWT_SECRET` Validation (`validateJwtSecret`):** Never add a fallback `JWT_SECRET` in `app.js`. `validateJwtSecret` rejects missing secrets, template placeholders (`wygeneruj_wlasny`, `twoj_klucz_jtw`, `change_me`, etc.), and secrets shorter than 32 characters.
+1. **Strong `JWT_SECRET` Validation (`validateJwtSecret`):** Never add a fallback `JWT_SECRET` in `app.js`. `validateJwtSecret` rejects missing secrets, template placeholders (`wygeneruj_wlasny`, `twoj_klucz_jtw`, `changeme`, `secret`, etc. — see `INSECURE_JWT_SECRETS` in `jwt-validation.js`), and secrets shorter than 32 characters.
 2. **JWT & DB Auth (`authenticateToken`):** Explicitly enforce `algorithms: ['HS256']` in `jwt.sign` and `jwt.verify`. On every request, `authenticateToken` queries `SELECT id, username, role, aktywny FROM uzytkownicy WHERE id = ?` — rejecting inactive/missing users with `401` and taking `req.user.role` strictly from the DB.
 3. **401 vs 403 & `canViewTicket` First:** `401` = authentication failure (triggers auto-logout on frontend via `onUnauthorized`). `403` = insufficient RBAC permissions or blocked account on login. In `/przypisz`, `/naprawione`, and `/status`, always check `canViewTicket(req.user, ticket)` immediately after loading the ticket so unauthorized users never receive status information in `200`/`403`/`409` responses.
 4. **Transactions & Optimistic Locking (CAS):** All ticket mutations + `dodajWpisHistorii` must run inside a single DB transaction (`getTransactionConnection()`) and verify `affectedRows > 0` on `WHERE id = ? AND status = ?` (returning `409 Conflict` on concurrent modification).
-5. **Strict Validation & Type Safety:** Keep all regexes, field length checks, calendar date validation (`validatePurchaseDate`), strict integer ID parsing (`parsePositiveInt` requiring `/^\d+$/`), boolean coercion guard (`isUserActive`), and password `.trim()` before length checks (8–72 chars) intact.
+5. **Strict Validation & Type Safety:** Keep all regexes, field length checks, calendar date validation (`validatePurchaseDate`), strict integer ID parsing (`parsePositiveInt` requiring `/^\d+$/`), boolean coercion guard (`isUserActive`), and password length checks (min 8 chars, max 72 bytes — bcrypt limit; passwords are not trimmed, whitespace-only passwords are rejected) intact.

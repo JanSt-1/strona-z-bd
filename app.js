@@ -927,9 +927,10 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
         try {
             await conn.beginTransaction();
 
+            // CAS: status i dotychczasowe przypisanie muszą być takie, jak przy walidacji (<=> porównuje także NULL)
             const [assignResult] = await conn.query(
-                'UPDATE zgloszenia SET przypisany_pracownik_id = ? WHERE id = ?',
-                [assignedId, id]
+                'UPDATE zgloszenia SET przypisany_pracownik_id = ? WHERE id = ? AND status = ? AND przypisany_pracownik_id <=> ?',
+                [assignedId, id, ticket.status, ticket.przypisany_pracownik_id ?? null]
             );
             if (assignResult && assignResult.affectedRows === 0) {
                 await conn.rollback();

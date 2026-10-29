@@ -2760,7 +2760,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 assert.strictEqual(resNaprawione.status, 409);
                 assert.strictEqual(resNaprawione.body.error, 'Zlecenie zostało w międzyczasie zmienione, odśwież widok.');
 
-                // 3. PATCH /api/zgloszenia/:id/przypisz (gdy automatyczna zmiana nowe -> w_realizacji ma affectedRows: 0)
+                // 3. PATCH /api/zgloszenia/:id/przypisz na zleceniu "nowe" (ktoś je w międzyczasie przypisał)
                 setMockTicket({ id: 1, status: 'nowe', przypisany_pracownik_id: null });
                 const resPrzypisz = await request(app)
                     .patch('/api/zgloszenia/1/przypisz')
@@ -2769,7 +2769,16 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 assert.strictEqual(resPrzypisz.status, 409);
                 assert.strictEqual(resPrzypisz.body.error, 'Zlecenie zostało w międzyczasie zmienione, odśwież widok.');
 
-                assert.strictEqual(rollbackCount, 3, 'Każdy konflikt CAS powinien wywołać rollback()');
+                // 4. PATCH /api/zgloszenia/:id/przypisz na zleceniu "w_realizacji", które w międzyczasie przeszło do "do_wysylki"
+                setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
+                const resPrzepnij = await request(app)
+                    .patch('/api/zgloszenia/1/przypisz')
+                    .set('Authorization', `Bearer ${adminToken}`)
+                    .send({ pracownik_id: 20 });
+                assert.strictEqual(resPrzepnij.status, 409);
+                assert.strictEqual(resPrzepnij.body.error, 'Zlecenie zostało w międzyczasie zmienione, odśwież widok.');
+
+                assert.strictEqual(rollbackCount, 4, 'Każdy konflikt CAS powinien wywołać rollback()');
                 assert.strictEqual(commitCount, 0, 'Żaden konflikt CAS nie może wywołać commit()');
                 assert.strictEqual(historyInsertCount, 0, 'Przy konflikcie CAS wpis historii nie może powstać');
             } finally {
@@ -2918,8 +2927,10 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
 
             const updatesWRealizacji = allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia'));
             assert.strictEqual(updatesWRealizacji.length, 1);
-            assert.strictEqual(updatesWRealizacji[0].sql.includes('status ='), false, 'Samo przypisanie nie może nadpisywać kolumny status');
-            assert.deepStrictEqual(updatesWRealizacji[0].values, [1, 1]);
+            const setClause = updatesWRealizacji[0].sql.split('WHERE')[0];
+            assert.strictEqual(setClause.includes('status'), false, 'Samo przypisanie nie może nadpisywać kolumny status');
+            assert.ok(updatesWRealizacji[0].sql.includes('WHERE id = ? AND status = ? AND przypisany_pracownik_id <=> ?'), 'Przypisanie musi używać CAS na statusie i dotychczasowym przypisaniu');
+            assert.deepStrictEqual(updatesWRealizacji[0].values, [1, 1, 'w_realizacji', null]);
 
             // 2. Zlecenie w statusie 'nowe' -> osobny UPDATE statusu z WHERE status = 'nowe'
             allExecutedQueries = [];
@@ -2932,7 +2943,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
 
             const updatesNowe = allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia'));
             assert.strictEqual(updatesNowe.length, 2);
-            assert.ok(updatesNowe[0].sql.includes('SET przypisany_pracownik_id = ? WHERE id = ?'));
+            assert.ok(updatesNowe[0].sql.includes('SET przypisany_pracownik_id = ? WHERE id = ? AND status = ? AND przypisany_pracownik_id <=> ?'));
             assert.ok(updatesNowe[1].sql.includes("WHERE id = ? AND status = 'nowe'"));
         });
 
