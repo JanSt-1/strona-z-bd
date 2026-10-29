@@ -81,7 +81,7 @@ const PRZEJSCIA = {
 | Role | Ticket Visibility (`canViewTicket`) | Assign Worker (`/przypisz`) | Status / Repair Actions | Other Permissions |
 | :--- | :--- | :--- | :--- | :--- |
 | **`admin`** | All tickets | Yes (`pracownik`, `serwisant`; only in `nowe` and `w_realizacji`, otherwise `409`) | All forward transitions + **exclusive rollback rights** + edit `numer_listu` on any status | `DELETE /api/zgloszenia/:id`, full user management (`/api/admin/users*`) |
-| **`serwisant`** | All tickets | Yes (`pracownik`, `serwisant` in `nowe` and `w_realizacji`, otherwise `409`; auto `nowe` → `w_realizacji`). Can reassign another worker's ticket in `w_realizacji` to a different worker (e.g. sick leave / blocked account), **but cannot reassign another worker's ticket to self or unassign it (`403`)** | `w_realizacji` → `do_wysylki` via `/naprawione` **only for own or unassigned tickets** (`403` if assigned to someone else) | — |
+| **`serwisant`** | All tickets | Yes (`pracownik`, `serwisant` in `nowe` and `w_realizacji`, otherwise `409`; auto `nowe` → `w_realizacji`). Może przepisać zgłoszenie w statusie `nowe` oraz `w_realizacji` (na siebie lub innego pracownika); kolejne statusy zwracają `409 Conflict`. | `w_realizacji` → `do_wysylki` via `/naprawione` **only for own or unassigned tickets** (`403` if assigned to someone else) | — |
 | **`pracownik`** | **Only assigned to self** | No | `w_realizacji` → `do_wysylki` via `/naprawione` (own tickets only) | — |
 | **`magazynier`** | **Only `do_wysylki` & `zakończone`** | No | `do_wysylki` → `zakończone` (requires `numer_listu`) + edit `numer_listu` on `zakończone` | — |
 

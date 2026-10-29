@@ -3260,33 +3260,51 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             }
         });
 
-        it('serwisant nie może przepisać cudzego zlecenia na siebie i opisać naprawy (403, brak UPDATE), ale może przepisać na innego pracownika w w_realizacji', async () => {
+        it('serwisant może przepisać zgłoszenie w statusie w_realizacji oraz nowe, a następne statusy zwracają 409', async () => {
             allExecutedQueries = [];
-            // Zlecenie przypisane do pracownika ID 1, serwisant ma ID 50 w serwisantToken
+            // 1. Zlecenie w_realizacji przypisane do pracownika ID 1, serwisant ma ID 50 w serwisantToken
             setMockTicket({ id: 1, status: 'w_realizacji', przypisany_pracownik_id: 1 });
 
+            // Bezpośrednia próba opisu cudzego zlecenia bez przepisania zwraca 403
+            const resDirectRepair = await request(app)
+                .patch('/api/zgloszenia/1/naprawione')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ opis_naprawy: 'Próba opisu cudzego zlecenia' });
+            assert.strictEqual(resDirectRepair.status, 403);
+
+            // Serwisant przepisuje zgłoszenie w statusie w_realizacji na siebie (ID 50) -> 200
             const resAssignSelf = await request(app)
                 .patch('/api/zgloszenia/1/przypisz')
                 .set('Authorization', `Bearer ${serwisantToken}`)
                 .send({ pracownik_id: 50 });
-            assert.strictEqual(resAssignSelf.status, 403);
+            assert.strictEqual(resAssignSelf.status, 200);
+            assert.strictEqual(resAssignSelf.body.przypisany_pracownik_id, 50);
 
-            const resRepair = await request(app)
-                .patch('/api/zgloszenia/1/naprawione')
-                .set('Authorization', `Bearer ${serwisantToken}`)
-                .send({ opis_naprawy: 'Próba obejścia zakazu' });
-            assert.strictEqual(resRepair.status, 403);
-
-            const updates = allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia'));
-            assert.strictEqual(updates.length, 0);
-
-            // Natomiast przepięcie na innego pracownika (ID 20 w mockUsers) w w_realizacji przechodzi (np. przy L4/blokadzie)
+            // Serwisant przepisuje zgłoszenie w statusie w_realizacji na innego pracownika (ID 20) -> 200
             const resReassignOther = await request(app)
                 .patch('/api/zgloszenia/1/przypisz')
                 .set('Authorization', `Bearer ${serwisantToken}`)
                 .send({ pracownik_id: 20 });
             assert.strictEqual(resReassignOther.status, 200);
             assert.strictEqual(resReassignOther.body.przypisany_pracownik_id, 20);
+
+            // 2. Zlecenie w statusie nowe (przypisane lub nieprzypisane) -> serwisant może przepisać
+            setMockTicket({ id: 1, status: 'nowe', przypisany_pracownik_id: 1 });
+            const resAssignNowe = await request(app)
+                .patch('/api/zgloszenia/1/przypisz')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ pracownik_id: 50 });
+            assert.strictEqual(resAssignNowe.status, 200);
+            assert.strictEqual(resAssignNowe.body.status, 'w_realizacji');
+            assert.strictEqual(resAssignNowe.body.przypisany_pracownik_id, 50);
+
+            const resAssignNoweOther = await request(app)
+                .patch('/api/zgloszenia/1/przypisz')
+                .set('Authorization', `Bearer ${serwisantToken}`)
+                .send({ pracownik_id: 20 });
+            assert.strictEqual(resAssignNoweOther.status, 200);
+            assert.strictEqual(resAssignNoweOther.body.status, 'w_realizacji');
+            assert.strictEqual(resAssignNoweOther.body.przypisany_pracownik_id, 20);
         });
 
         it('/przypisz na do_wysylki oraz zakończone zwraca 409 i nie wykonuje UPDATE', async () => {
