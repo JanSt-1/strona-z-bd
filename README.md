@@ -21,7 +21,7 @@ Aplikacja jest rozdzielona zgodnie z zasadą separacji odpowiedzialności:
 ## Wymagania wstępne
 
 Przed uruchomieniem projektu upewnij się, że masz zainstalowane:
-- **Node.js** w wersji 20.19+ lub 22.12+ (wymaganie Vite 8; backend z Express 5 działa od Node 18) oraz menedżer pakietów **npm**
+- **Node.js** w wersji **22.12 lub nowszej** (pole `engines` w `package.json`, wersja dla `nvm`/CI w pliku `.nvmrc`; Node 20 nie jest już wspierany) oraz menedżer pakietów **npm**
 - **MySQL** lub **MariaDB** (np. zainstalowany lokalnie serwer MySQL, pakiet XAMPP, Laragon lub kontener Docker)
 
 ---
@@ -174,6 +174,8 @@ Projekt posiada dwa zestawy testów:
    ```
    *Uwaga: Testy integracyjne używają bazy określonej w zmiennej `DB_NAME` (domyślnie `serwis_db_test`). Ze względów bezpieczeństwa skrypt blokuje uruchomienie testów na bazie o nazwie produkcyjnej (`serwis_db`). Testy te są również automatycznie wykonywane w potoku CI (GitHub Actions) z kontenerem MariaDB.*
 
+Szczegółowe reguły biznesowe i bezpieczeństwa, które sprawdzają testy (przejścia statusów, RBAC, CAS / `409`, limity, nagłówki, cache plików statycznych), opisuje [`context.md`](context.md). README opisuje uruchomienie i wdrożenie, `context.md` reguły i API – nie kopiujemy ich między plikami.
+
 ---
 
 ## Interfejs użytkownika (UI/UX) i responsywność
@@ -231,83 +233,6 @@ Frontend aplikacji został zaprojektowany z dbałością o estetykę, czytelnoś
   - Pole jest w 100% opcjonalne (nie każdy klient posiada telefon stacjonarny), a po podaniu jest ściśle walidowane i zapisywane w formacie E.164 (`+48XXXXXXXXX`).
 - **Ochrona przed awariami (`ErrorBoundary`)**:
   - Główny widok aplikacji w `App.jsx` objęty jest komponentem `ErrorBoundary`, który w przypadku nieprzewidzianego błędu w drzewie komponentów wyświetla bezpieczną kartę awaryjną z przyciskami przeładowania i zresetowania sesji zamiast pustego białego ekranu.
-
----
-
-## Testy integracyjne
-
-Projekt posiada rozbudowany zestaw testów integracyjnych weryfikujących poprawność działania kluczowych endpointów API (walidacja pól, autoryzacja JWT, mechanizm logowania, uprawnienia tras RBAC, blokowanie kont, ochrona ról admina oraz zarządzanie hasłami).
-
-Uruchomienie testów:
-```bash
-npm test
-```
-*Skrypt wykonuje polecenie `node --test` z użyciem `supertest`. Dzięki wbudowanemu mockowaniu puli bazy danych w `app.test.js`, testy wykonują się błyskawicznie i nie wymagają aktywnego serwera MySQL (testy z `integration.test.js` są wtedy pomijane).*
-
-Główne grupy przypadków testowych (łącznie **181 testów** w 22 suitach):
-1. **Uwierzytelnianie, logowanie, ochrona Honeypot, klauzula RODO i walidacja zgłoszeń**: walidacja pól obowiązkowych, obsługa opcjonalnego telefonu stacjonarnego (`telefon_stacjonarny` – zapis z prefiksem `+48` po podaniu 9 cyfr, dopuszczenie `null` gdy brak, błąd 400 przy niepoprawnym formacie), obowiązkowy checkbox zgody RODO (odrzucenie 400 przy braku lub false, utrwalenie znacznika czasu w `zgoda_rodo_data` przy akceptacji), ochrona antyspamowa Honeypot (wypełnione pole `website` zwraca 201 bez zapisu do bazy), brak tokenu (401), błędne dane logowania (401), poprawny token JWT (200), blokada nieprawidłowych formatów i dat z przyszłości (400).
-2. **Przejście `nowe` → `w_realizacji`**: automatyczne przypisanie zlecenia, uprawnienia serwisanta i admina (200), blokada pracownika i magazyniera (403).
-3. **Przejście `w_realizacji` → `do_wysylki`**: wyłączność dedykowanego endpointu `/naprawione`, wymóg opisu prac, uprawnienia przypisanego pracownika/serwisanta/admina (200; zatwierdzenie naprawy przez serwisanta automatycznie przypisuje do niego to zlecenie), blokada magazyniera (403) oraz blokada przejścia ze statusu `nowe` (409 Conflict).
-4. **Przejście `do_wysylki` → `zakończone`**: uprawnienia magazyniera i admina, wymóg numeru listu przewozowego (`numer_listu`), walidacja długości (max 100 znaków). Edycja numeru listu wyłącznie przez `PATCH /api/zgloszenia/:id/numer-listu`, który nigdy nie zmienia statusu (admin: `do_wysylki` i `zakończone`, magazynier: tylko `zakończone`, pracownik i serwisant: 403); `/status` odrzuca `numer_listu` poza wysyłką (400).
-5. **Cofanie statusu (Rollback)**: wyłączne prawo administratora do cofania statusu wstecz (200); blokada dla pozostałych ról (403).
-6. **Niedozwolone skoki w przód**: blokowanie pomijania kroków w procesie (409 Conflict) nawet dla administratora.
-7. **Uprawnienia do dedykowanych endpointów (RBAC) oraz parametry listy**: `/przypisz`, `/pracownicy`, `DELETE /api/zgloszenia/:id`, filtrowanie listy zgłoszeń zgodnie z rolą oraz obsługa parametrów query (`?szukaj=`, `?status=`, `?pracownik=`, `?strona=`, `?limit=`, `?sort=`) wyłącznie przez placeholdery `?` w SQL wraz ze zwracaniem metadanych paginacji (`total`, `page`, `limit`, `totalPages`).
-8. **Jednostkowa weryfikacja funkcji `czyMoznaZmienic`**: precyzyjna kontrola macierzy przejść i kodów błędów 409 vs 403.
-9. **Panel administratora – zarządzanie użytkownikami**:
-   - `GET /api/admin/users`: lista kont bez pola `password_hash` (403 dla nie-admina, 200 dla admina).
-   - `POST /api/admin/users`: tworzenie kont przez admina (wymóg hasła min. 8 znaków, login max 50 znaków).
-   - `PATCH /api/admin/users/:id`: zmiana roli (zabezpieczenie: admin nie może odebrać roli admina samemu sobie – 400).
-   - `PATCH /api/admin/users/:id/haslo`: ustawienie nowego hasła przez admina (wymóg min. 8 znaków).
-   - `PATCH /api/admin/users/:id/status` (oraz `/aktywny`): przełączanie blokady konta (zabezpieczenie: admin nie może zablokować samego siebie – 400).
-   - Blokada logowania dla nieaktywnych kont (`aktywny = FALSE` -> 403).
-   - `authenticateToken`: pobieranie aktualnej roli z bazy danych (unieważnia spreparowaną rolę w tokenie) oraz odrzucanie nieistniejących lub zablokowanych użytkowników (401).
-10. **Zmiana własnego hasła użytkownika (`PATCH /api/profil/haslo`)**:
-    - Dostępne dla każdego zalogowanego użytkownika.
-    - Wymaga podania dotychczasowego hasła (weryfikacja `bcrypt`) oraz nowego hasła o długości min. 8 znaków.
-    - Zwraca 400 przy błędnym haśle lub zbyt krótkim nowym haśle; 200 po udanej zmianie.
-11. **Historia zgłoszeń (`historia_zgloszen` i endpoint `GET /api/zgloszenia/:id/historia`)**:
-    - Tabela audytowa przechowująca pełną historię zmian (`zgloszenie_id`, `uzytkownik_id`, `akcja`, `z_statusu`, `na_status`, `szczegoly`, `created_at`).
-    - Automatyczne wywoływanie funkcji pomocniczej `dodajWpisHistorii` przy każdej akcji: utworzenie zgłoszenia (`utworzenie`), przypisanie pracownika (`przypisanie`), zatwierdzenie naprawy (`naprawa`), wysyłka (`wysyłka`), aktualizacja numeru listu (`zmiana_numeru_listu`), zmiana / cofnięcie statusu (`zmiana_statusu`).
-    - Usunięcie zgłoszenia (`DELETE /api/zgloszenia/:id`) trwale zapisuje wpis `usunięcie` z informacją o usuwającym (np. `Wpis usunięty przez admin`), a brak kaskadowego usuwania na kluczu obcym w `historia_zgloszen` gwarantuje zachowanie pełnej historii po usunięciu zgłoszenia.
-12. **Szczegóły zgłoszenia (`GET /api/zgloszenia/:id`) oraz czyszczenie etapów przy cofaniu statusu**:
-    - Pobieranie pełnych danych zgłoszenia wraz z powiązaną historią audytową. Egzekwowanie uprawnień RBAC (pracownik widzi tylko swoje, magazynier tylko `do_wysylki` i `zakończone`, admin/serwisant wszystkie).
-    - Przy cofaniu statusu wstecz (przez administratora) automatyczne czyszczenie danych późniejszych etapów:
-      - cofnięcie przed `zakończone` resetuje `data_wyslania = NULL` oraz `numer_listu = NULL`,
-      - cofnięcie przed `do_wysylki` resetuje `opis_naprawy = NULL` oraz `opis_naprawy_data = NULL`, a poprzednia treść naprawy jest bezpiecznie utrwalana w historii zdarzeń,
-      - cofnięcie do `nowe` resetuje `przypisany_pracownik_id = NULL`, a poprzednio przypisany pracownik jest zapisywany w historii zdarzeń.
-13. **Rate limiting (`POST /api/zgloszenia` oraz `POST /api/login`)**:
-    - Pomijany w środowisku testowym (`skip: () => process.env.NODE_ENV === 'test'`).
-    - Ograniczenie do 5 zgłoszeń na godzinę z jednego IP na `POST /api/zgloszenia` (oraz 10 prób / 15 min na `POST /api/login`).
-    - Blokowanie nadmiarowych zapytań z kodem HTTP 429 Too Many Requests i czytelnym komunikatem błędu w języku polskim.
-14. **Limit rozmiaru ciała żądania JSON (`express.json limit: 70kb`)**:
-    - Jawnie skonfigurowany limit `express.json({ limit: '70kb' })` chroniący przed zbyt dużym payloadem oraz limity znaków dla pól tekstowych (`opis_usterki` i `opis_naprawy` do 5000 znaków, `adres` do 500 znaków), gwarantujące brak przekroczenia 65 535 bajtów kolumny `TEXT` przy wielobajtowych znakach UTF-8 (`utf8mb4`).
-    - Zgłoszenie z maksymalnym dozwolonym opisem (5000 znaków) mieści się w limicie i zwraca 201 Created.
-    - Żądania przekraczające limit (np. 80KB) zwracają status 413 Payload Too Large z czytelnym komunikatem JSON.
-    - Błędnie sformatowane JSON-y zwracają status 400 Bad Request.
-15. **Nagłówki bezpieczeństwa HTTP (`helmet`)**:
-    - Zabezpieczenie serwera Express za pomocą biblioteki `helmet` z własną polityką `contentSecurityPolicy` (`default-src 'self'`, skrypty wyłącznie z `'self'`, style i fonty dodatkowo z Google Fonts, `object-src 'none'`, `frame-ancestors 'self'`). Frontend kompilowany jest z wyprzedzeniem przez Vite (brak Babel Standalone w przeglądarce).
-    - Aktywne nagłówki ochronne: `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Strict-Transport-Security`, `X-Download-Options: noopen`, `X-Permitted-Cross-Domain-Policies: none`.
-16. **Endpoint `/api/health` (bezpieczny health check)**:
-    - Weryfikacja działania bazy danych (`SELECT 1`).
-    - Sukces zwraca kod HTTP 200 oraz ciało `{ status: "ok" }`.
-    - Awaria bazy danych zwraca kod HTTP 500 oraz ciało `{ status: "error" }` bez ujawniania `err.message` i konfiguracji na zewnątrz.
-    - Pełne szczegóły błędu logowane są wewnętrznie do `console.error`.
-17. **Cache-Control dla plików statycznych (`express.static`)**:
-    - `index.html`: nagłówek `Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate`, `Pragma: no-cache`, `Expires: 0` – wymusza pobieranie zawsze świeżego punktu wejścia SPA przy każdym wejściu użytkownika.
-    - Pliki z buildu z hashem w nazwie (np. `bundle.a1b2c3d4.js`, `style-D7x2v_4z.css`): długie cache'owanie `Cache-Control: public, max-age=31536000, immutable` (1 rok), eliminujące ponowne pobieranie niezmienionych assetów produkcyjnych.
-    - Pozostałe pliki statyczne bez hasha (np. `logo_mentor4.svg`): standardowe cache'owanie (`public, max-age=86400`) bez flagi `no-store`.
-18. **Konfiguracja adresu nasłuchiwania (`HOST`)**:
-    - Domyślne bindowanie serwera wyłącznie do `127.0.0.1` (bezpieczne uruchomienie za Reverse Proxy), z możliwością jawnego ustawienia `HOST=0.0.0.0`.
-19. **Walidacja bezpieczeństwa sekretu JWT (`JWT_SECRET`)**:
-    - Blokada startu serwera w przypadku braku `JWT_SECRET`, użycia wartości szablonowych (`wygeneruj_wlasny`, `twoj_klucz_jtw`) lub klucza krótszego niż 32 znaki.
-20. **Bezpieczne logowanie błędów bez danych osobowych (RODO/GDPR)**:
-    - Funkcja `logError` loguje wyłącznie `err.code` oraz `err.message`, nigdy nie wypisując `err.sql` ani `err.sqlMessage` zawierających dane osobowe klientów.
-21. **Transakcje bazodanowe, ochrona przed wyścigami (CAS / `409 Conflict`), pełna historia (`MEDIUMTEXT`) oraz ścisłe reguły `/przypisz` i `/naprawione`**:
-    - Atomowe transakcje (`beginTransaction` -> `commit` / `rollback`) dla każdej zmiany zlecenia i wpisu w `historia_zgloszen` (błąd zapisu historii wycofuje zmianę zlecenia i zwraca `500`).
-    - Warunkowe zapytania `UPDATE ... WHERE id = ? AND status = ?` (Compare-And-Swap) zwracające `409 Conflict` przy równoległej modyfikacji zlecenia (np. ochrona przed podwójną wysyłką).
-    - Kolumna `historia_zgloszen.szczegoly` (`MEDIUMTEXT`) mieści pełny opis naprawy (limit 5000 znaków w `/naprawione`) wraz z prefiksem oraz dłuższą treść zapisaną wcześniej w `zgloszenia.opis_naprawy` (do 65 000 znaków) przy cofaniu statusu – bez obcinania i bez cichego gubienia wpisów historii.
-    - Weryfikacja `canViewTicket` jako pierwszego kroku w `/status`, `/naprawione` i `/przypisz` (brak wycieku statusu cudzych zleceń).
-    - Ograniczenie `/naprawione` wyłącznie do statusu `w_realizacji` (`409` na innych statusach) i ról `admin`, `serwisant`, `pracownik` (`403` dla magazyniera) oraz `/przypisz` wyłącznie do statusów `nowe` i `w_realizacji` (`409` na późniejszych etapach).
 
 ---
 
@@ -378,7 +303,7 @@ Niniejsza instrukcja krok po kroku opisuje uruchomienie aplikacji na zewnętrzny
 
 - **System operacyjny:** Linux (zalecany Ubuntu 22.04 LTS / 24.04 LTS lub Debian 12).
 - **Zasoby sprzętowe:** min. 1 vCPU, 1–2 GB RAM, dysk SSD (wielkość zależna od liczby zgłoszeń i retencji kopii zapasowych).
-- **Środowisko uruchomieniowe:** Node.js (wersja 20 LTS lub 22 LTS) oraz menedżer pakietów `npm`.
+- **Środowisko uruchomieniowe:** Node.js 22 LTS (min. 22.12, zgodnie z `.nvmrc`) lub nowszy LTS oraz menedżer pakietów `npm`.
 - **Baza danych:** MySQL 8.0+ lub MariaDB 10.6+ zainstalowana lokalnie na serwerze.
 - **Oprogramowanie pomocnicze:**
   - Menedżer procesów: `pm2` lub wbudowany `systemd`.
@@ -829,15 +754,15 @@ W przypadku awarii, uszkodzenia danych lub migracji na nowy serwer wykonaj poni�
 7. **Sprawdź logi aplikacji i health check:**
    ```bash
    # Test endpointu health check
-   curl -I http://127.0.0.1:3000/api/health
-   # Oczekiwany wynik: HTTP/1.1 200 OK {"status":"ok"}
+   curl -i http://127.0.0.1:3000/api/health
+   # Oczekiwany wynik: HTTP/1.1 200 OK (nagłówki), a w treści {"status":"ok"}
    ```
 
 ---
 
 ### Podsumowanie checklisty wdrożeniowej
 
-- [ ] Zainstalowano Node.js (v20+), MySQL 8+ oraz Nginx/Caddy.
+- [ ] Zainstalowano Node.js (v22.12+), MySQL 8+ oraz Nginx/Caddy.
 - [ ] Utworzono użytkownika systemowego `serwis` i pobrano aplikację do `/var/www/serwis`.
 - [ ] Zainstalowano zależności projektu (`npm ci`) oraz zbudowano zoptymalizowany frontend do `frontend/dist/` (`npm run build`).
 - [ ] Utworzono plik `.env` z `NODE_ENV=production` oraz bezpiecznym `JWT_SECRET`.

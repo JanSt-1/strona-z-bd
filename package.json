@@ -4,6 +4,9 @@
   "main": "index.js",
   "license": "ISC",
   "type": "commonjs",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "workspaces": [
     "frontend"
   ],

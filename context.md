@@ -16,7 +16,7 @@ strona_z_bd/
 ├── migrations/              # SQL migrations (001_init.sql, 002_aktualizacja_kolumn_i_indeksow.sql, 003_historia_szczegoly_mediumtext.sql)
 ├── jwt-validation.js        # validateJwtSecret + INSECURE_JWT_SECRETS (used by index.js, re-exported as app.validateJwtSecret)
 ├── index.js                 # Server entrypoint: .env & JWT_SECRET validation, DB connection & pending migrations check, app.listen(PORT, HOST)
-├── app.test.js              # Unit & integration tests (node:test + supertest, 181 tests in 22 suites, mocked DB via app.setPool())
+├── app.test.js              # Unit & integration tests (node:test + supertest, mocked DB via app.setPool())
 ├── integration.test.js      # Real MySQL/MariaDB integration & concurrency tests (`npm run test:db` on serwis_db_test)
 ├── schemat.sql              # Current full MySQL schema (tables: uzytkownicy, zgloszenia, historia_zgloszen)
 ├── seed.js                  # DB initialization & migration runner (`npm run seed`)
@@ -142,7 +142,7 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
 npm install                                # Install root + frontend workspace dependencies
 npm run build                              # Build Vite SPA into frontend/dist/
 npm run lint                               # Run oxlint on frontend/src/
-npm test                                   # node --test: runs all *.test.js (181 mocked tests in app.test.js; integration.test.js is skipped when no DB is reachable)
+npm test                                   # node --test: runs all *.test.js (mocked tests in app.test.js; integration.test.js is skipped when no DB is reachable)
 npm run test:db                            # Run real MySQL/MariaDB tests (integration.test.js on serwis_db_test)
 npm run migrate                            # Apply pending SQL migrations from migrations/
 npm run seed && npm run config:testowy     # Initialize schema, 4 test accounts (pass: admin123) & 200 'nowe' tickets
@@ -155,3 +155,4 @@ npm start                                  # Start production server on HOST:POR
 3. **401 vs 403 & `canViewTicket` First:** `401` = authentication failure (triggers auto-logout on frontend via `onUnauthorized`). `403` = insufficient RBAC permissions or blocked account on login. In `/przypisz`, `/naprawione`, and `/status`, always check `canViewTicket(req.user, ticket)` immediately after loading the ticket so unauthorized users never receive status information in `200`/`403`/`409` responses.
 4. **Transactions & Optimistic Locking (CAS):** All ticket mutations + `dodajWpisHistorii` must run inside a single DB transaction (`getTransactionConnection()`) and verify `affectedRows > 0` on `WHERE id = ? AND status = ?` (returning `409 Conflict` on concurrent modification).
 5. **Strict Validation & Type Safety:** Keep all regexes, field length checks, calendar date validation (`validatePurchaseDate`), strict integer ID parsing (`parsePositiveInt` requiring `/^\d+$/`), boolean coercion guard (`isUserActive`), and password length checks (min 8 chars, max 72 bytes — bcrypt limit; passwords are not trimmed, whitespace-only passwords are rejected) intact.
+6. **Static Asset Caching (`express.static` in `app.js`):** `index.html` is served with `Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate` (+ `Pragma: no-cache`, `Expires: 0`) so every visit loads the current SPA entry point; Vite files with a content hash in the name (`isHashedFile`) get `public, max-age=31536000, immutable`; other static files (e.g. `logo_mentor4.svg`) get `public, max-age=86400`.
