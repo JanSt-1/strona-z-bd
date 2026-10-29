@@ -790,14 +790,15 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             );
         });
 
-        it('Magazynier może zaktualizować numer_listu na zgłoszeniu już zakończonym (200)', async () => {
+        it('Magazynier może zaktualizować numer_listu na zgłoszeniu już zakończonym przez /numer-listu (200)', async () => {
             setMockTicket({ status: 'zakończone' });
             const response = await request(app)
-                .patch('/api/zgloszenia/1/status')
+                .patch('/api/zgloszenia/1/numer-listu')
                 .set('Authorization', `Bearer ${magazynierToken}`)
-                .send({ status: 'zakończone', numer_listu: 'DPD-NEW-12345' });
+                .send({ numer_listu: 'DPD-NEW-12345' });
             assert.strictEqual(response.status, 200);
             assert.strictEqual(response.body.numer_listu, 'DPD-NEW-12345');
+            assert.strictEqual(response.body.status, 'zakończone');
         });
 
         it('Admin może oznaczyć jako zakończone ze statusu do_wysylki (200)', async () => {
@@ -1241,7 +1242,9 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(mWysylka[0].typ, 'wysylka');
             assert.strictEqual(mWysylka[0].etykieta, 'Oznacz jako wysłane');
             assert.strictEqual(mWysylka[0].na_status, 'zakończone');
-            assert.deepStrictEqual(wyznacz(magazynier, { id: 1, status: 'zakończone' }), []);
+            assert.deepStrictEqual(wyznacz(magazynier, { id: 1, status: 'zakończone' }), [
+                { akcja: 'edytuj_numer_listu', na_status: 'zakończone', etykieta: 'Edytuj numer listu', typ: 'numer_listu' }
+            ]);
 
             // 4. Rola: ADMIN (zawiera akcje w przód oraz cofanie do wcześniejszych etapów)
             const aNowe = wyznacz(admin, { id: 1, status: 'nowe' });
@@ -1257,14 +1260,18 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(aRealizacji.some(a => a.typ === 'naprawa' && a.na_status === 'do_wysylki'), true);
 
             const aWysylka = wyznacz(admin, { id: 1, status: 'do_wysylki' });
-            assert.strictEqual(aWysylka.length, 3);
+            assert.strictEqual(aWysylka.length, 4);
+            assert.strictEqual(aWysylka.some(a => a.akcja === 'edytuj_numer_listu' && a.na_status === 'do_wysylki'), true);
             assert.strictEqual(aWysylka.some(a => a.typ === 'cofnij' && a.na_status === 'nowe'), true);
             assert.strictEqual(aWysylka.some(a => a.typ === 'cofnij' && a.na_status === 'w_realizacji'), true);
             assert.strictEqual(aWysylka.some(a => a.typ === 'wysylka' && a.na_status === 'zakończone'), true);
 
             const aZakonczone = wyznacz(admin, { id: 1, status: 'zakończone' });
-            assert.strictEqual(aZakonczone.length, 3);
-            assert.strictEqual(aZakonczone.every(a => a.typ === 'cofnij'), true);
+            assert.strictEqual(aZakonczone.length, 4);
+            assert.strictEqual(aZakonczone.filter(a => a.typ === 'cofnij').length, 3);
+            assert.strictEqual(aZakonczone.some(a => a.akcja === 'edytuj_numer_listu' && a.na_status === 'zakończone'), true);
+            assert.strictEqual(aNowe.some(a => a.akcja === 'edytuj_numer_listu'), false);
+            assert.strictEqual(aRealizacji.some(a => a.akcja === 'edytuj_numer_listu'), false);
         });
 
         it('GET /api/zgloszenia i GET /api/zgloszenia/:id zwracają dozwolone_akcje obliczone per rola', async () => {
@@ -1774,9 +1781,9 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
         it('Aktualizacja samego numeru listu na statusie "zakończone" zapisuje wpis "zmiana_numeru_listu"', async () => {
             setMockTicket({ status: 'zakończone', numer_listu: 'DPD-OLD' });
             const resp = await request(app)
-                .patch('/api/zgloszenia/1/status')
+                .patch('/api/zgloszenia/1/numer-listu')
                 .set('Authorization', `Bearer ${magazynierToken}`)
-                .send({ status: 'zakończone', numer_listu: 'DPD-NEW-999' });
+                .send({ numer_listu: 'DPD-NEW-999' });
 
             assert.strictEqual(resp.status, 200);
             const historyInsert = allExecutedQueries.find(q => q.sql.includes('INSERT INTO historia_zgloszen'));
@@ -3403,6 +3410,115 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
 
             const statusControlJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'StatusControl.jsx'), 'utf8');
             assert.ok(statusControlJsx.includes("assignAction?.etykieta || (curStatus === 'w_realizacji' ? 'Zmień przypisanie' : 'Przypisz')"));
+        });
+
+        it('PATCH /numer-listu na do_wysylki i zakończone (admin) nie zmienia statusu i zapisuje tylko "zmiana_numeru_listu"', async () => {
+            for (const status of ['do_wysylki', 'zakończone']) {
+                allExecutedQueries = [];
+                setMockTicket({ id: 1, status, przypisany_pracownik_id: 1, numer_listu: 'DPD-OLD' });
+                const res = await request(app)
+                    .patch('/api/zgloszenia/1/numer-listu')
+                    .set('Authorization', `Bearer ${adminToken}`)
+                    .send({ numer_listu: '  DPD-POPRAWIONY  ' });
+                assert.strictEqual(res.status, 200, `Oczekiwano 200 na statusie ${status}`);
+                assert.strictEqual(res.body.status, status);
+                assert.strictEqual(res.body.numer_listu, 'DPD-POPRAWIONY');
+
+                const updates = allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia'));
+                assert.strictEqual(updates.length, 1);
+                assert.ok(updates[0].sql.includes('SET numer_listu = ? WHERE id = ? AND status = ?'));
+                assert.strictEqual(updates[0].sql.split('WHERE')[0].includes('status'), false, 'Edycja numeru listu nie może zmieniać statusu');
+                assert.deepStrictEqual(updates[0].values, ['DPD-POPRAWIONY', 1, status]);
+
+                const history = allExecutedQueries.filter(q => q.sql.includes('INSERT INTO historia_zgloszen'));
+                assert.strictEqual(history.length, 1);
+                assert.strictEqual(history[0].values[2], 'zmiana_numeru_listu');
+                assert.strictEqual(history[0].values[3], status);
+                assert.strictEqual(history[0].values[4], status);
+            }
+        });
+
+        it('PATCH /numer-listu: pracownik i serwisant -> 403, magazynier na do_wysylki -> 403, admin przed do_wysylki -> 409; bez UPDATE', async () => {
+            const cases = [
+                { token: pracownikToken, status: 'zakończone', expected: 403 },
+                { token: serwisantToken, status: 'zakończone', expected: 403 },
+                { token: pracownikToken, status: 'do_wysylki', expected: 403 },
+                { token: serwisantToken, status: 'do_wysylki', expected: 403 },
+                { token: magazynierToken, status: 'do_wysylki', expected: 403 },
+                { token: adminToken, status: 'nowe', expected: 409 },
+                { token: adminToken, status: 'w_realizacji', expected: 409 }
+            ];
+            for (const c of cases) {
+                allExecutedQueries = [];
+                setMockTicket({ id: 1, status: c.status, przypisany_pracownik_id: 1 });
+                const res = await request(app)
+                    .patch('/api/zgloszenia/1/numer-listu')
+                    .set('Authorization', `Bearer ${c.token}`)
+                    .send({ numer_listu: 'DPD-1' });
+                assert.strictEqual(res.status, c.expected, `Oczekiwano ${c.expected} na statusie ${c.status}`);
+                assert.strictEqual(allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia')).length, 0);
+            }
+        });
+
+        it('PATCH /numer-listu: magazynier na niewidocznym zleceniu dostaje 403 bez statusu, a pusty numer na zakończonym -> 400', async () => {
+            setMockTicket({ id: 1, status: 'nowe', przypisany_pracownik_id: null });
+            const resHidden = await request(app)
+                .patch('/api/zgloszenia/1/numer-listu')
+                .set('Authorization', `Bearer ${magazynierToken}`)
+                .send({ numer_listu: 'DPD-1' });
+            assert.strictEqual(resHidden.status, 403);
+            assert.strictEqual(resHidden.body.error.includes('nowe'), false);
+
+            allExecutedQueries = [];
+            setMockTicket({ id: 1, status: 'zakończone', numer_listu: 'DPD-OLD' });
+            const resEmpty = await request(app)
+                .patch('/api/zgloszenia/1/numer-listu')
+                .set('Authorization', `Bearer ${magazynierToken}`)
+                .send({ numer_listu: '   ' });
+            assert.strictEqual(resEmpty.status, 400);
+            assert.strictEqual(allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia')).length, 0);
+
+            const resMissing = await request(app)
+                .patch('/api/zgloszenia/1/numer-listu')
+                .set('Authorization', `Bearer ${adminToken}`)
+                .send({});
+            assert.strictEqual(resMissing.status, 400);
+        });
+
+        it('/status nie przyjmuje numer_listu poza wysyłką (ten sam status ani cofnięcie) -> 400 bez UPDATE', async () => {
+            const cases = [
+                { token: adminToken, current: 'zakończone', body: { status: 'zakończone', numer_listu: 'DPD-1' } },
+                { token: magazynierToken, current: 'zakończone', body: { status: 'zakończone', numer_listu: 'DPD-1' } },
+                { token: adminToken, current: 'do_wysylki', body: { status: 'do_wysylki', numer_listu: 'DPD-1' } },
+                { token: adminToken, current: 'zakończone', body: { status: 'do_wysylki', numer_listu: 'DPD-1' } }
+            ];
+            for (const c of cases) {
+                allExecutedQueries = [];
+                setMockTicket({ id: 1, status: c.current, przypisany_pracownik_id: 1 });
+                const res = await request(app)
+                    .patch('/api/zgloszenia/1/status')
+                    .set('Authorization', `Bearer ${c.token}`)
+                    .send(c.body);
+                assert.strictEqual(res.status, 400, `Oczekiwano 400 dla ${JSON.stringify(c.body)} na ${c.current}`);
+                assert.ok(res.body.error.includes('/numer-listu'));
+                assert.strictEqual(allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia')).length, 0);
+            }
+        });
+
+        it('panel zapisuje numer listu przez /numer-listu bez statusu, a przycisk "Edytuj" bierze się z dozwolone_akcje (także dla magazyniera)', () => {
+            const mAkcje = app.wyznaczDozwoloneAkcje({ id: 2, role: 'magazynier' }, { id: 1, status: 'zakończone' });
+            assert.ok(mAkcje.some(a => a.akcja === 'edytuj_numer_listu'));
+
+            const apiJs = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'api.js'), 'utf8');
+            assert.ok(apiJs.includes('/numer-listu'));
+            assert.ok(/saveTrackingNumber\(ticketId, numerListu\)/.test(apiJs), 'saveTrackingNumber nie może przyjmować statusu');
+
+            const dashboardJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'Dashboard.jsx'), 'utf8');
+            assert.strictEqual(dashboardJsx.includes("|| 'zakończone'"), false, 'Dashboard nie może zgadywać statusu przy zapisie numeru listu');
+
+            const drawerJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'TicketDetailsDrawer.jsx'), 'utf8');
+            assert.ok(drawerJsx.includes('trackingAction'));
+            assert.strictEqual(drawerJsx.includes("user?.role === 'admin' && onOpenTrackingModal"), false);
         });
     });
 });

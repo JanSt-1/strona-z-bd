@@ -16,7 +16,7 @@ strona_z_bd/
 ├── migrations/              # SQL migrations (001_init.sql, 002_aktualizacja_kolumn_i_indeksow.sql, 003_historia_szczegoly_mediumtext.sql)
 ├── jwt-validation.js        # validateJwtSecret + INSECURE_JWT_SECRETS (used by index.js, re-exported as app.validateJwtSecret)
 ├── index.js                 # Server entrypoint: .env & JWT_SECRET validation, DB connection & pending migrations check, app.listen(PORT, HOST)
-├── app.test.js              # Unit & integration tests (node:test + supertest, 174 tests in 22 suites, mocked DB via app.setPool())
+├── app.test.js              # Unit & integration tests (node:test + supertest, 179 tests in 22 suites, mocked DB via app.setPool())
 ├── integration.test.js      # Real MySQL/MariaDB integration & concurrency tests (`npm run test:db` on serwis_db_test)
 ├── schemat.sql              # Current full MySQL schema (tables: uzytkownicy, zgloszenia, historia_zgloszen)
 ├── seed.js                  # DB initialization & migration runner (`npm run seed`)
@@ -81,10 +81,10 @@ const PRZEJSCIA = {
 ### Role Permissions Matrix
 | Role | Ticket Visibility (`canViewTicket`) | Assign Worker (`/przypisz`) | Status / Repair Actions | Other Permissions |
 | :--- | :--- | :--- | :--- | :--- |
-| **`admin`** | All tickets | Yes (`pracownik`, `serwisant`; only in `nowe` and `w_realizacji`, otherwise `409`) | All forward transitions + **exclusive rollback rights** + edit `numer_listu` on any status | `DELETE /api/zgloszenia/:id`, full user management (`/api/admin/users*`) |
+| **`admin`** | All tickets | Yes (`pracownik`, `serwisant`; only in `nowe` and `w_realizacji`, otherwise `409`) | All forward transitions + **exclusive rollback rights** + edit `numer_listu` on `do_wysylki` and `zakończone` (`/numer-listu`) | `DELETE /api/zgloszenia/:id`, full user management (`/api/admin/users*`) |
 | **`serwisant`** | All tickets | Yes (`pracownik`, `serwisant` in `nowe` and `w_realizacji`, otherwise `409`; auto `nowe` → `w_realizacji`). Can reassign another worker's ticket to a different worker (e.g. sick leave / blocked account), **but cannot reassign another worker's ticket to self or unassign it (`403`)** — this closes the `/przypisz` → `/naprawione` bypass. Later statuses return `409 Conflict`. | `w_realizacji` → `do_wysylki` via `/naprawione` **only for own or unassigned tickets** (`403` if assigned to someone else) | — |
 | **`pracownik`** | **Only assigned to self** | No | `w_realizacji` → `do_wysylki` via `/naprawione` (own tickets only) | — |
-| **`magazynier`** | **Only `do_wysylki` & `zakończone`** | No | `do_wysylki` → `zakończone` (requires `numer_listu`) + edit `numer_listu` on `zakończone` | — |
+| **`magazynier`** | **Only `do_wysylki` & `zakończone`** | No | `do_wysylki` → `zakończone` (requires `numer_listu`) + edit `numer_listu` on `zakończone` (`/numer-listu`; `403` on `do_wysylki`, where the number is given when shipping) | — |
 
 ---
 
@@ -102,7 +102,8 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
 | `GET` | `/api/zgloszenia/:id/historia` | JWT (any role) | Chronological audit history for ticket `:id`. Protected by `canViewTicket(req.user, ticket)` (`404` / `403`). |
 | `PATCH` | `/api/zgloszenia/:id/przypisz` | JWT (`admin`, `serwisant`) | Assign/unassign worker (`{ pracownik_id }`). Checked by `canViewTicket` first. Allowed only in `nowe` and `w_realizacji` (`409` on `do_wysylki` / `zakończone`). Target must be active `pracownik` or `serwisant` (`400` otherwise). Unassigning (`pracownik_id: null`) on `nowe` or already unassigned tickets returns `400`. `serwisant` can reassign another worker's ticket to a different worker, **but is forbidden (`403`) from reassigning another worker's ticket to self or unassigning it** (preventing bypass of the `/naprawione` restriction). Updates `przypisany_pracownik_id` without overwriting `status`, guarded by CAS `WHERE id = ? AND status = ? AND przypisany_pracownik_id <=> ?` (`409` if the status or the previous assignee changed concurrently), then conditionally transitions `nowe` → `w_realizacji` (`WHERE id = ? AND status = 'nowe'`) inside a transaction. |
 | `PATCH` | `/api/zgloszenia/:id/naprawione` | JWT (`pracownik`, `serwisant`, `admin`) | **Only forward path to `do_wysylki`**. Enforced by `requireRoles('admin', 'serwisant', 'pracownik')`, `canViewTicket` first, and hard condition `ticket.status === 'w_realizacji'` (`409` on `nowe`, `do_wysylki`, `zakończone`). Requires non-empty `opis_naprawy` (max 5,000 chars). Blocks `pracownik` on others' tickets (`403`) and `serwisant` on tickets assigned to another worker (`403`). Runs `UPDATE ... WHERE id = ? AND status = ?` + `dodajWpisHistorii` in a transaction (`409` if `affectedRows === 0`). |
-| `PATCH/PUT` | `/api/zgloszenia/:id/status` | JWT (RBAC) | Checked by `canViewTicket` first (preventing status leaks on unauthorized tickets). Status change per `czyMoznaZmienic` (blocks forward `do_wysylki` with `400`). Handles admin rollbacks (clearing `data_wyslania`/`numer_listu` before `zakończone`, `opis_naprawy`/`opis_naprawy_data` before `do_wysylki`, and `przypisany_pracownik_id` on `nowe`) and `numer_listu` updates (max 100 chars). Runs `UPDATE ... WHERE id = ? AND status = ?` + `dodajWpisHistorii` in a transaction (`409` if `affectedRows === 0`). |
+| `PATCH/PUT` | `/api/zgloszenia/:id/status` | JWT (RBAC) | Checked by `canViewTicket` first (preventing status leaks on unauthorized tickets). Status change per `czyMoznaZmienic` (blocks forward `do_wysylki` with `400`). Handles admin rollbacks (clearing `data_wyslania`/`numer_listu` before `zakończone`, `opis_naprawy`/`opis_naprawy_data` before `do_wysylki`, and `przypisany_pracownik_id` on `nowe`). Accepts `numer_listu` (max 100 chars) **only when shipping (`→ zakończone`)**; any other request carrying `numer_listu` (same status, rollback) returns `400` — editing the number goes through `/numer-listu`, so a stale status in the UI can never turn a tracking-number fix into a status change. Runs `UPDATE ... WHERE id = ? AND status = ?` + `dodajWpisHistorii` in a transaction (`409` if `affectedRows === 0`). |
+| `PATCH` | `/api/zgloszenia/:id/numer-listu` | JWT (`admin`, `magazynier`) | Edit tracking number (`{ numer_listu }`, required key, max 100 chars, trimmed; `null`/empty clears it for `admin` only). **Never changes `status`.** Checked by `canViewTicket` first. Allowed statuses from `NUMER_LISTU_EDYCJA`: `admin` → `do_wysylki`, `zakończone` (`409` otherwise); `magazynier` → `zakończone` only (`403` on `do_wysylki`). Runs `UPDATE zgloszenia SET numer_listu = ? WHERE id = ? AND status = ?` + `zmiana_numeru_listu` history entry in a transaction (`409` on CAS conflict). |
 | `DELETE` | `/api/zgloszenia/:id` | JWT (`admin`) | Logs `usunięcie` to `historia_zgloszen` and executes `DELETE FROM zgloszenia WHERE id = ?` inside a single transaction (`409` if `affectedRows === 0`, rolling back the history entry on failure). |
 | `GET` | `/api/admin/users` | JWT (`admin`) | Lists users (`id, username, role, aktywny, created_at`) **without `password_hash`**. |
 | `POST` | `/api/admin/users` | JWT (`admin`) | Create user (`username` max 50, `password` min 8 chars / max 72 bytes, whitespace-only rejected, `role` in `ALLOWED_ROLES`). Bcrypt salt 10. `409` on duplicate username. |
@@ -116,7 +117,7 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
 
 ## 5. Frontend SPA (`frontend/src/`)
 
-- **Single Source of Truth for Actions:** Backend computes `ticket.dozwolone_akcje` via `wyznaczDozwoloneAkcje`. `StatusControl.jsx` (used both in `Dashboard.jsx` and `TicketDetailsDrawer.jsx`) and `constants.js` (`getTicketActionState`) derive `isAssignAction`, `isRepairAction`, `isShipAction`, and `rollbackActions` directly from `dozwolone_akcje` (rendering `"Przypisz"` in `nowe` and `"Zmień przypisanie"` in `w_realizacji` alongside `"Oznacz jako naprawione"`).
+- **Single Source of Truth for Actions:** Backend computes `ticket.dozwolone_akcje` via `wyznaczDozwoloneAkcje`. `StatusControl.jsx` (used both in `Dashboard.jsx` and `TicketDetailsDrawer.jsx`) and `constants.js` (`getTicketActionState`) derive `isAssignAction`, `isRepairAction`, `isShipAction`, `rollbackActions`, and `trackingAction` (`akcja: 'edytuj_numer_listu'`, drives the "✏ Edytuj" tracking-number button in `TicketDetailsDrawer.jsx`) directly from `dozwolone_akcje` (rendering `"Przypisz"` in `nowe` and `"Zmień przypisanie"` in `w_realizacji` alongside `"Oznacz jako naprawione"`).
 - **Key Components (`frontend/src/components/`):**
   - `Modal.jsx`: Shared portal modal base (`createPortal`, `Escape` key via a `keydown` listener, scroll lock, `.modal-card` using `100dvh` for mobile Safari compatibility).
   - `PasswordModal.jsx`: Unified modal for own password change (`userToEdit = null`) and admin password reset (`userToEdit = user`).
@@ -141,7 +142,7 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
 npm install                                # Install root + frontend workspace dependencies
 npm run build                              # Build Vite SPA into frontend/dist/
 npm run lint                               # Run oxlint on frontend/src/
-npm test                                   # node --test: runs all *.test.js (174 mocked tests in app.test.js; integration.test.js is skipped when no DB is reachable)
+npm test                                   # node --test: runs all *.test.js (179 mocked tests in app.test.js; integration.test.js is skipped when no DB is reachable)
 npm run test:db                            # Run real MySQL/MariaDB tests (integration.test.js on serwis_db_test)
 npm run migrate                            # Apply pending SQL migrations from migrations/
 npm run seed && npm run config:testowy     # Initialize schema, 4 test accounts (pass: admin123) & 200 'nowe' tickets

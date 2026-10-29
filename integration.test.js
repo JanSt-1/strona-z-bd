@@ -96,6 +96,10 @@ const makeToken = (role, id = 1, username = 'test_user') =>
             if (dbConnection) {
                 dbConnection.release();
             }
+            // Bez zamknięcia puli proces testowy nigdy się nie kończy (npm test / CI wiszą w nieskończoność)
+            if (pool) {
+                await pool.end();
+            }
         });
 
         it('1. Migracje: tabela schema_migrations zawiera wszystkie zaaplikowane wersje', async () => {
@@ -133,14 +137,14 @@ const makeToken = (role, id = 1, username = 'test_user') =>
                 adres: 'ul. Marszałkowska 10/2',
                 kod_pocztowy: '00-001',
                 miasto: 'Warszawa',
-                numer_telefonu: '500600700',
+                numer_telefonu: '+48500600700',
                 telefon_stacjonarny: '228889900',
                 email: 'jan@kowalski.pl',
-                opis_usterki: 'Laptop wyłącza się pod obciążeniem po 5 minutach pracy.',
+                opis_usterki: 'Monitor wyłącza się pod obciążeniem po 5 minutach pracy.',
                 numer_fv: 'FV/2026/10/01',
                 nip: '5252525252',
-                przedmiot_zgloszenia: 'Laptop Dell XPS 15',
-                numer_seryjny: 'DELL-SN-12345',
+                przedmiot_zgloszenia: 'Monitor interaktywny myBoard Titan (Android 15)',
+                numer_seryjny: 'MB-SN-12345',
                 data_zakupu: '2025-05-10',
                 zgoda_rodo: true
             };
@@ -158,7 +162,8 @@ const makeToken = (role, id = 1, username = 'test_user') =>
             assert.strictEqual(ticketsDb.length, 1);
             const ticket = ticketsDb[0];
             assert.strictEqual(ticket.imie, 'Jan');
-            assert.strictEqual(ticket.telefon_stacjonarny, '228889900');
+            assert.strictEqual(ticket.telefon_stacjonarny, '+48228889900');
+            assert.strictEqual(ticket.numer_seryjny, 'MB-SN-12345');
             assert.strictEqual(ticket.status, 'nowe');
             assert.ok(ticket.zgoda_rodo_data !== null);
 
@@ -180,10 +185,10 @@ const makeToken = (role, id = 1, username = 'test_user') =>
             assert.strictEqual(ticketsAfterAssign[0].status, 'w_realizacji');
             assert.strictEqual(ticketsAfterAssign[0].przypisany_pracownik_id, pracownikUser.id);
 
-            // C. Opisanie i zakończenie naprawy (PATCH /api/zgloszenia/:id/naprawione)
+            // C. Opisanie i zakończenie naprawy przez przypisanego pracownika (PATCH /api/zgloszenia/:id/naprawione)
             const resRepair = await request(app)
                 .patch(`/api/zgloszenia/${ticketId}/naprawione`)
-                .set('Authorization', `Bearer ${serwisantToken}`)
+                .set('Authorization', `Bearer ${pracownikToken}`)
                 .send({ opis_naprawy: 'Wymieniono pastę termoprzewodzącą i wentylator chłodzenia CPU.' });
 
             assert.strictEqual(resRepair.status, 200);
@@ -220,13 +225,13 @@ const makeToken = (role, id = 1, username = 'test_user') =>
                 adres: 'ul. Żółwia 15/9, Źródlana Część',
                 kod_pocztowy: '99-300',
                 miasto: 'Łódź',
-                numer_telefonu: '601602603',
+                numer_telefonu: '+48601602603',
                 telefon_stacjonarny: '426789012',
                 email: 'grzegorz@chrzaszcz.pl',
                 opis_usterki: 'Zażółć gęślą jaźń! ZAŻÓŁĆ GĘŚLĄ JAŹŃ.\nPróba znaków: ą, ć, ę, ł, ń, ó, ś, ź, ż. "Cudzysłów", \'apostrof\', oraz emotikony 🛠️💻📦 i znaki specjalne: §, ¶, ©, ®, €. Długi wielowierszowy tekst techniczny.',
                 numer_fv: 'FV/ŁÓDŹ/2026/99',
                 nip: '9998887766',
-                przedmiot_zgloszenia: 'Płyta główna z procesorem 🚀',
+                przedmiot_zgloszenia: 'Monitor interaktywny (Model spoza listy)',
                 numer_seryjny: 'PL-ĄĆĘŁ-1234',
                 data_zakupu: '2026-01-15',
                 zgoda_rodo: true
@@ -239,8 +244,9 @@ const makeToken = (role, id = 1, username = 'test_user') =>
             assert.strictEqual(res.status, 201);
             const ticketId = res.body.id;
 
-            const [rows] = await dbConnection.query('SELECT opis_usterki, przedmiot_zgloszenia, nazwisko, miasto FROM zgloszenia WHERE id = ?', [ticketId]);
+            const [rows] = await dbConnection.query('SELECT opis_usterki, przedmiot_zgloszenia, nazwisko, miasto, numer_seryjny FROM zgloszenia WHERE id = ?', [ticketId]);
             assert.strictEqual(rows[0].opis_usterki, polishPayload.opis_usterki);
+            assert.strictEqual(rows[0].numer_seryjny, 'PL-ĄĆĘŁ-1234');
             assert.strictEqual(rows[0].przedmiot_zgloszenia, polishPayload.przedmiot_zgloszenia);
             assert.strictEqual(rows[0].nazwisko, 'Brzęczyszczykiewicz');
             assert.strictEqual(rows[0].miasto, 'Łódź');
@@ -248,22 +254,23 @@ const makeToken = (role, id = 1, username = 'test_user') =>
 
         it('5. Równoległe wysyłanie zgłoszeń (brak wyścigów, unikalne ID i poprawne wpisy w historii)', async () => {
             const count = 10;
+            // imię i nazwisko nie mogą zawierać cyfr, więc rozróżniamy klientów literą
             const requests = Array.from({ length: count }, (_, i) =>
                 request(app)
                     .post('/api/zgloszenia')
                     .send({
-                        imie: `Klient_${i}`,
-                        nazwisko: `Testowy_${i}`,
+                        imie: `Klient${String.fromCharCode(65 + i)}`,
+                        nazwisko: `Testowy${String.fromCharCode(65 + i)}`,
                         nazwa_firmy: `Firma_${i}`,
                         adres: `Ulica ${i}`,
                         kod_pocztowy: '00-001',
                         miasto: 'Warszawa',
-                        numer_telefonu: `50000000${i}`,
+                        numer_telefonu: `+4850000000${i}`,
                         email: `klient_${i}@test.pl`,
                         opis_usterki: `Równoległe zgłoszenie testowe numer ${i}`,
                         numer_fv: `FV/CONCURRENT/${i}`,
                         nip: '1234567890',
-                        przedmiot_zgloszenia: `Sprzęt_${i}`,
+                        przedmiot_zgloszenia: 'Laptop',
                         data_zakupu: '2026-02-01',
                         zgoda_rodo: true
                     })
@@ -366,37 +373,54 @@ const makeToken = (role, id = 1, username = 'test_user') =>
             assert.strictEqual(wysylkaEntries.length, 1, 'W historii musi być dokładnie jeden wpis "wysyłka"');
         });
 
-        it('10. Opis naprawy na 65 000 znaków zapisuje wpis "naprawa" w historii, a po cofnięciu opis pozostaje w historii (MEDIUMTEXT)', async () => {
-            const [ins] = await dbConnection.query(
-                `INSERT INTO zgloszenia (imie, nazwisko, adres, kod_pocztowy, miasto, numer_telefonu, email, opis_usterki, numer_fv, nip, przedmiot_zgloszenia, data_zakupu, zgoda_rodo_data, status, przypisany_pracownik_id)
-                 VALUES ('Ewa', 'Wiśniewska', 'ul. Długa 5', '00-002', 'Warszawa', '+48500300400', 'ewa@wisniewska.pl', 'Uszkodzone podświetlenie', 'FV/2026/65K', '1234567890', 'Projektory', '2026-01-12', NOW(), 'w_realizacji', ?)`,
-                [pracownikUser.id]
-            );
-            const ticketId = ins.insertId;
-            const longOpis = 'N'.repeat(65000);
+        it('10. Opis naprawy (limit 5000 znaków) trafia do historii, a po cofnięciu pełny opis pozostaje w historii (MEDIUMTEXT)', async () => {
+            const insertTicket = (status, extraColumns = '', extraValues = []) =>
+                dbConnection.query(
+                    `INSERT INTO zgloszenia (imie, nazwisko, adres, kod_pocztowy, miasto, numer_telefonu, email, opis_usterki, numer_fv, nip, przedmiot_zgloszenia, data_zakupu, zgoda_rodo_data, status, przypisany_pracownik_id${extraColumns})
+                     VALUES ('Ewa', 'Wiśniewska', 'ul. Długa 5', '00-002', 'Warszawa', '+48500300400', 'ewa@wisniewska.pl', 'Uszkodzone podświetlenie', 'FV/2026/LONG', '1234567890', 'Projektory', '2026-01-12', NOW(), ?, ?${extraValues.length ? ', ?, NOW()' : ''})`,
+                    [status, pracownikUser.id, ...extraValues]
+                );
+
+            // A. Maksymalny dozwolony opis naprawy (5000 znaków) przez endpoint
+            const [insA] = await insertTicket('w_realizacji');
+            const ticketA = insA.insertId;
+            const maxOpis = 'N'.repeat(5000);
 
             const resRepair = await request(app)
-                .patch(`/api/zgloszenia/${ticketId}/naprawione`)
+                .patch(`/api/zgloszenia/${ticketA}/naprawione`)
                 .set('Authorization', `Bearer ${pracownikToken}`)
-                .send({ opis_naprawy: longOpis });
+                .send({ opis_naprawy: maxOpis });
             assert.strictEqual(resRepair.status, 200);
 
             const [histAfterRepair] = await dbConnection.query(
-                "SELECT akcja, szczegoly FROM historia_zgloszen WHERE zgloszenie_id = ? AND akcja = 'naprawa'",
-                [ticketId]
+                "SELECT szczegoly FROM historia_zgloszen WHERE zgloszenie_id = ? AND akcja = 'naprawa'",
+                [ticketA]
             );
             assert.strictEqual(histAfterRepair.length, 1, 'W historii musi istnieć wpis "naprawa"');
-            assert.strictEqual(histAfterRepair[0].szczegoly, `Opis naprawy: ${longOpis}`);
+            assert.strictEqual(histAfterRepair[0].szczegoly, `Opis naprawy: ${maxOpis}`);
+
+            // B. Opis dłuższy niż limit jest odrzucany bez zmiany zlecenia
+            const [insB] = await insertTicket('w_realizacji');
+            const resTooLong = await request(app)
+                .patch(`/api/zgloszenia/${insB.insertId}/naprawione`)
+                .set('Authorization', `Bearer ${pracownikToken}`)
+                .send({ opis_naprawy: 'N'.repeat(5001) });
+            assert.strictEqual(resTooLong.status, 400);
+
+            // C. Cofnięcie zlecenia z opisem 65 000 znaków w kolumnie TEXT: cały opis musi trafić do historii (MEDIUMTEXT)
+            const longOpis = 'N'.repeat(65000);
+            const [insC] = await insertTicket('do_wysylki', ', opis_naprawy, opis_naprawy_data', [longOpis]);
+            const ticketC = insC.insertId;
 
             const resRollback = await request(app)
-                .patch(`/api/zgloszenia/${ticketId}/status`)
+                .patch(`/api/zgloszenia/${ticketC}/status`)
                 .set('Authorization', `Bearer ${adminToken}`)
                 .send({ status: 'w_realizacji' });
             assert.strictEqual(resRollback.status, 200);
 
             const [histAfterRollback] = await dbConnection.query(
-                "SELECT akcja, szczegoly FROM historia_zgloszen WHERE zgloszenie_id = ? AND akcja = 'zmiana_statusu'",
-                [ticketId]
+                "SELECT szczegoly FROM historia_zgloszen WHERE zgloszenie_id = ? AND akcja = 'zmiana_statusu'",
+                [ticketC]
             );
             assert.strictEqual(histAfterRollback.length, 1, 'W historii musi istnieć wpis cofnięcia statusu');
             assert.ok(histAfterRollback[0].szczegoly.includes(longOpis), 'Pełny 65 000-znakowy opis naprawy musi być zachowany w historii po cofnięciu');

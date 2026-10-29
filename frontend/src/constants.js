@@ -145,8 +145,8 @@ export function getTicketActionState(ticket) {
   const assignAction = actions.find((a) => a.typ === 'przypisanie' || a.akcja === 'przypisz') || null;
   const repairAction = actions.find((a) => a.typ === 'naprawa' || a.akcja === 'naprawione') || null;
   const shipAction = actions.find((a) => a.typ === 'wysylka' || a.akcja === 'wyslij') || null;
-  const forwardAction = repairAction || shipAction || assignAction;
   const rollbackActions = actions.filter((a) => a.typ === 'cofnij');
+  const trackingAction = actions.find((a) => a.akcja === 'edytuj_numer_listu') || null;
 
   const isAssignAction = Boolean(assignAction);
   const isRepairAction = Boolean(repairAction);
@@ -158,8 +158,8 @@ export function getTicketActionState(ticket) {
     assignAction,
     repairAction,
     shipAction,
-    forwardAction,
     rollbackActions,
+    trackingAction,
     isAssignAction,
     isRepairAction,
     isShipAction,

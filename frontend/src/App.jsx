@@ -17,11 +17,11 @@ function resolveTabFromUrl(fallbackTab) {
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { hasError: false };
   }
 
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error };
+  static getDerivedStateFromError() {
+    return { hasError: true };
   }
 
   componentDidCatch(error, errorInfo) {
@@ -44,7 +44,7 @@ class ErrorBoundary extends React.Component {
               type="button"
               className="btn-primary"
               onClick={() => {
-                this.setState({ hasError: false, error: null });
+                this.setState({ hasError: false });
                 window.location.reload();
               }}
             >

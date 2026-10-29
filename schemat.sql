@@ -1,5 +1,5 @@
--- database/schema.sql
--- Pełny referencyjny schemat bazy danych. Baza danych wybierana jest z DB_NAME w .env.
+-- schemat.sql
+-- Pełny referencyjny schemat bazy danych (źródłem prawdy dla wdrożeń są migrations/). Baza danych wybierana jest z DB_NAME w .env.
 
 -- Tabela użytkowników musi być tworzona PRZED tabelą zgłoszeń (FK dependency)
 CREATE TABLE IF NOT EXISTS uzytkownicy (

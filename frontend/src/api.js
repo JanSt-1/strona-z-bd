@@ -168,8 +168,12 @@ export const ticketApi = {
       'Nie udało się zaktualizować statusu.'
     );
   },
-  saveTrackingNumber(ticketId, currentStatus, numerListu) {
-    return this.updateStatus(ticketId, currentStatus, { numer_listu: numerListu });
+  saveTrackingNumber(ticketId, numerListu) {
+    return apiPatch(
+      `/zgloszenia/${ticketId}/numer-listu`,
+      { numer_listu: numerListu },
+      'Nie udało się zapisać numeru listu przewozowego.'
+    );
   },
   deleteTicket(ticketId) {
     return apiJson(`/zgloszenia/${ticketId}`, { method: 'DELETE' }, 'Nie udało się usunąć zgłoszenia.');

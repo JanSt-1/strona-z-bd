@@ -378,15 +378,13 @@ export default function Dashboard({ user, token, onLogout }) {
       handleCloseRollbackModal
     );
 
-  const handleSaveTrackingNumber = (id, numerListu) => {
-    const currentStatus = tickets.find((t) => t.id === id)?.status || 'zakończone';
-    return runTicketMutation(
+  const handleSaveTrackingNumber = (id, numerListu) =>
+    runTicketMutation(
       id,
-      () => ticketApi.saveTrackingNumber(id, currentStatus, numerListu),
+      () => ticketApi.saveTrackingNumber(id, numerListu),
       () => `Zgłoszenie #${id}: numer listu przewozowego został pomyślnie zapisany.`,
       handleCloseTrackingModal
     );
-  };
 
   async function handleDeleteTicket(id) {
     if (user?.role !== 'admin') {

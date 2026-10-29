@@ -42,14 +42,10 @@ app.use(helmet({
 }));
 app.use(express.json({ limit: '70kb' }));
 
-const isHashedFile = (filePath) => {
-    const fileName = path.basename(filePath);
-    return /[.-][a-f0-9]{8,}\./i.test(fileName) || /[.-][a-zA-Z0-9_-]{8,}\./i.test(fileName);
-};
+const isHashedFile = (filePath) => /[.-][a-zA-Z0-9_-]{8,}\./.test(path.basename(filePath));
 app.isHashedFile = isHashedFile;
 
 const staticDir = path.join(__dirname, 'frontend', 'dist');
-app.staticDir = staticDir;
 
 app.use(express.static(staticDir, {
     setHeaders: (res, filePath) => {
@@ -530,7 +526,6 @@ app.get('/api/pracownicy', authenticateToken, requireAdminOrSerwisant,
 // - do_wysylki -> zakończone: magazynier, admin
 // - cofanie statusu: tylko admin
 const STATUS_ORDER = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
-const ALLOWED_STATUSES = STATUS_ORDER;
 
 const STATUS_LABELS = {
     nowe: 'Nowe',
@@ -543,6 +538,12 @@ const PRZEJSCIA = {
     nowe: { w_realizacji: ['admin', 'serwisant'] },
     w_realizacji: { do_wysylki: ['admin', 'serwisant', 'pracownik'] },
     do_wysylki: { 'zakończone': ['admin', 'magazynier'] }
+};
+
+// Statusy, w których dana rola może edytować numer listu przez /numer-listu (admin także przed wysyłką, magazynier tylko po wysyłce)
+const NUMER_LISTU_EDYCJA = {
+    admin: ['do_wysylki', 'zakończone'],
+    magazynier: ['zakończone']
 };
 
 /**
@@ -696,6 +697,15 @@ function wyznaczDozwoloneAkcje(user, ticket) {
         });
     }
 
+    if (NUMER_LISTU_EDYCJA[role]?.includes(currentStatus)) {
+        akcje.push({
+            akcja: 'edytuj_numer_listu',
+            na_status: currentStatus,
+            etykieta: 'Edytuj numer listu',
+            typ: 'numer_listu'
+        });
+    }
+
     return akcje;
 }
 
@@ -757,10 +767,8 @@ app.get('/api/zgloszenia', authenticateToken,
             } else {
                 const pracownikId = parsePositiveInt(pracownikQuery);
                 if (isNaN(pracownikId)) return fail(res, 'Nieprawidłowa wartość parametru "pracownik".', 400);
-                if (true) {
-                    whereConditions.push('z.przypisany_pracownik_id = ?');
-                    params.push(pracownikId);
-                }
+                whereConditions.push('z.przypisany_pracownik_id = ?');
+                params.push(pracownikId);
             }
         }
 
@@ -920,7 +928,6 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
             targetStatus = 'w_realizacji';
             const check = czyMoznaZmienic(req.user.role, ticket.status, targetStatus);
             if (!check.allowed) return fail(res, check.error, check.status);
-    
         }
 
         const conn = await getTransactionConnection();
@@ -1066,21 +1073,27 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken, requireRoles('adm
         });
     }));
 
+const NUMER_LISTU_TYLKO_PRZY_WYSYLCE_ERR =
+    'Numer listu można podać w /status tylko przy wysyłce (zmiana na "zakończone"). Do edycji numeru listu służy PATCH /api/zgloszenia/:id/numer-listu.';
+
+const validateNumerListu = (numer_listu) => {
+    if (numer_listu === undefined || numer_listu === null) return null;
+    if (typeof numer_listu !== 'string') return 'Pole "numer_listu" musi być tekstem.';
+    if (numer_listu.trim().length > 100) return 'Pole "numer_listu" przekracza maksymalną dozwoloną długość (100 znaków).';
+    return null;
+};
+
 // 8. PATCH/PUT /api/zgloszenia/:id/status - Aktualizacja statusu zgłoszenia
 const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd serwera podczas aktualizacji statusu zgłoszenia.', async (req, res) => {
     const id = parsePositiveInt(req.params.id);
     if (isNaN(id)) return fail(res, ID_ERR_INT);
     const { status, numer_listu } = req.body || {};
 
-    if (numer_listu !== undefined && numer_listu !== null) {
-        if (typeof numer_listu !== 'string') return fail(res, 'Pole "numer_listu" musi być tekstem.');
-        if (numer_listu.trim().length > 100) {
-            return fail(res, 'Pole "numer_listu" przekracza maksymalną dozwoloną długość (100 znaków).');
-        }
-    }
+    const numerListuErr = validateNumerListu(numer_listu);
+    if (numerListuErr) return fail(res, numerListuErr);
 
-    if (!status || !ALLOWED_STATUSES.includes(status)) {
-        return fail(res, `Nieprawidłowy status. Dozwolone wartości to: ${ALLOWED_STATUSES.join(', ')}.`);
+    if (!status || !STATUS_ORDER.includes(status)) {
+        return fail(res, `Nieprawidłowy status. Dozwolone wartości to: ${STATUS_ORDER.join(', ')}.`);
     }
 
     const [rows] = await currentPool.query('SELECT id, status, przypisany_pracownik_id, opis_naprawy FROM zgloszenia WHERE id = ?', [id]);
@@ -1097,46 +1110,15 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
         );
     }
 
+    // Numer listu przyjmujemy tu wyłącznie przy wysyłce (-> zakończone); samą edycję obsługuje /numer-listu,
+    // żeby nieaktualny status z widoku nie zamienił poprawki numeru w zmianę statusu
+    if (numer_listu !== undefined && status !== 'zakończone') {
+        return fail(res, NUMER_LISTU_TYLKO_PRZY_WYSYLCE_ERR);
+    }
+
     if (ticket.status === status) {
         if (numer_listu !== undefined) {
-            if (req.user.role !== 'magazynier' && req.user.role !== 'admin') {
-                return fail(res, 'Brak uprawnień do edycji numeru listu przewozowego.', 403);
-            }
-            if (req.user.role === 'magazynier' && status !== 'zakończone') {
-                return fail(res, 'Magazynier może edytować numer listu tylko dla zgłoszeń o statusie "zakończone".', 403);
-            }
-            const listu = numer_listu ? numer_listu.trim() : null;
-            if (req.user.role === 'magazynier' && !listu) {
-                return fail(res, 'Podanie numeru listu przewozowego jest obowiązkowe przy oznaczaniu zlecenia jako wysłane.');
-            }
-            const conn = await getTransactionConnection();
-            try {
-                await conn.beginTransaction();
-                const [updateResult] = await conn.query(
-                    'UPDATE zgloszenia SET numer_listu = ? WHERE id = ? AND status = ?',
-                    [listu, id, ticket.status]
-                );
-                if (updateResult && updateResult.affectedRows === 0) {
-                    await conn.rollback();
-                    return fail(res, CONFLICT_ERR, 409);
-                }
-                await dodajWpisHistorii(
-                    conn, id, req.user.id, 'zmiana_numeru_listu', status, status,
-                    listu ? `Zaktualizowano numer listu: ${listu}` : 'Usunięto numer listu przewozowego'
-                );
-                await conn.commit();
-            } catch (err) {
-                try { await conn.rollback(); } catch (_) { /* ignore */ }
-                throw err;
-            } finally {
-                conn.release();
-            }
-            return res.json({
-                message: 'Numer listu przewozowego został zaktualizowany.',
-                id: Number(id),
-                status,
-                numer_listu: listu
-            });
+            return fail(res, NUMER_LISTU_TYLKO_PRZY_WYSYLCE_ERR);
         }
         return res.json({
             message: 'Status zgłoszenia pozostaje bez zmian.',
@@ -1179,11 +1161,8 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
         if (clearPrzypisanie) {
             setClauses.push('przypisany_pracownik_id = NULL');
             if (ticket.przypisany_pracownik_id) {
-                let prevWorker = ticket.przypisany_pracownik_username;
-                if (!prevWorker) {
-                    const [uRows] = await currentPool.query('SELECT username FROM uzytkownicy WHERE id = ?', [ticket.przypisany_pracownik_id]);
-                    prevWorker = uRows?.[0]?.username || `ID ${ticket.przypisany_pracownik_id}`;
-                }
+                const [uRows] = await currentPool.query('SELECT username FROM uzytkownicy WHERE id = ?', [ticket.przypisany_pracownik_id]);
+                const prevWorker = uRows?.[0]?.username || `ID ${ticket.przypisany_pracownik_id}`;
                 szczegoly += `. Poprzednio przypisany pracownik: ${prevWorker}`;
             }
         }
@@ -1199,11 +1178,6 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
         updateParams = [status, listu, id, ticket.status];
         akcja = 'wysyłka';
         szczegoly = `Wysłano przesyłkę. Numer listu: ${listu || 'brak'}`;
-    } else if (req.user.role === 'admin' && numer_listu !== undefined) {
-        const listu = numer_listu ? numer_listu.trim() : null;
-        updateQuery = 'UPDATE zgloszenia SET status = ?, numer_listu = ? WHERE id = ? AND status = ?';
-        updateParams = [status, listu, id, ticket.status];
-        szczegoly = `Zmieniono status z "${ticket.status}" na "${status}". Numer listu: ${listu || 'brak'}`;
     }
 
     const conn = await getTransactionConnection();
@@ -1241,6 +1215,68 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
 
 app.patch('/api/zgloszenia/:id/status', authenticateToken, handleUpdateStatus);
 app.put('/api/zgloszenia/:id/status', authenticateToken, handleUpdateStatus);
+
+// 8a. PATCH /api/zgloszenia/:id/numer-listu - Edycja numeru listu przewozowego (nigdy nie zmienia statusu)
+app.patch('/api/zgloszenia/:id/numer-listu', authenticateToken, requireRoles('admin', 'magazynier'),
+    safe('Błąd podczas zmiany numeru listu:', 'Błąd serwera podczas zmiany numeru listu przewozowego.', async (req, res) => {
+        const id = parsePositiveInt(req.params.id);
+        if (isNaN(id)) return fail(res, ID_ERR_INT);
+
+        const { numer_listu } = req.body || {};
+        if (numer_listu === undefined) return fail(res, 'Pole "numer_listu" jest wymagane.');
+        const numerListuErr = validateNumerListu(numer_listu);
+        if (numerListuErr) return fail(res, numerListuErr);
+
+        const [rows] = await currentPool.query('SELECT id, status, przypisany_pracownik_id FROM zgloszenia WHERE id = ?', [id]);
+        if (!rows || rows.length === 0) return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
+        const ticket = rows[0];
+
+        if (!canViewTicket(req.user, ticket)) {
+            return fail(res, 'Brak uprawnień do przeglądania tego zgłoszenia.', 403);
+        }
+
+        if (!NUMER_LISTU_EDYCJA[req.user.role].includes(ticket.status)) {
+            return req.user.role === 'magazynier'
+                ? fail(res, 'Magazynier może edytować numer listu tylko dla zgłoszeń o statusie "zakończone". Przy statusie "do_wysylki" numer listu podaje się przy wysyłce.', 403)
+                : fail(res, `Numer listu można edytować tylko dla zgłoszeń w statusie "do_wysylki" lub "zakończone" (aktualny status: "${ticket.status}").`, 409);
+        }
+
+        const listu = numer_listu ? numer_listu.trim() || null : null;
+        if (req.user.role === 'magazynier' && !listu) {
+            return fail(res, 'Numer listu przewozowego wysłanego zlecenia nie może być pusty.');
+        }
+
+        const conn = await getTransactionConnection();
+        try {
+            await conn.beginTransaction();
+            const [updateResult] = await conn.query(
+                'UPDATE zgloszenia SET numer_listu = ? WHERE id = ? AND status = ?',
+                [listu, id, ticket.status]
+            );
+            if (updateResult && updateResult.affectedRows === 0) {
+                await conn.rollback();
+                return fail(res, CONFLICT_ERR, 409);
+            }
+            await dodajWpisHistorii(
+                conn, id, req.user.id, 'zmiana_numeru_listu', ticket.status, ticket.status,
+                listu ? `Zaktualizowano numer listu: ${listu}` : 'Usunięto numer listu przewozowego'
+            );
+            await conn.commit();
+        } catch (err) {
+            try { await conn.rollback(); } catch (_) { /* ignore */ }
+            throw err;
+        } finally {
+            conn.release();
+        }
+
+        return res.json({
+            message: 'Numer listu przewozowego został zaktualizowany.',
+            id,
+            status: ticket.status,
+            numer_listu: listu,
+            dozwolone_akcje: wyznaczDozwoloneAkcje(req.user, ticket)
+        });
+    }));
 
 // 6. DELETE /api/zgloszenia/:id - Usunięcie zgłoszenia (chroniony, tylko admin)
 app.delete('/api/zgloszenia/:id', authenticateToken, requireAdmin,
@@ -1516,10 +1552,6 @@ app.use((err, req, res, next) => {
 
 app.czyMoznaZmienic = czyMoznaZmienic;
 app.wyznaczDozwoloneAkcje = wyznaczDozwoloneAkcje;
-app.PRZEJSCIA = PRZEJSCIA;
-app.STATUS_ORDER = STATUS_ORDER;
-app.STATUS_LABELS = STATUS_LABELS;
-app.dodajWpisHistorii = dodajWpisHistorii;
 app.loginLimiter = loginLimiter;
 app.zgloszeniaLimiter = zgloszeniaLimiter;
 app.hasloLimiter = hasloLimiter;

@@ -29,3 +29,6 @@ Thumbs.db
 # Buildy i dystrybucja tymczasowa
 dist/
 dist-ssr/
+
+# Konfiguracja lokalna Claude Code
+.claude/

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import StatusBadge from './StatusBadge';
 import StatusControl from './StatusControl';
 import { ticketApi } from '../api';
-import { STATUS_LABELS, HISTORY_ACTION_LABELS, formatDate, formatDateTime } from '../constants';
+import { STATUS_LABELS, HISTORY_ACTION_LABELS, formatDate, formatDateTime, getTicketActionState } from '../constants';
 
 const ACTION_ICONS = {
   utworzenie: '📝',
@@ -68,8 +68,14 @@ export default function TicketDetailsDrawer({
   }, [ticket?.id]);
 
   if (!ticket) return null;
-  const currentTicket = fetchedData ? { ...ticket, ...fetchedData } : ticket;
-  const history = Array.isArray(fetchedData?.historia) ? fetchedData.historia : [];
+  // Po mutacji Dashboard podaje świeżo pobrane szczegóły (z historią) - wtedy mają pierwszeństwo przed danymi z montowania
+  const currentTicket = Array.isArray(ticket.historia)
+    ? ticket
+    : fetchedData
+      ? { ...ticket, ...fetchedData }
+      : ticket;
+  const history = Array.isArray(currentTicket.historia) ? currentTicket.historia : [];
+  const { trackingAction } = getTicketActionState(currentTicket);
   const curStatus = currentTicket.status || 'nowe';
 
   return createPortal(
@@ -300,7 +306,7 @@ export default function TicketDetailsDrawer({
                   <span className="font-semibold text-ink">
                     {currentTicket.numer_listu || 'Brak'}
                   </span>
-                  {user?.role === 'admin' && onOpenTrackingModal && (
+                  {trackingAction && onOpenTrackingModal && (
                     <button
                       type="button"
                       className="btn-secondary py-0.5 px-1.5 text-[0.7rem]"
