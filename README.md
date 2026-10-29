@@ -244,7 +244,7 @@ npm test
 ```
 *Skrypt wykonuje polecenie `node --test` z użyciem `supertest`. Dzięki wbudowanemu mockowaniu puli bazy danych w `app.test.js`, testy wykonują się błyskawicznie i nie wymagają aktywnego serwera MySQL (testy z `integration.test.js` są wtedy pomijane).*
 
-Główne grupy przypadków testowych (łącznie **179 testów** w 22 suitach):
+Główne grupy przypadków testowych (łącznie **181 testów** w 22 suitach):
 1. **Uwierzytelnianie, logowanie, ochrona Honeypot, klauzula RODO i walidacja zgłoszeń**: walidacja pól obowiązkowych, obsługa opcjonalnego telefonu stacjonarnego (`telefon_stacjonarny` – zapis z prefiksem `+48` po podaniu 9 cyfr, dopuszczenie `null` gdy brak, błąd 400 przy niepoprawnym formacie), obowiązkowy checkbox zgody RODO (odrzucenie 400 przy braku lub false, utrwalenie znacznika czasu w `zgoda_rodo_data` przy akceptacji), ochrona antyspamowa Honeypot (wypełnione pole `website` zwraca 201 bez zapisu do bazy), brak tokenu (401), błędne dane logowania (401), poprawny token JWT (200), blokada nieprawidłowych formatów i dat z przyszłości (400).
 2. **Przejście `nowe` → `w_realizacji`**: automatyczne przypisanie zlecenia, uprawnienia serwisanta i admina (200), blokada pracownika i magazyniera (403).
 3. **Przejście `w_realizacji` → `do_wysylki`**: wyłączność dedykowanego endpointu `/naprawione`, wymóg opisu prac, uprawnienia przypisanego pracownika/serwisanta/admina (200; zatwierdzenie naprawy przez serwisanta automatycznie przypisuje do niego to zlecenie), blokada magazyniera (403) oraz blokada przejścia ze statusu `nowe` (409 Conflict).

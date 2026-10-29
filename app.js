@@ -1074,7 +1074,7 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken, requireRoles('adm
     }));
 
 const NUMER_LISTU_TYLKO_PRZY_WYSYLCE_ERR =
-    'Numer listu można podać w /status tylko przy wysyłce (zmiana na "zakończone"). Do edycji numeru listu służy PATCH /api/zgloszenia/:id/numer-listu.';
+    'Numer listu można podać tylko przy oznaczaniu zlecenia jako wysłanego. Aby zmienić numer listu, użyj opcji "Edytuj numer listu" w szczegółach zlecenia.';
 
 const validateNumerListu = (numer_listu) => {
     if (numer_listu === undefined || numer_listu === null) return null;
@@ -1096,7 +1096,7 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
         return fail(res, `Nieprawidłowy status. Dozwolone wartości to: ${STATUS_ORDER.join(', ')}.`);
     }
 
-    const [rows] = await currentPool.query('SELECT id, status, przypisany_pracownik_id, opis_naprawy FROM zgloszenia WHERE id = ?', [id]);
+    const [rows] = await currentPool.query('SELECT id, status, przypisany_pracownik_id, opis_naprawy, numer_listu FROM zgloszenia WHERE id = ?', [id]);
     if (!rows || rows.length === 0) return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
     const ticket = rows[0];
 
@@ -1117,8 +1117,15 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
     }
 
     if (ticket.status === status) {
+        // Tu trafia tylko ponowna wysyłka (zakończone -> zakończone): ktoś inny zdążył już wysłać zlecenie
         if (numer_listu !== undefined) {
-            return fail(res, NUMER_LISTU_TYLKO_PRZY_WYSYLCE_ERR);
+            return fail(
+                res,
+                `Zlecenie #${id} zostało już oznaczone jako wysłane przez innego użytkownika` +
+                    (ticket.numer_listu ? ` (numer listu: ${ticket.numer_listu})` : ' (bez numeru listu)') +
+                    '. Jeśli numer listu wymaga poprawki, użyj opcji "Edytuj numer listu" w szczegółach zlecenia.',
+                409
+            );
         }
         return res.json({
             message: 'Status zgłoszenia pozostaje bez zmian.',

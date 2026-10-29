@@ -3487,8 +3487,6 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
 
         it('/status nie przyjmuje numer_listu poza wysyłką (ten sam status ani cofnięcie) -> 400 bez UPDATE', async () => {
             const cases = [
-                { token: adminToken, current: 'zakończone', body: { status: 'zakończone', numer_listu: 'DPD-1' } },
-                { token: magazynierToken, current: 'zakończone', body: { status: 'zakończone', numer_listu: 'DPD-1' } },
                 { token: adminToken, current: 'do_wysylki', body: { status: 'do_wysylki', numer_listu: 'DPD-1' } },
                 { token: adminToken, current: 'zakończone', body: { status: 'do_wysylki', numer_listu: 'DPD-1' } }
             ];
@@ -3500,9 +3498,40 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                     .set('Authorization', `Bearer ${c.token}`)
                     .send(c.body);
                 assert.strictEqual(res.status, 400, `Oczekiwano 400 dla ${JSON.stringify(c.body)} na ${c.current}`);
-                assert.ok(res.body.error.includes('/numer-listu'));
+                assert.ok(res.body.error.includes('Edytuj numer listu'));
+                assert.ok(!res.body.error.includes('/api/'), 'Komunikat nie powinien zawierać ścieżek API');
                 assert.strictEqual(allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia')).length, 0);
             }
+        });
+
+        it('Wyścig wysyłki: zlecenie już wysłane przez kogoś innego -> 409 z czytelnym komunikatem, bez UPDATE', async () => {
+            for (const token of [adminToken, magazynierToken]) {
+                allExecutedQueries = [];
+                setMockTicket({ id: 1, status: 'zakończone', przypisany_pracownik_id: 1, numer_listu: 'INPOST-777' });
+                const res = await request(app)
+                    .patch('/api/zgloszenia/1/status')
+                    .set('Authorization', `Bearer ${token}`)
+                    .send({ status: 'zakończone', numer_listu: 'DPD-1' });
+                assert.strictEqual(res.status, 409);
+                assert.ok(res.body.error.includes('zostało już oznaczone jako wysłane'));
+                assert.ok(res.body.error.includes('INPOST-777'));
+                assert.ok(!res.body.error.includes('/api/'));
+                assert.strictEqual(allExecutedQueries.filter(q => q.sql.includes('UPDATE zgloszenia')).length, 0);
+            }
+        });
+
+        it('Frontend: konflikt 409 zostawia okno otwarte z błędem i odświeża widok w tle (api.js przekazuje status błędu)', () => {
+            const apiJs = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'api.js'), 'utf8');
+            const dashboard = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'Dashboard.jsx'), 'utf8');
+            const shipModal = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'ShipModal.jsx'), 'utf8');
+            assert.ok(apiJs.includes('err.status = response.status'));
+            const conflictBranch = dashboard.match(/if \(err\.status === 409\) \{([\s\S]*?)\}/);
+            assert.ok(conflictBranch, 'Brak obsługi 409 w runTicketMutation');
+            assert.ok(conflictBranch[1].includes('fetchTickets()') && conflictBranch[1].includes('refreshDrawerTicket('));
+            assert.ok(!conflictBranch[1].includes('closeFn'), 'Przy 409 okno nie może się zamykać jak przy sukcesie');
+            assert.ok(!conflictBranch[1].includes('return'), 'Przy 409 błąd musi trafić do okna (throw)');
+            assert.ok(shipModal.includes('if (err.status === 409) setConflict(true)'));
+            assert.ok(shipModal.includes('{!conflict && ('), 'Po konflikcie przycisk zatwierdzenia ma zniknąć');
         });
 
         it('panel zapisuje numer listu przez /numer-listu bez statusu, a przycisk "Edytuj" bierze się z dozwolone_akcje (także dla magazyniera)', () => {

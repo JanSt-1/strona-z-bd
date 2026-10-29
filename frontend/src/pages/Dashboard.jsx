@@ -328,7 +328,13 @@ export default function Dashboard({ user, token, onLogout }) {
       refreshDrawerTicket(ticketId);
     } catch (err) {
       showAlert(err.message, 'error');
-      if (refreshOnErr) fetchTickets();
+      // 409 = ktoś inny zmienił zlecenie w międzyczasie; okno zostaje otwarte z błędem, a w tle odświeżamy aktualny stan
+      if (err.status === 409) {
+        fetchTickets();
+        refreshDrawerTicket(ticketId);
+      } else if (refreshOnErr) {
+        fetchTickets();
+      }
       throw err;
     }
   }

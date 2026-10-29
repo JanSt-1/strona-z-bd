@@ -65,7 +65,9 @@ export async function apiJson(
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error || fallbackError);
+    const err = new Error(data.error || fallbackError);
+    err.status = response.status;
+    throw err;
   }
   return data;
 }

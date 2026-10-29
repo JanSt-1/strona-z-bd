@@ -7,6 +7,8 @@ export default function ShipModal({ ticket, mode = 'ship', onClose, onShip, onSa
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [touched, setTouched] = useState(false);
+  // Zlecenie zmienił w międzyczasie ktoś inny (409) - ponowne zatwierdzenie nie ma sensu, zostaje tylko zamknięcie
+  const [conflict, setConflict] = useState(false);
 
   if (!ticket) return null;
 
@@ -34,6 +36,7 @@ export default function ShipModal({ ticket, mode = 'ship', onClose, onShip, onSa
       onClose();
     } catch (err) {
       setError(err.message || 'Wystąpił błąd podczas zapisywania numeru listu.');
+      if (err.status === 409) setConflict(true);
     } finally {
       setSaving(false);
     }
@@ -83,6 +86,7 @@ export default function ShipModal({ ticket, mode = 'ship', onClose, onShip, onSa
             id="shippingTrackingNumber"
             type="text"
             autoFocus
+            disabled={conflict}
             required={!isEditOnly}
             maxLength={100}
             placeholder="np. DPD0123456789PL, 628001234567..."
@@ -113,15 +117,17 @@ export default function ShipModal({ ticket, mode = 'ship', onClose, onShip, onSa
 
         <div className="flex justify-end gap-3 pt-2">
           <button type="button" className="btn-secondary text-xs" onClick={onClose} disabled={saving}>
-            Anuluj
+            {conflict ? 'Zamknij' : 'Anuluj'}
           </button>
-          <button
-            type="submit"
-            disabled={saving || isEmpty || isTooLong}
-            className="btn-primary text-xs"
-          >
-            {saving ? 'Zapisywanie...' : isEditOnly ? 'Zapisz numer listu' : 'Oznacz jako wysłane'}
-          </button>
+          {!conflict && (
+            <button
+              type="submit"
+              disabled={saving || isEmpty || isTooLong}
+              className="btn-primary text-xs"
+            >
+              {saving ? 'Zapisywanie...' : isEditOnly ? 'Zapisz numer listu' : 'Oznacz jako wysłane'}
+            </button>
+          )}
         </div>
       </form>
     </Modal>
