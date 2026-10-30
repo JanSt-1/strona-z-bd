@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ticketApi, workerApi } from '../api';
+import { authApi, ticketApi, workerApi } from '../api';
 import Alert from '../components/Alert';
 import StatusControl from '../components/StatusControl';
 import RepairModal from '../components/RepairModal';
@@ -10,7 +10,8 @@ import PasswordModal from '../components/PasswordModal';
 import AdminUsersPanel from '../components/AdminUsersPanel';
 import TicketDetailsDrawer from '../components/TicketDetailsDrawer';
 import StatusBadge from '../components/StatusBadge';
-import { STATUS_LABELS, formatDate, formatDateTime } from '../constants';
+import { STATUS_LABELS, formatDate, formatDateTime, getTicketActionState } from '../constants';
+import { rememberOpenRepair, forgetOpenRepair, pendingRepairTicketId } from '../szkice';
 
 function readFiltersFromUrl() {
   const sp = new URLSearchParams(window.location.search);
@@ -259,6 +260,24 @@ export default function Dashboard({ user, token, onLogout }) {
     }
   }, [dashboardTab, fetchWorkers]);
 
+  // Po ponownym zalogowaniu (np. po wygaśnięciu sesji) otwieramy okno naprawy, które było otwarte - szkic opisu wraca w nim
+  useEffect(() => {
+    const ticketId = pendingRepairTicketId(user?.id);
+    if (!ticketId) return;
+    let active = true;
+    ticketApi
+      .getTicketById(ticketId)
+      .then((t) => {
+        if (!active) return;
+        if (t && getTicketActionState(t).isRepairAction) setRepairModalTicket(t);
+        else forgetOpenRepair();
+      })
+      .catch(() => forgetOpenRepair());
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
+
   useEffect(() => {
     function handlePopState() {
       const fromUrl = readFiltersFromUrl();
@@ -321,11 +340,13 @@ export default function Dashboard({ user, token, onLogout }) {
   async function runTicketMutation(ticketId, apiCall, getSuccessMsg, closeFn, refreshOnErr = false) {
     try {
       const data = await apiCall();
-      if (!data) return;
+      // null = sesja wygasła (401) - aplikacja przechodzi do ekranu logowania, okno i szkic zostają do przywrócenia
+      if (!data) return false;
       showAlert(getSuccessMsg(data), 'success');
       if (closeFn) closeFn();
       fetchTickets();
       refreshDrawerTicket(ticketId);
+      return true;
     } catch (err) {
       showAlert(err.message, 'error');
       // 409 = ktoś inny zmienił zlecenie w międzyczasie; okno zostaje otwarte z błędem, a w tle odświeżamy aktualny stan
@@ -341,7 +362,17 @@ export default function Dashboard({ user, token, onLogout }) {
 
   const handleCloseDrawer = useCallback(() => setDetailsDrawerTicket(null), []);
   const handleCloseAssignModal = useCallback(() => setAssignModalTicket(null), []);
-  const handleCloseRepairModal = useCallback(() => setRepairModalTicket(null), []);
+  const handleCloseRepairModal = useCallback(() => {
+    forgetOpenRepair();
+    setRepairModalTicket(null);
+  }, []);
+  const handleOpenRepairModal = useCallback(
+    (ticket) => {
+      rememberOpenRepair(user?.id, ticket.id);
+      setRepairModalTicket(ticket);
+    },
+    [user?.id]
+  );
   const handleCloseShipModal = useCallback(() => setShipModalTicket(null), []);
   const handleCloseRollbackModal = useCallback(() => setRollbackModalData(null), []);
   const handleCloseTrackingModal = useCallback(() => setTrackingModalTicket(null), []);
@@ -433,12 +464,22 @@ export default function Dashboard({ user, token, onLogout }) {
 
   const currentTab = user?.role === 'admin' ? dashboardTab : 'tickets';
 
+  async function handleLogoutEverywhere() {
+    if (!window.confirm('Wylogować to konto ze wszystkich urządzeń i kart przeglądarki (także z tej)?')) return;
+    try {
+      const data = await authApi.logoutEverywhere();
+      if (data) onLogout(data.message);
+    } catch (err) {
+      showAlert(err.message, 'error');
+    }
+  }
+
   const modalHandlers = {
     onOpenAssignModal: (ticket) => {
       fetchWorkers();
       setAssignModalTicket(ticket);
     },
-    onOpenRepairModal: setRepairModalTicket,
+    onOpenRepairModal: handleOpenRepairModal,
     onOpenShipModal: setShipModalTicket,
     onOpenRollbackModal: (ticket, actions) => setRollbackModalData({ ticket, actions })
   };
@@ -490,7 +531,7 @@ export default function Dashboard({ user, token, onLogout }) {
           <button
             type="button"
             className="btn-secondary py-1.5 px-3 text-xs inline-flex items-center gap-1.5"
-            onClick={onLogout}
+            onClick={() => onLogout()}
             title="Wyloguj z systemu"
           >
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
@@ -499,6 +540,14 @@ export default function Dashboard({ user, token, onLogout }) {
               <line x1="21" y1="12" x2="9" y2="12" />
             </svg>
             Wyloguj
+          </button>
+          <button
+            type="button"
+            className="btn-secondary py-1.5 px-3 text-xs inline-flex items-center gap-1.5"
+            onClick={handleLogoutEverywhere}
+            title="Zakończ wszystkie sesje tego konta na wszystkich urządzeniach (także tę)"
+          >
+            Wyloguj wszędzie
           </button>
         </div>
       </div>
@@ -948,6 +997,7 @@ export default function Dashboard({ user, token, onLogout }) {
             <RepairModal
               key={repairModalTicket.id}
               ticket={repairModalTicket}
+              userId={user?.id}
               onClose={handleCloseRepairModal}
               onSubmit={handleRepairSubmit}
             />

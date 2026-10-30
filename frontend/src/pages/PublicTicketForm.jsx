@@ -616,8 +616,8 @@ export default function PublicTicketForm() {
               Informacja o przetwarzaniu danych osobowych (kliknij, aby rozwinąć)
             </summary>
             <div className="mt-2.5 p-3.5 bg-page rounded-lg text-xs text-ink leading-relaxed border border-line space-y-2">
-              {KLAUZULA_INFORMACYJNA.map((akapit) => (
-                <p key={akapit}>{akapit}</p>
+              {KLAUZULA_INFORMACYJNA.map((akapit, i) => (
+                <p key={i}>{akapit}</p>
               ))}
             </div>
           </details>

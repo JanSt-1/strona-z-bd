@@ -1690,7 +1690,8 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 .set('Authorization', `Bearer ${pracownikToken}`)
                 .send({ currentPassword: 'prawidloweHaslo123', newPassword: 'NoweSuperHaslo123' });
             assert.strictEqual(res.status, 200);
-            assert.strictEqual(res.body.message, 'Twoje hasło zostało pomyślnie zmienione.');
+            assert.strictEqual(res.body.message, 'Twoje hasło zostało pomyślnie zmienione. Pozostałe sesje zostały wylogowane.');
+            assert.ok(res.body.token, 'Zmiana własnego hasła zwraca nowy token dla bieżącej karty');
         });
     });
 
@@ -3712,6 +3713,296 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.ok(tresci.includes('CZAS_KONTAKTU_DNI_ROBOCZYCH') && tresci.includes('KLAUZULA_INFORMACYJNA'));
             const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
             assert.strictEqual(pkg.scripts['check:placeholders'], 'node scripts/check-placeholders.js');
+        });
+    });
+    describe('23. Unieważnianie sesji (token_version), GET /api/me i "Wyloguj wszędzie"', () => {
+        let mockPoolBefore;
+        let users;
+
+        // Mock bazy z pamięcią stanu użytkowników (token_version, hasło, rola)
+        const statefulPool = {
+            query: async (sql, values = []) => {
+                if (typeof sql !== 'string' || !sql.includes('uzytkownicy')) return [[]];
+                if (sql.startsWith('UPDATE uzytkownicy')) {
+                    const user = users.get(Number(values[values.length - 1]));
+                    if (!user) return [{ affectedRows: 0 }];
+                    if (sql.includes('password_hash = ?')) user.password_hash = values[0];
+                    if (sql.includes('role = ?')) user.role = values[0];
+                    if (sql.includes('token_version = token_version + 1')) user.token_version += 1;
+                    return [{ affectedRows: 1 }];
+                }
+                if (sql.includes('WHERE username = ?')) {
+                    const user = [...users.values()].find(u => u.username === values[0]);
+                    return [user ? [{ ...user }] : []];
+                }
+                if (sql.includes('WHERE id = ?')) {
+                    const user = users.get(Number(values[0]));
+                    return [user ? [{ ...user }] : []];
+                }
+                return [[]];
+            },
+            getConnection: async () => ({
+                query: (sql, values) => statefulPool.query(sql, values),
+                beginTransaction: async () => { },
+                commit: async () => { },
+                rollback: async () => { },
+                release: () => { }
+            })
+        };
+
+        const login = async (username, password) => {
+            const res = await request(app).post('/api/login').send({ username, password });
+            assert.strictEqual(res.status, 200, `Logowanie ${username}: ${res.body.error}`);
+            return res.body.token;
+        };
+        const me = (token) => request(app).get('/api/me').set('Authorization', `Bearer ${token}`);
+
+        before(async () => {
+            mockPoolBefore = app.getPool();
+            app.setPool(statefulPool);
+        });
+
+        after(() => {
+            app.setPool(mockPoolBefore);
+        });
+
+        beforeEach(async () => {
+            const hash = await bcrypt.hash('StareHaslo123', 4);
+            users = new Map([
+                [5, { id: 5, username: 'jan_serwisant', password_hash: hash, role: 'serwisant', aktywny: 1, token_version: 0 }],
+                [6, { id: 6, username: 'szef_admin', password_hash: hash, role: 'admin', aktywny: 1, token_version: 0 }]
+            ]);
+        });
+
+        it('logowanie -> zmiana własnego hasła -> stary token dostaje 401, nowy token z odpowiedzi działa', async () => {
+            const oldToken = await login('jan_serwisant', 'StareHaslo123');
+            assert.strictEqual(jwt.decode(oldToken).tv, 0);
+
+            const res = await request(app)
+                .patch('/api/profil/haslo')
+                .set('Authorization', `Bearer ${oldToken}`)
+                .send({ currentPassword: 'StareHaslo123', newPassword: 'NoweHaslo456' });
+            assert.strictEqual(res.status, 200);
+            assert.deepStrictEqual(res.body.user, { id: 5, username: 'jan_serwisant', role: 'serwisant' });
+
+            const resOld = await me(oldToken);
+            assert.strictEqual(resOld.status, 401);
+            assert.ok(resOld.body.error.includes('Sesja została zakończona'));
+            assert.strictEqual((await me(res.body.token)).status, 200);
+            assert.strictEqual((await request(app).post('/api/login').send({ username: 'jan_serwisant', password: 'StareHaslo123' })).status, 401);
+        });
+
+        it('reset hasła przez admina unieważnia tokeny użytkownika, a admin dalej działa', async () => {
+            const userToken = await login('jan_serwisant', 'StareHaslo123');
+            const adminTok = await login('szef_admin', 'StareHaslo123');
+
+            const res = await request(app)
+                .patch('/api/admin/users/5/haslo')
+                .set('Authorization', `Bearer ${adminTok}`)
+                .send({ password: 'ResetHaslo789' });
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual(res.body.token, undefined, 'Nowy token dostaje tylko admin resetujący własne hasło');
+
+            assert.strictEqual((await me(userToken)).status, 401);
+            assert.strictEqual((await me(adminTok)).status, 200);
+        });
+
+        it('admin resetujący własne hasło dostaje nowy token, stary przestaje działać', async () => {
+            const adminTok = await login('szef_admin', 'StareHaslo123');
+            const res = await request(app)
+                .patch('/api/admin/users/6/haslo')
+                .set('Authorization', `Bearer ${adminTok}`)
+                .send({ password: 'ResetHaslo789' });
+            assert.strictEqual(res.status, 200);
+            assert.ok(res.body.token);
+            assert.strictEqual((await me(adminTok)).status, 401);
+            assert.strictEqual((await me(res.body.token)).status, 200);
+        });
+
+        it('zmiana roli: stary token dostaje 401, po ponownym logowaniu /api/me zwraca nową rolę', async () => {
+            const userToken = await login('jan_serwisant', 'StareHaslo123');
+            const adminTok = await login('szef_admin', 'StareHaslo123');
+            assert.strictEqual((await me(userToken)).body.role, 'serwisant');
+
+            const res = await request(app)
+                .patch('/api/admin/users/5')
+                .set('Authorization', `Bearer ${adminTok}`)
+                .send({ role: 'pracownik' });
+            assert.strictEqual(res.status, 200);
+
+            assert.strictEqual((await me(userToken)).status, 401);
+            const newToken = await login('jan_serwisant', 'StareHaslo123');
+            assert.deepStrictEqual((await me(newToken)).body, { id: 5, username: 'jan_serwisant', role: 'pracownik' });
+
+            // Zapis tej samej roli niczego nie zmienia, więc nie wylogowuje
+            const resSame = await request(app)
+                .patch('/api/admin/users/5')
+                .set('Authorization', `Bearer ${adminTok}`)
+                .send({ role: 'pracownik' });
+            assert.strictEqual(resSame.status, 200);
+            assert.strictEqual((await me(newToken)).status, 200);
+        });
+
+        it('"Wyloguj wszędzie" unieważnia wszystkie tokeny użytkownika, łącznie z bieżącym', async () => {
+            const tokenA = await login('jan_serwisant', 'StareHaslo123');
+            const tokenB = await login('jan_serwisant', 'StareHaslo123');
+            const res = await request(app).post('/api/wyloguj-wszedzie').set('Authorization', `Bearer ${tokenA}`);
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual((await me(tokenA)).status, 401);
+            assert.strictEqual((await me(tokenB)).status, 401);
+            assert.strictEqual((await me(await login('jan_serwisant', 'StareHaslo123'))).status, 200);
+        });
+
+        it('token bez claimu "tv" (wydany przed migracją 004) działa, dopóki wersja w bazie to 0', async () => {
+            const legacy = makeToken('serwisant', 5, 'jan_serwisant');
+            assert.strictEqual((await me(legacy)).status, 200);
+            users.get(5).token_version = 1;
+            assert.strictEqual((await me(legacy)).status, 401);
+        });
+
+        it('/api/me bierze rolę z bazy, a nie z tokenu', async () => {
+            const token = await login('jan_serwisant', 'StareHaslo123');
+            users.get(5).role = 'magazynier'; // np. zmiana bezpośrednio w bazie, bez podbicia wersji
+            const res = await me(token);
+            assert.strictEqual(res.status, 200);
+            assert.strictEqual(res.body.role, 'magazynier');
+        });
+
+        // Pamięć typu localStorage/sessionStorage dla testów modułów frontendu w Node
+        const memoryStorage = (initial = {}) => {
+            const data = new Map(Object.entries(initial));
+            return {
+                getItem: (k) => (data.has(k) ? data.get(k) : null),
+                setItem: (k, v) => data.set(k, String(v)),
+                removeItem: (k) => data.delete(k),
+                data
+            };
+        };
+        const jsonResponse = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+
+        it('panel: 401 czyści sesję i przekazuje komunikat "Sesja wygasła" do ekranu logowania', async () => {
+            const origFetch = global.fetch;
+            const origLocalStorage = global.localStorage;
+            const { apiPatch, onUnauthorized, SESSION_EXPIRED_MESSAGE } = await import('./frontend/src/api.js');
+            const messages = [];
+            const off = onUnauthorized((m) => messages.push(m));
+            try {
+                global.localStorage = memoryStorage({ serwis_token: 'smieci', serwis_user: '{"id":5}' });
+                global.fetch = async () => jsonResponse(401, { error: 'Odmowa dostępu: Nieprawidłowy lub wygasły token JWT' });
+                const result = await apiPatch('/zgloszenia/1/naprawione', { opis_naprawy: 'x' });
+                assert.strictEqual(result, null);
+                assert.deepStrictEqual(messages, [SESSION_EXPIRED_MESSAGE]);
+                assert.ok(SESSION_EXPIRED_MESSAGE.startsWith('Sesja wygasła'));
+                assert.strictEqual(global.localStorage.getItem('serwis_token'), null);
+            } finally {
+                off();
+                global.fetch = origFetch;
+                global.localStorage = origLocalStorage;
+            }
+        });
+
+        it('panel: 401 starego tokenu nie wylogowuje sesji, którą w międzyczasie zalogowała inna karta', async () => {
+            const origFetch = global.fetch;
+            const origLocalStorage = global.localStorage;
+            const { apiJson, onUnauthorized } = await import('./frontend/src/api.js');
+            let called = 0;
+            const off = onUnauthorized(() => called++);
+            try {
+                global.localStorage = memoryStorage({ serwis_token: 'token-admina' });
+                global.fetch = async () => {
+                    global.localStorage.setItem('serwis_token', 'token-magazyniera'); // logowanie w innej karcie w trakcie żądania
+                    return jsonResponse(401, { error: 'x' });
+                };
+                assert.strictEqual(await apiJson('/zgloszenia'), null);
+                assert.strictEqual(called, 0);
+                assert.strictEqual(global.localStorage.getItem('serwis_token'), 'token-magazyniera');
+            } finally {
+                off();
+                global.fetch = origFetch;
+                global.localStorage = origLocalStorage;
+            }
+        });
+
+        it('panel: po 403 pobiera /api/me i aktualizuje rolę w sesji, a zmiana własnego hasła zapisuje nowy token', async () => {
+            const origFetch = global.fetch;
+            const origLocalStorage = global.localStorage;
+            const { apiJson, onSessionUpdated, userApi } = await import('./frontend/src/api.js');
+            const updates = [];
+            const off = onSessionUpdated((token, user) => updates.push({ token, user }));
+            try {
+                global.localStorage = memoryStorage({
+                    serwis_token: 'tok',
+                    serwis_user: JSON.stringify({ id: 5, username: 'jan', role: 'serwisant' })
+                });
+                const calls = [];
+                global.fetch = async (url, opts = {}) => {
+                    calls.push(url);
+                    if (url === '/api/me') return jsonResponse(200, { id: 5, username: 'jan', role: 'pracownik' });
+                    if (url === '/api/profil/haslo') return jsonResponse(200, { message: 'ok', token: 'nowy-tok', user: { id: 5, username: 'jan', role: 'pracownik' } });
+                    return jsonResponse(403, { error: 'Brak uprawnień.' });
+                };
+                await assert.rejects(() => apiJson('/zgloszenia/1/przypisz', { method: 'PATCH' }), { status: 403 });
+                await new Promise((r) => setTimeout(r, 20));
+                assert.ok(calls.includes('/api/me'), 'Po 403 panel pyta /api/me');
+                assert.strictEqual(JSON.parse(global.localStorage.getItem('serwis_user')).role, 'pracownik');
+                assert.deepStrictEqual(updates.at(-1), { token: 'tok', user: { id: 5, username: 'jan', role: 'pracownik' } });
+
+                await userApi.changeOwnPassword({ currentPassword: 'a', newPassword: 'b' });
+                assert.strictEqual(global.localStorage.getItem('serwis_token'), 'nowy-tok');
+                assert.strictEqual(updates.at(-1).token, 'nowy-tok');
+            } finally {
+                off();
+                global.fetch = origFetch;
+                global.localStorage = origLocalStorage;
+            }
+        });
+
+        it('panel: szkic opisu naprawy i okno do przywrócenia są przypisane do użytkownika i znikają po udanym zapisie', async () => {
+            const origWindow = global.window;
+            global.window = { sessionStorage: memoryStorage() };
+            try {
+                const szkice = await import('./frontend/src/szkice.js');
+                const key = szkice.repairDraftKey(5, 39);
+                szkice.writeDraft(key, 'Długi opis naprawy');
+                szkice.rememberOpenRepair(5, 39);
+                assert.strictEqual(szkice.readDraft(key), 'Długi opis naprawy');
+                assert.strictEqual(szkice.pendingRepairTicketId(5), 39);
+                assert.strictEqual(szkice.pendingRepairTicketId(6), null, 'Inny użytkownik w tej karcie nie dostaje cudzego okna');
+                assert.notStrictEqual(szkice.repairDraftKey(6, 39), key);
+                szkice.clearDraft(key);
+                szkice.forgetOpenRepair();
+                assert.strictEqual(szkice.readDraft(key), null);
+                assert.strictEqual(szkice.pendingRepairTicketId(5), null);
+            } finally {
+                global.window = origWindow;
+            }
+
+            const repairJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'RepairModal.jsx'), 'utf8');
+            assert.ok(repairJsx.includes('readDraft(draftKey) ?? ticket?.opis_naprawy'));
+            assert.ok(/const saved = await onSubmit\([\s\S]{0,60}if \(saved\) clearDraft\(draftKey\)/.test(repairJsx), 'Szkic znika tylko po udanym zapisie');
+            const dashboardJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'Dashboard.jsx'), 'utf8');
+            assert.ok(dashboardJsx.includes('if (!data) return false;'), 'runTicketMutation odróżnia wygasłą sesję od sukcesu');
+            assert.ok(dashboardJsx.includes('pendingRepairTicketId(user?.id)'));
+        });
+
+        it('panel: synchronizacja kart (zdarzenie storage), świeży Dashboard dla innego użytkownika/roli i komunikat na ekranie logowania', () => {
+            const appJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'App.jsx'), 'utf8');
+            assert.ok(appJsx.includes("window.addEventListener('storage', handleStorage)"));
+            assert.ok(appJsx.includes("setLoginNotice('Wylogowano w innej karcie przeglądarki.')"));
+            assert.ok(appJsx.includes('key={`${user?.id}:${user?.role}`}'));
+            assert.ok(appJsx.includes('if (token) authApi.me();'));
+            const loginJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'LoginForm.jsx'), 'utf8');
+            assert.ok(loginJsx.includes("notice ? { message: notice, type: 'info' }"));
+            const dashboardJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'Dashboard.jsx'), 'utf8');
+            assert.ok(dashboardJsx.includes('onClick={() => onLogout()}'), 'Zdarzenie kliknięcia nie może trafić do onLogout jako komunikat');
+            assert.ok(dashboardJsx.includes('authApi.logoutEverywhere()'));
+        });
+
+        it('migracja 004 dodaje uzytkownicy.token_version, a schemat referencyjny ją zawiera', () => {
+            const migration = fs.readFileSync(path.join(__dirname, 'migrations', '004_uzytkownicy_token_version.sql'), 'utf8');
+            assert.ok(/ALTER TABLE uzytkownicy ADD COLUMN IF NOT EXISTS token_version INT NOT NULL DEFAULT 0/.test(migration));
+            const schema = fs.readFileSync(path.join(__dirname, 'schemat.sql'), 'utf8');
+            assert.ok(schema.includes('token_version INT NOT NULL DEFAULT 0'));
         });
     });
 });

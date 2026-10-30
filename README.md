@@ -255,6 +255,12 @@ W systemie reguły cyklu życia zgłoszeń znajdują się w jednym miejscu na ba
 
 Każdy zalogowany użytkownik ma dodatkowo możliwość zmiany swojego hasła w nagłówku panelu po podaniu dotychczasowego hasła.
 
+**Sesje i bezpieczeństwo kont:**
+- Zmiana hasła (własnego lub reset przez administratora) oraz zmiana roli natychmiast unieważniają wszystkie wcześniejsze sesje tego konta. Osoba, która zmienia własne hasło, zostaje zalogowana w bieżącej karcie.
+- Przycisk **„Wyloguj wszędzie”** w nagłówku panelu kończy sesje konta na wszystkich urządzeniach.
+- Po wygaśnięciu sesji (24 h) lub jej unieważnieniu panel pokazuje ekran logowania z komunikatem „Sesja wygasła…”. Niezapisany opis naprawy jest przechowywany w karcie przeglądarki, a po ponownym zalogowaniu okno naprawy otwiera się z tym opisem.
+- Zalogowanie innego użytkownika lub wylogowanie w innej karcie przeglądarki od razu zmienia też pozostałe otwarte karty panelu.
+
 ---
 
 ## Jak założyć konto użytkownika

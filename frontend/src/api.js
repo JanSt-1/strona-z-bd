@@ -14,24 +14,70 @@ async function safeFetch(url, options) {
   }
 }
 
-let unauthorizedHandlers = [];
+export const SESSION_EXPIRED_MESSAGE =
+  'Sesja wygasła lub została zakończona. Zaloguj się ponownie.';
 
-export function onUnauthorized(callback) {
-  unauthorizedHandlers.push(callback);
+let unauthorizedHandlers = [];
+let sessionHandlers = [];
+
+function subscribe(list, callback) {
+  list.push(callback);
   return () => {
-    unauthorizedHandlers = unauthorizedHandlers.filter((cb) => cb !== callback);
+    const index = list.indexOf(callback);
+    if (index !== -1) list.splice(index, 1);
   };
 }
 
-function notifyUnauthorized() {
-  authApi.clearSession();
-  unauthorizedHandlers.forEach((cb) => {
+function notify(list, ...args) {
+  list.slice().forEach((cb) => {
     try {
-      cb();
+      cb(...args);
     } catch (err) {
-      console.error('Błąd podczas obsługi wylogowania:', err);
+      console.error('Błąd podczas obsługi zmiany sesji:', err);
     }
   });
+}
+
+// Wywoływane z komunikatem dla ekranu logowania, gdy serwer odrzuci token (401)
+export function onUnauthorized(callback) {
+  return subscribe(unauthorizedHandlers, callback);
+}
+
+// Wywoływane z (token, user), gdy w tej karcie zmienił się token lub dane użytkownika (np. nowa rola z /api/me)
+export function onSessionUpdated(callback) {
+  return subscribe(sessionHandlers, callback);
+}
+
+function notifyUnauthorized(message) {
+  authApi.clearSession();
+  notify(unauthorizedHandlers, message);
+}
+
+let refreshUserPromise = null;
+
+// Pobiera aktualne dane użytkownika z serwera (rola z bazy, nie z localStorage); równoległe wywołania są łączone
+export function refreshCurrentUser() {
+  if (!refreshUserPromise) {
+    refreshUserPromise = apiJson('/me', {}, 'Nie udało się pobrać danych użytkownika.')
+      .then((user) => {
+        const token = authApi.getToken();
+        if (user && token) {
+          const prev = authApi.getUser();
+          if (prev?.id !== user.id || prev?.role !== user.role || prev?.username !== user.username) {
+            authApi.updateSession(token, user);
+          }
+        }
+        return user;
+      })
+      .catch((err) => {
+        console.error('Błąd odświeżania danych użytkownika:', err);
+        return null;
+      })
+      .finally(() => {
+        refreshUserPromise = null;
+      });
+  }
+  return refreshUserPromise;
 }
 
 export async function apiFetch(endpoint, options = {}) {
@@ -48,8 +94,16 @@ export async function apiFetch(endpoint, options = {}) {
   const response = await safeFetch(url, { ...options, headers });
 
   if (response.status === 401) {
-    notifyUnauthorized();
+    // Odrzucony token, który w międzyczasie zastąpiło logowanie w innej karcie, nie wylogowuje nowej sesji
+    if (localStorage.getItem('serwis_token') === currentToken) {
+      notifyUnauthorized(currentToken ? SESSION_EXPIRED_MESSAGE : null);
+    }
     return null;
+  }
+
+  // 403 może oznaczać zmienioną rolę - panel pobiera aktualne dane użytkownika z /api/me
+  if (response.status === 403 && currentToken && endpoint !== '/me') {
+    refreshCurrentUser();
   }
 
   return response;
@@ -127,6 +181,17 @@ export const authApi = {
     localStorage.setItem('serwis_token', token);
     localStorage.setItem('serwis_user', JSON.stringify(user));
   },
+  // Jak setSession, ale dodatkowo powiadamia aplikację (zdarzenie "storage" nie dociera do karty, która zapisała)
+  updateSession(token, user) {
+    authApi.setSession(token, user);
+    notify(sessionHandlers, token, user);
+  },
+  me() {
+    return refreshCurrentUser();
+  },
+  logoutEverywhere() {
+    return apiPost('/wyloguj-wszedzie', {}, 'Nie udało się wylogować pozostałych sesji.');
+  },
   clearSession() {
     localStorage.removeItem('serwis_token');
     localStorage.removeItem('serwis_user');
@@ -201,10 +266,20 @@ export const userApi = {
   toggleStatus(userId, aktywny) {
     return apiPatch(`/admin/users/${userId}/status`, { aktywny }, 'Nie udało się zmienić statusu konta.');
   },
-  resetPassword(userId, password) {
-    return apiPatch(`/admin/users/${userId}/haslo`, { password }, 'Nie udało się zmienić hasła użytkownika.');
+  // Zmiana hasła unieważnia stare tokeny; gdy dotyczy własnego konta, serwer zwraca nowy token dla tej karty
+  async resetPassword(userId, password) {
+    return keepSessionFrom(
+      await apiPatch(`/admin/users/${userId}/haslo`, { password }, 'Nie udało się zmienić hasła użytkownika.')
+    );
   },
-  changeOwnPassword({ currentPassword, newPassword }) {
-    return apiPatch('/profil/haslo', { currentPassword, newPassword }, 'Nie udało się zmienić własnego hasła.');
+  async changeOwnPassword({ currentPassword, newPassword }) {
+    return keepSessionFrom(
+      await apiPatch('/profil/haslo', { currentPassword, newPassword }, 'Nie udało się zmienić własnego hasła.')
+    );
   }
 };
+
+function keepSessionFrom(data) {
+  if (data?.token && data.user) authApi.updateSession(data.token, data.user);
+  return data;
+}

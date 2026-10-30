@@ -3,7 +3,9 @@ import Header from './components/Header';
 import PublicTicketForm from './pages/PublicTicketForm';
 import LoginForm from './pages/LoginForm';
 import Dashboard from './pages/Dashboard';
-import { authApi, onUnauthorized } from './api';
+import { authApi, onUnauthorized, onSessionUpdated } from './api';
+
+const SESSION_KEYS = ['serwis_token', 'serwis_user'];
 
 const ADMIN_URL_KEYS = ['status', 'pracownik', 'worker', 'szukaj', 'search', 'strona', 'page'];
 
@@ -74,12 +76,46 @@ export default function App() {
   );
   const [token, setToken] = useState(() => authApi.getToken());
   const [user, setUser] = useState(() => authApi.getUser());
+  // Komunikat na ekranie logowania (wygasła sesja, wylogowanie w innej karcie)
+  const [loginNotice, setLoginNotice] = useState(null);
 
   useEffect(() => {
-    return onUnauthorized(() => {
+    const offUnauthorized = onUnauthorized((message) => {
       setToken(null);
       setUser(null);
+      if (message) setLoginNotice(message);
     });
+    const offSession = onSessionUpdated((newToken, newUser) => {
+      setToken(newToken);
+      setUser(newUser);
+    });
+    return () => {
+      offUnauthorized();
+      offSession();
+    };
+  }, []);
+
+  // Rola i nazwa użytkownika z bazy (/api/me), a nie z localStorage zapisanego przy logowaniu
+  useEffect(() => {
+    if (token) authApi.me();
+  }, [token]);
+
+  // Inna karta zalogowała innego użytkownika albo wylogowała - ta karta przejmuje jej sesję zamiast pokazywać stary panel
+  useEffect(() => {
+    function handleStorage(e) {
+      if (e.key !== null && !SESSION_KEYS.includes(e.key)) return;
+      const newToken = authApi.getToken();
+      if (!newToken) {
+        setToken(null);
+        setUser(null);
+        setLoginNotice('Wylogowano w innej karcie przeglądarki.');
+        return;
+      }
+      setToken(newToken);
+      setUser(authApi.getUser());
+    }
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
   }, []);
 
   useEffect(() => {
@@ -101,10 +137,11 @@ export default function App() {
     window.history.pushState({}, '', url.pathname + (query ? `?${query}` : ''));
   }
 
-  function handleLogout() {
+  function handleLogout(message = null) {
     authApi.clearSession();
     setToken(null);
     setUser(null);
+    setLoginNotice(message);
   }
 
   const isWideDashboard = activeTab !== 'public' && Boolean(token);
@@ -124,10 +161,13 @@ export default function App() {
           {activeTab === 'public' ? (
             <PublicTicketForm />
           ) : token ? (
-            <Dashboard user={user} token={token} onLogout={handleLogout} />
+            // Inny użytkownik lub nowa rola = świeży panel (bez przycisków i filtrów poprzedniej sesji)
+            <Dashboard key={`${user?.id}:${user?.role}`} user={user} token={token} onLogout={handleLogout} />
           ) : (
             <LoginForm
+              notice={loginNotice}
               onLoginSuccess={(newToken, newUser) => {
+                setLoginNotice(null);
                 setToken(newToken);
                 setUser(newUser);
               }}

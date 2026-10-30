@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { authApi } from '../api';
 import Alert from '../components/Alert';
 
-export default function LoginForm({ onLoginSuccess }) {
+export default function LoginForm({ onLoginSuccess, notice = null }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -33,7 +33,7 @@ export default function LoginForm({ onLoginSuccess }) {
         </p>
       </div>
 
-      <Alert alert={alert} />
+      <Alert alert={alert || (notice ? { message: notice, type: 'info' } : null)} />
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>

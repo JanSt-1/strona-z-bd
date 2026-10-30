@@ -1,10 +1,18 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Modal from './Modal';
+import { repairDraftKey, readDraft, writeDraft, clearDraft } from '../szkice';
 
-export default function RepairModal({ ticket, onClose, onSubmit }) {
-  const [opis, setOpis] = useState(ticket?.opis_naprawy || '');
+export default function RepairModal({ ticket, userId, onClose, onSubmit }) {
+  const draftKey = repairDraftKey(userId, ticket?.id);
+  // Szkic z sessionStorage ma pierwszeństwo - np. po wygaśnięciu sesji w trakcie pisania
+  const [opis, setOpis] = useState(() => readDraft(draftKey) ?? ticket?.opis_naprawy ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [modalError, setModalError] = useState(null);
+  const [hasDraft] = useState(() => Boolean(readDraft(draftKey)));
+
+  useEffect(() => {
+    writeDraft(draftKey, opis.trim() ? opis : '');
+  }, [draftKey, opis]);
 
   if (!ticket) return null;
 
@@ -16,7 +24,8 @@ export default function RepairModal({ ticket, onClose, onSubmit }) {
     }
     setSubmitting(true);
     try {
-      await onSubmit(ticket.id, opis.trim());
+      const saved = await onSubmit(ticket.id, opis.trim());
+      if (saved) clearDraft(draftKey);
     } catch (err) {
       setModalError(err.message || 'Wystąpił błąd podczas zatwierdzania naprawy.');
     } finally {
@@ -61,6 +70,11 @@ export default function RepairModal({ ticket, onClose, onSubmit }) {
             onChange={(e) => setOpis(e.target.value)}
             className="w-full bg-card text-ink border border-line rounded-lg p-3 text-sm resize-y outline-none focus:ring-2 focus:ring-primary"
           />
+          {hasDraft && (
+            <small className="block text-primary-dark text-xs mt-1.5 font-medium">
+              Przywrócono niezapisany szkic opisu. Szkic jest przechowywany w tej karcie do czasu zatwierdzenia naprawy.
+            </small>
+          )}
           <small className="block text-muted text-xs mt-1.5 leading-normal">
             Wpis zostanie automatycznie opatrzony bieżącą datą i czasem serwera. Po zatwierdzeniu zlecenie natychmiast pojawi się u magazynierów ze statusem "Do wysyłki".
           </small>

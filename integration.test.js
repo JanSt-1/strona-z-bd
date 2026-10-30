@@ -109,6 +109,7 @@ const makeToken = (role, id = 1, username = 'test_user') =>
             assert.ok(versions.includes('001_init.sql'), 'Brak 001_init.sql w schema_migrations');
             assert.ok(versions.includes('002_aktualizacja_kolumn_i_indeksow.sql'), 'Brak 002_aktualizacja_kolumn_i_indeksow.sql w schema_migrations');
             assert.ok(versions.includes('003_historia_szczegoly_mediumtext.sql'), 'Brak 003_historia_szczegoly_mediumtext.sql w schema_migrations');
+            assert.ok(versions.includes('004_uzytkownicy_token_version.sql'), 'Brak 004_uzytkownicy_token_version.sql w schema_migrations');
 
             const pending = await checkPendingMigrations(pool);
             assert.strictEqual(pending.length, 0, 'Oczekiwano 0 oczekujących migracji');
@@ -424,6 +425,50 @@ const makeToken = (role, id = 1, username = 'test_user') =>
             );
             assert.strictEqual(histAfterRollback.length, 1, 'W historii musi istnieć wpis cofnięcia statusu');
             assert.ok(histAfterRollback[0].szczegoly.includes(longOpis), 'Pełny 65 000-znakowy opis naprawy musi być zachowany w historii po cofnięciu');
+        });
+
+        it('11. Sesje: zmiana własnego hasła, reset przez admina i zmiana roli unieważniają stare tokeny (token_version w bazie)', async () => {
+            const login = async (username, password) => {
+                const res = await request(app).post('/api/login').send({ username, password });
+                assert.strictEqual(res.status, 200, `Logowanie ${username}: ${res.body.error}`);
+                return res.body.token;
+            };
+            const me = (token) => request(app).get('/api/me').set('Authorization', `Bearer ${token}`);
+
+            // 1. Zmiana własnego hasła: stary token 401, nowy z odpowiedzi działa
+            const oldToken = await login('serwisant_db', 'HasloTestowe123!');
+            const resOwn = await request(app)
+                .patch('/api/profil/haslo')
+                .set('Authorization', `Bearer ${oldToken}`)
+                .send({ currentPassword: 'HasloTestowe123!', newPassword: 'NoweHaslo456!' });
+            assert.strictEqual(resOwn.status, 200);
+            assert.strictEqual((await me(oldToken)).status, 401);
+            assert.strictEqual((await me(resOwn.body.token)).status, 200);
+
+            // 2. Reset hasła przez admina: token użytkownika 401
+            const adminTok = await login('admin_db', 'HasloTestowe123!');
+            const beforeReset = await login('serwisant_db', 'NoweHaslo456!');
+            const resReset = await request(app)
+                .patch(`/api/admin/users/${serwisantUser.id}/haslo`)
+                .set('Authorization', `Bearer ${adminTok}`)
+                .send({ password: 'ResetHaslo789!' });
+            assert.strictEqual(resReset.status, 200);
+            assert.strictEqual((await me(beforeReset)).status, 401);
+
+            // 3. Zmiana roli: stary token 401, po zalogowaniu /api/me zwraca nową rolę
+            const beforeRole = await login('serwisant_db', 'ResetHaslo789!');
+            const resRole = await request(app)
+                .patch(`/api/admin/users/${serwisantUser.id}`)
+                .set('Authorization', `Bearer ${adminTok}`)
+                .send({ role: 'pracownik' });
+            assert.strictEqual(resRole.status, 200);
+            assert.strictEqual((await me(beforeRole)).status, 401);
+            const afterRole = await me(await login('serwisant_db', 'ResetHaslo789!'));
+            assert.strictEqual(afterRole.body.role, 'pracownik');
+
+            const [[row]] = await dbConnection.query('SELECT token_version FROM uzytkownicy WHERE id = ?', [serwisantUser.id]);
+            assert.strictEqual(row.token_version, 3);
+            assert.strictEqual((await me(adminTok)).status, 200, 'Zmiany cudzego konta nie wylogowują admina');
         });
     });
 })();

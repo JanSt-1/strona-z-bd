@@ -156,6 +156,33 @@ async function dodajWpisHistorii(connOrId, zgloszenieId, uzytkownikId, akcja, zS
     );
 }
 
+// --- Tokeny JWT ---
+// Claim "tv" to uzytkownicy.token_version z chwili logowania; tokeny bez "tv" (sprzed migracji 004) traktujemy jak wersję 0
+const tokenVersionOf = (value) => Number(value ?? 0) || 0;
+const SESSION_REVOKED_ERR = 'Sesja została zakończona (np. po zmianie hasła lub uprawnień). Zaloguj się ponownie.';
+
+const publicUser = (user) => ({ id: user.id, username: user.username, role: user.role });
+
+// Token JWT ważny przez 24 godziny
+const signToken = (user) => jwt.sign(
+    { ...publicUser(user), tv: tokenVersionOf(user.token_version) },
+    JWT_SECRET,
+    { expiresIn: '24h', algorithm: 'HS256' }
+);
+
+// Zwiększa wersję tokenów użytkownika (unieważnia wszystkie jego dotychczasowe tokeny) i zwraca aktualny wiersz
+async function revokeUserTokens(userId, extraSet = '', extraParams = []) {
+    await currentPool.query(
+        `UPDATE uzytkownicy SET ${extraSet}token_version = token_version + 1 WHERE id = ?`,
+        [...extraParams, userId]
+    );
+    const [rows] = await currentPool.query(
+        'SELECT id, username, role, aktywny, token_version FROM uzytkownicy WHERE id = ?',
+        [userId]
+    );
+    return rows?.[0] || null;
+}
+
 // --- Middleware autoryzacji JWT ---
 async function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
@@ -177,15 +204,19 @@ async function authenticateToken(req, res, next) {
 
     try {
         const [rows] = await currentPool.query(
-            'SELECT id, username, role, aktywny FROM uzytkownicy WHERE id = ?',
+            'SELECT id, username, role, aktywny, token_version FROM uzytkownicy WHERE id = ?',
             [decodedUser.id]
         );
         const dbUser = rows?.[0];
         if (!isUserActive(dbUser)) {
             return fail(res, 'Odmowa dostępu: Konto użytkownika nie istnieje lub zostało zablokowane.', 401);
         }
+        // Zmiana hasła, roli lub "Wyloguj wszędzie" podbija token_version - starsze tokeny przestają działać
+        if (tokenVersionOf(decodedUser.tv) !== tokenVersionOf(dbUser.token_version)) {
+            return fail(res, SESSION_REVOKED_ERR, 401);
+        }
 
-        req.user = { id: dbUser.id, username: dbUser.username, role: dbUser.role };
+        req.user = publicUser(dbUser);
         next();
     } catch (err) {
         logError('Błąd podczas weryfikacji użytkownika w authenticateToken:', err);
@@ -505,7 +536,7 @@ app.post('/api/login', loginLimiter, async (req, res) => {
 
     return safe('Błąd podczas logowania:', 'Błąd serwera podczas procesu logowania.', async () => {
         const [rows] = await currentPool.query(
-            'SELECT id, username, password_hash, role, aktywny FROM uzytkownicy WHERE username = ?',
+            'SELECT id, username, password_hash, role, aktywny, token_version FROM uzytkownicy WHERE username = ?',
             [loginUsername]
         );
 
@@ -524,15 +555,10 @@ app.post('/api/login', loginLimiter, async (req, res) => {
             return fail(res, 'Konto użytkownika zostało zablokowane. Skontaktuj się z administratorem.', 403);
         }
 
-        const payload = { id: user.id, username: user.username, role: user.role };
-
-        // Generowanie tokenu JWT ważnego przez 24 godziny
-        const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '24h', algorithm: 'HS256' });
-
         return res.json({
             message: 'Zalogowano pomyślnie.',
-            token,
-            user: payload
+            token: signToken(user),
+            user: publicUser(user)
         });
     })(req, res);
 });
@@ -1436,7 +1462,10 @@ app.patch('/api/admin/users/:id', authenticateToken, requireAdmin,
         const [users] = await currentPool.query('SELECT id, username, role FROM uzytkownicy WHERE id = ?', [id]);
         if (!users || users.length === 0) return fail(res, `Nie znaleziono użytkownika o ID ${id}.`, 404);
 
-        await currentPool.query('UPDATE uzytkownicy SET role = ? WHERE id = ?', [role, id]);
+        // Zmiana roli unieważnia sesje użytkownika - panel nie może dalej działać ze starymi uprawnieniami
+        if (users[0].role !== role) {
+            await revokeUserTokens(id, 'role = ?, ', [role]);
+        }
 
         return res.json({
             message: `Rola użytkownika ${users[0].username} została zmieniona na "${role}".`,
@@ -1464,11 +1493,13 @@ app.patch('/api/admin/users/:id/haslo', authenticateToken, requireAdmin,
         if (!users || users.length === 0) return fail(res, `Nie znaleziono użytkownika o ID ${id}.`, 404);
 
         const hashedPassword = await bcrypt.hash(password, 10);
-        await currentPool.query('UPDATE uzytkownicy SET password_hash = ? WHERE id = ?', [hashedPassword, id]);
+        const updated = await revokeUserTokens(id, 'password_hash = ?, ', [hashedPassword]);
 
         return res.json({
             message: `Hasło dla użytkownika ${users[0].username} zostało pomyślnie zmienione.`,
-            id
+            id,
+            // Admin resetujący własne hasło dostaje nowy token, żeby nie wylogować bieżącej karty
+            ...(Number(req.user.id) === id && updated ? { token: signToken(updated), user: publicUser(updated) } : {})
         });
     }));
 
@@ -1551,9 +1582,23 @@ app.patch('/api/profil/haslo', authenticateToken, hasloLimiter,
         if (!isPasswordValid) return fail(res, 'Aktualne hasło jest nieprawidłowe.', 400);
 
         const hashedPassword = await bcrypt.hash(newPass, 10);
-        await currentPool.query('UPDATE uzytkownicy SET password_hash = ? WHERE id = ?', [hashedPassword, user.id]);
+        const updated = await revokeUserTokens(user.id, 'password_hash = ?, ', [hashedPassword]);
 
-        return res.json({ message: 'Twoje hasło zostało pomyślnie zmienione.' });
+        // Pozostałe sesje (inne urządzenia) są unieważnione; ta karta dostaje nowy token
+        return res.json({
+            message: 'Twoje hasło zostało pomyślnie zmienione. Pozostałe sesje zostały wylogowane.',
+            ...(updated ? { token: signToken(updated), user: publicUser(updated) } : {})
+        });
+    }));
+
+// 13. GET /api/me - Aktualne dane zalogowanego użytkownika z bazy (panel bierze z nich rolę, nie z localStorage)
+app.get('/api/me', authenticateToken, (req, res) => res.json(req.user));
+
+// 14. POST /api/wyloguj-wszedzie - Unieważnia wszystkie tokeny zalogowanego użytkownika (także bieżący)
+app.post('/api/wyloguj-wszedzie', authenticateToken,
+    safe('Błąd podczas wylogowywania sesji:', 'Błąd serwera podczas wylogowywania sesji.', async (req, res) => {
+        await revokeUserTokens(req.user.id);
+        return res.json({ message: 'Wylogowano ze wszystkich urządzeń.' });
     }));
 
 

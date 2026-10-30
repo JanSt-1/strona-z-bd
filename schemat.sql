@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS uzytkownicy (
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(20) DEFAULT 'pracownik',
     aktywny BOOLEAN NOT NULL DEFAULT TRUE,
+    token_version INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
