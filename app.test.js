@@ -3531,7 +3531,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.ok(conflictBranch[1].includes('fetchTickets()') && conflictBranch[1].includes('refreshDrawerTicket('));
             assert.ok(!conflictBranch[1].includes('closeFn'), 'Przy 409 okno nie może się zamykać jak przy sukcesie');
             assert.ok(!conflictBranch[1].includes('return'), 'Przy 409 błąd musi trafić do okna (throw)');
-            assert.ok(shipModal.includes('if (err.status === 409) setConflict(true)'));
+            assert.ok(/if \(err\.status === 409\) \{[\s\S]{0,200}setConflict\(true\)/.test(shipModal));
             assert.ok(shipModal.includes('{!conflict && ('), 'Po konflikcie przycisk zatwierdzenia ma zniknąć');
         });
 
@@ -3957,22 +3957,36 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             }
         });
 
-        it('panel: szkic opisu naprawy i okno do przywrócenia są przypisane do użytkownika i znikają po udanym zapisie', async () => {
+        it('panel: szkice (opis naprawy, numer listu) i okno do przywrócenia są przypisane do użytkownika i znikają po udanym zapisie', async () => {
             const origWindow = global.window;
             global.window = { sessionStorage: memoryStorage() };
             try {
                 const szkice = await import('./frontend/src/szkice.js');
-                const key = szkice.repairDraftKey(5, 39);
+                const key = szkice.modalDraftKey('repair', 5, 39);
                 szkice.writeDraft(key, 'Długi opis naprawy');
-                szkice.rememberOpenRepair(5, 39);
+                szkice.rememberOpenModal('repair', 5, 39);
                 assert.strictEqual(szkice.readDraft(key), 'Długi opis naprawy');
-                assert.strictEqual(szkice.pendingRepairTicketId(5), 39);
-                assert.strictEqual(szkice.pendingRepairTicketId(6), null, 'Inny użytkownik w tej karcie nie dostaje cudzego okna');
-                assert.notStrictEqual(szkice.repairDraftKey(6, 39), key);
+                assert.deepStrictEqual(szkice.pendingModal(5), { kind: 'repair', ticketId: 39 });
+                assert.strictEqual(szkice.pendingModal(6), null, 'Inny użytkownik w tej karcie nie dostaje cudzego okna');
+                assert.notStrictEqual(szkice.modalDraftKey('repair', 6, 39), key);
                 szkice.clearDraft(key);
-                szkice.forgetOpenRepair();
+                szkice.forgetOpenModal();
                 assert.strictEqual(szkice.readDraft(key), null);
-                assert.strictEqual(szkice.pendingRepairTicketId(5), null);
+                assert.strictEqual(szkice.pendingModal(5), null);
+
+                // Numer listu: osobne szkice dla "Oznacz jako wysłane" i edycji numeru, niezależne od szkicu naprawy
+                const shipKey = szkice.modalDraftKey('ship', 5, 39);
+                const trackingKey = szkice.modalDraftKey('tracking', 5, 39);
+                assert.strictEqual(new Set([key, shipKey, trackingKey]).size, 3);
+                szkice.writeDraft(shipKey, 'DPD0123456789PL');
+                szkice.rememberOpenModal('ship', 5, 39);
+                assert.deepStrictEqual(szkice.pendingModal(5), { kind: 'ship', ticketId: 39 });
+                assert.strictEqual(szkice.readDraft(shipKey), 'DPD0123456789PL');
+                assert.strictEqual(szkice.readDraft(trackingKey), null);
+                szkice.rememberOpenModal('tracking', 5, 39);
+                assert.deepStrictEqual(szkice.pendingModal(5), { kind: 'tracking', ticketId: 39 });
+                szkice.rememberOpenModal('nieznane', 5, 39);
+                assert.strictEqual(szkice.pendingModal(5), null, 'Nieznany rodzaj okna nie jest przywracany');
             } finally {
                 global.window = origWindow;
             }
@@ -3982,7 +3996,17 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.ok(/const saved = await onSubmit\([\s\S]{0,60}if \(saved\) clearDraft\(draftKey\)/.test(repairJsx), 'Szkic znika tylko po udanym zapisie');
             const dashboardJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'Dashboard.jsx'), 'utf8');
             assert.ok(dashboardJsx.includes('if (!data) return false;'), 'runTicketMutation odróżnia wygasłą sesję od sukcesu');
-            assert.ok(dashboardJsx.includes('pendingRepairTicketId(user?.id)'));
+            assert.ok(dashboardJsx.includes('pendingModal(user?.id)'));
+            assert.ok(dashboardJsx.includes("rememberOpenModal('ship', user?.id, ticket.id)"));
+            assert.ok(dashboardJsx.includes("rememberOpenModal('tracking', user?.id, ticket.id)"));
+            assert.ok(dashboardJsx.includes('onOpenTrackingModal={handleOpenTrackingModal}'));
+            assert.strictEqual((dashboardJsx.match(/userId=\{user\?\.id\}/g) || []).length, 3, 'RepairModal i oba ShipModal dostają userId');
+
+            const shipJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'ShipModal.jsx'), 'utf8');
+            assert.ok(shipJsx.includes('readDraft(draftKey) ?? savedNumer'));
+            assert.ok(/const saved = await handler\([\s\S]{0,60}if \(saved\) clearDraft\(draftKey\)/.test(shipJsx), 'Szkic numeru listu znika tylko po udanym zapisie');
+            assert.ok(!/await handler\([^)]*\);\s*onClose\(\)/.test(shipJsx), 'Po wygaśnięciu sesji okno nie może się zamknąć i skasować okna do przywrócenia');
+            assert.ok(/setConflict\(true\);\s*clearDraft\(draftKey\)/.test(shipJsx), 'Po 409 nieaktualny szkic jest usuwany');
         });
 
         it('panel: synchronizacja kart (zdarzenie storage), świeży Dashboard dla innego użytkownika/roli i komunikat na ekranie logowania', () => {

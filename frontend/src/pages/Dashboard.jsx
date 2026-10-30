@@ -11,7 +11,7 @@ import AdminUsersPanel from '../components/AdminUsersPanel';
 import TicketDetailsDrawer from '../components/TicketDetailsDrawer';
 import StatusBadge from '../components/StatusBadge';
 import { STATUS_LABELS, formatDate, formatDateTime, getTicketActionState } from '../constants';
-import { rememberOpenRepair, forgetOpenRepair, pendingRepairTicketId } from '../szkice';
+import { rememberOpenModal, forgetOpenModal, pendingModal, clearDraft, modalDraftKey } from '../szkice';
 
 function readFiltersFromUrl() {
   const sp = new URLSearchParams(window.location.search);
@@ -260,19 +260,26 @@ export default function Dashboard({ user, token, onLogout }) {
     }
   }, [dashboardTab, fetchWorkers]);
 
-  // Po ponownym zalogowaniu (np. po wygaśnięciu sesji) otwieramy okno naprawy, które było otwarte - szkic opisu wraca w nim
+  // Po ponownym zalogowaniu (np. po wygaśnięciu sesji) otwieramy okno, które było otwarte (naprawa, wysyłka, numer listu) - szkic wraca w nim
   useEffect(() => {
-    const ticketId = pendingRepairTicketId(user?.id);
-    if (!ticketId) return;
+    const pending = pendingModal(user?.id);
+    if (!pending) return;
     let active = true;
     ticketApi
-      .getTicketById(ticketId)
+      .getTicketById(pending.ticketId)
       .then((t) => {
         if (!active) return;
-        if (t && getTicketActionState(t).isRepairAction) setRepairModalTicket(t);
-        else forgetOpenRepair();
+        const state = t ? getTicketActionState(t) : null;
+        if (pending.kind === 'repair' && state?.isRepairAction) setRepairModalTicket(t);
+        else if (pending.kind === 'ship' && state?.isShipAction) setShipModalTicket(t);
+        else if (pending.kind === 'tracking' && state?.trackingAction) setTrackingModalTicket(t);
+        else {
+          // Akcja nie jest już dostępna (np. ktoś inny wysłał zlecenie) - nieaktualny szkic usuwamy
+          if (t) clearDraft(modalDraftKey(pending.kind, user?.id, pending.ticketId));
+          forgetOpenModal();
+        }
       })
-      .catch(() => forgetOpenRepair());
+      .catch(() => forgetOpenModal());
     return () => {
       active = false;
     };
@@ -363,19 +370,39 @@ export default function Dashboard({ user, token, onLogout }) {
   const handleCloseDrawer = useCallback(() => setDetailsDrawerTicket(null), []);
   const handleCloseAssignModal = useCallback(() => setAssignModalTicket(null), []);
   const handleCloseRepairModal = useCallback(() => {
-    forgetOpenRepair();
+    forgetOpenModal();
     setRepairModalTicket(null);
   }, []);
   const handleOpenRepairModal = useCallback(
     (ticket) => {
-      rememberOpenRepair(user?.id, ticket.id);
+      rememberOpenModal('repair', user?.id, ticket.id);
       setRepairModalTicket(ticket);
     },
     [user?.id]
   );
-  const handleCloseShipModal = useCallback(() => setShipModalTicket(null), []);
+  const handleCloseShipModal = useCallback(() => {
+    forgetOpenModal();
+    setShipModalTicket(null);
+  }, []);
+  const handleOpenShipModal = useCallback(
+    (ticket) => {
+      rememberOpenModal('ship', user?.id, ticket.id);
+      setShipModalTicket(ticket);
+    },
+    [user?.id]
+  );
   const handleCloseRollbackModal = useCallback(() => setRollbackModalData(null), []);
-  const handleCloseTrackingModal = useCallback(() => setTrackingModalTicket(null), []);
+  const handleCloseTrackingModal = useCallback(() => {
+    forgetOpenModal();
+    setTrackingModalTicket(null);
+  }, []);
+  const handleOpenTrackingModal = useCallback(
+    (ticket) => {
+      rememberOpenModal('tracking', user?.id, ticket.id);
+      setTrackingModalTicket(ticket);
+    },
+    [user?.id]
+  );
   const handleCloseOwnPasswordModal = useCallback(() => setShowOwnPasswordModal(false), []);
 
   const handleAssignWorker = (ticketId, pracownikId) =>
@@ -480,7 +507,7 @@ export default function Dashboard({ user, token, onLogout }) {
       setAssignModalTicket(ticket);
     },
     onOpenRepairModal: handleOpenRepairModal,
-    onOpenShipModal: setShipModalTicket,
+    onOpenShipModal: handleOpenShipModal,
     onOpenRollbackModal: (ticket, actions) => setRollbackModalData({ ticket, actions })
   };
 
@@ -978,7 +1005,7 @@ export default function Dashboard({ user, token, onLogout }) {
               user={user}
               onClose={handleCloseDrawer}
               {...modalHandlers}
-              onOpenTrackingModal={setTrackingModalTicket}
+              onOpenTrackingModal={handleOpenTrackingModal}
             />
           )}
 
@@ -1007,6 +1034,7 @@ export default function Dashboard({ user, token, onLogout }) {
             <ShipModal
               key={shipModalTicket.id}
               ticket={shipModalTicket}
+              userId={user?.id}
               mode="ship"
               onClose={handleCloseShipModal}
               onShip={handleShipSubmit}
@@ -1027,6 +1055,7 @@ export default function Dashboard({ user, token, onLogout }) {
             <ShipModal
               key={`edit-${trackingModalTicket.id}`}
               ticket={trackingModalTicket}
+              userId={user?.id}
               mode="edit"
               onClose={handleCloseTrackingModal}
               onSave={handleSaveTrackingNumber}

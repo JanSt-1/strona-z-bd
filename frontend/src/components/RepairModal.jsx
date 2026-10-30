@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import Modal from './Modal';
-import { repairDraftKey, readDraft, writeDraft, clearDraft } from '../szkice';
+import { modalDraftKey, readDraft, writeDraft, clearDraft } from '../szkice';
 
 export default function RepairModal({ ticket, userId, onClose, onSubmit }) {
-  const draftKey = repairDraftKey(userId, ticket?.id);
+  const draftKey = modalDraftKey('repair', userId, ticket?.id);
   // Szkic z sessionStorage ma pierwszeństwo - np. po wygaśnięciu sesji w trakcie pisania
   const [opis, setOpis] = useState(() => readDraft(draftKey) ?? ticket?.opis_naprawy ?? '');
   const [submitting, setSubmitting] = useState(false);

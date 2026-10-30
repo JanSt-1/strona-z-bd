@@ -1,14 +1,24 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Modal from './Modal';
+import { modalDraftKey, readDraft, writeDraft, clearDraft } from '../szkice';
 
-export default function ShipModal({ ticket, mode = 'ship', onClose, onShip, onSave }) {
+export default function ShipModal({ ticket, userId, mode = 'ship', onClose, onShip, onSave }) {
   const isEditOnly = mode === 'edit';
-  const [numer, setNumer] = useState(ticket?.numer_listu || '');
+  const savedNumer = ticket?.numer_listu || '';
+  const draftKey = modalDraftKey(isEditOnly ? 'tracking' : 'ship', userId, ticket?.id);
+  // Szkic z sessionStorage ma pierwszeństwo - np. po wygaśnięciu sesji w trakcie wpisywania
+  const [numer, setNumer] = useState(() => readDraft(draftKey) ?? savedNumer);
+  const [hasDraft] = useState(() => Boolean(readDraft(draftKey)));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [touched, setTouched] = useState(false);
   // Zlecenie zmienił w międzyczasie ktoś inny (409) - ponowne zatwierdzenie nie ma sensu, zostaje tylko zamknięcie
   const [conflict, setConflict] = useState(false);
+
+  useEffect(() => {
+    // Szkic tylko wtedy, gdy wpis różni się od numeru zapisanego w zleceniu
+    writeDraft(draftKey, numer.trim() && numer !== savedNumer ? numer : '');
+  }, [draftKey, numer, savedNumer]);
 
   if (!ticket) return null;
 
@@ -32,11 +42,16 @@ export default function ShipModal({ ticket, mode = 'ship', onClose, onShip, onSa
     setSaving(true);
     try {
       const handler = isEditOnly ? onSave : onShip;
-      await handler(ticket.id, trimmed);
-      onClose();
+      // Okno zamyka runTicketMutation po sukcesie; false = sesja wygasła, szkic zostaje do przywrócenia
+      const saved = await handler(ticket.id, trimmed);
+      if (saved) clearDraft(draftKey);
     } catch (err) {
       setError(err.message || 'Wystąpił błąd podczas zapisywania numeru listu.');
-      if (err.status === 409) setConflict(true);
+      if (err.status === 409) {
+        // Zlecenie obsłużył już ktoś inny - wpisany numer nie zostanie zapisany, więc szkic jest zbędny
+        setConflict(true);
+        clearDraft(draftKey);
+      }
     } finally {
       setSaving(false);
     }
@@ -108,6 +123,11 @@ export default function ShipModal({ ticket, mode = 'ship', onClose, onShip, onSa
               {trimmed.length}/100
             </span>
           </div>
+          {hasDraft && !conflict && (
+            <small className="block text-primary-dark text-xs mt-1.5 font-medium">
+              Przywrócono niezapisany numer listu. Szkic jest przechowywany w tej karcie do czasu zapisania.
+            </small>
+          )}
           {!isEditOnly && (
             <small className="block text-muted text-xs mt-1.5 leading-normal">
               Po zatwierdzeniu status zlecenia zostanie zmieniony na "Zakończone" z zarejestrowaną bieżącą datą i godziną wysłania.
