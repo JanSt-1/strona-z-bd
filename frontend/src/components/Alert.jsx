@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function Alert({ alert }) {
+export default function Alert({ alert, ref, onClose }) {
   if (!alert || !alert.message) return null;
 
   const isSuccess = alert.type === 'success';
@@ -8,6 +8,8 @@ export default function Alert({ alert }) {
 
   return (
     <div
+      ref={ref}
+      tabIndex={-1}
       role="alert"
       className={`p-3.5 mb-5 rounded-lg text-sm font-medium border flex items-center justify-between transition-all duration-200 animate-[fadeIn_0.2s_ease-out] ${
         isSuccess
@@ -30,6 +32,17 @@ export default function Alert({ alert }) {
         )}
         <span>{alert.message}</span>
       </div>
+      {onClose && (
+        <button
+          type="button"
+          onClick={onClose}
+          className="ml-3 px-1.5 text-lg leading-none opacity-70 hover:opacity-100 cursor-pointer"
+          aria-label="Zamknij komunikat"
+          title="Zamknij komunikat"
+        >
+          ×
+        </button>
+      )}
     </div>
   );
 }

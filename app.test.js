@@ -196,7 +196,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 });
 
             assert.strictEqual(response.status, 400);
-            assert.strictEqual(response.body.error, 'Pole "numer_seryjny" jest obowiązkowe dla wybranego przedmiotu zgłoszenia.');
+            assert.strictEqual(response.body.error, 'Pole „Numer seryjny (S/N)” jest obowiązkowe dla wybranego przedmiotu zgłoszenia.');
         });
 
         it('POST /api/zgloszenia z nieistniejącą datą ("2026-02-31") powinien zwrócić status 400', async () => {
@@ -218,7 +218,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 });
 
             assert.strictEqual(response.status, 400);
-            assert.strictEqual(response.body.error, 'Pole "data_zakupu" zawiera nieprawidłową datę (nie istnieje w kalendarzu).');
+            assert.strictEqual(response.body.error, 'Pole „Data zakupu” zawiera nieprawidłową datę (nie istnieje w kalendarzu).');
         });
 
         it('POST /api/zgloszenia z datą zakupu z przyszłości ("2099-01-01") powinien zwrócić status 400', async () => {
@@ -240,7 +240,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 });
 
             assert.strictEqual(response.status, 400);
-            assert.strictEqual(response.body.error, 'Pole "data_zakupu" nie może być datą z przyszłości.');
+            assert.strictEqual(response.body.error, 'Pole „Data zakupu” nie może być datą z przyszłości.');
         });
 
         it('POST /api/zgloszenia normalizuje przedmiot_zgloszenia do kanonicznej wartości z ALLOWED_PRZEDMIOTY (np. "inne" → "Inne")', async () => {
@@ -351,7 +351,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(response.status, 400);
             assert.strictEqual(
                 response.body.error,
-                'Pole "zgoda_rodo" jest wymagane: należy potwierdzić zapoznanie się z informacją o przetwarzaniu danych osobowych.'
+                'Należy potwierdzić zapoznanie się z informacją o przetwarzaniu danych osobowych.'
             );
         });
 
@@ -402,7 +402,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(response.status, 400);
             assert.strictEqual(
                 response.body.error,
-                'Pole "zgoda_rodo" jest wymagane: należy potwierdzić zapoznanie się z informacją o przetwarzaniu danych osobowych.'
+                'Należy potwierdzić zapoznanie się z informacją o przetwarzaniu danych osobowych.'
             );
         });
 
@@ -503,7 +503,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                 });
 
             assert.strictEqual(response.status, 400);
-            assert.ok(response.body.error.includes('telefon_stacjonarny'));
+            assert.ok(response.body.error.includes('Pole „Telefon stacjonarny”'));
         });
 
         it('GET /api/zgloszenia bez tokenu powinien zwrócić status 401', async () => {
@@ -2336,7 +2336,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.strictEqual(response.status, 400);
             assert.strictEqual(
                 response.body.error,
-                'Pole "opis_usterki" przekracza maksymalną dozwoloną długość (5000 znaków).'
+                'Pole „Opis usterki” przekracza maksymalną dozwoloną długość (5000 znaków).'
             );
         });
 
@@ -2380,7 +2380,7 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
                     zgoda_rodo: true
                 });
             assert.strictEqual(resAdres.status, 400);
-            assert.strictEqual(resAdres.body.error, 'Pole "adres" przekracza maksymalną dozwoloną długość (500 znaków).');
+            assert.strictEqual(resAdres.body.error, 'Pole „Adres” przekracza maksymalną dozwoloną długość (500 znaków).');
 
             const resNaprawa = await request(app)
                 .patch('/api/zgloszenia/1/naprawione')
@@ -3548,6 +3548,170 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             const drawerJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'components', 'TicketDetailsDrawer.jsx'), 'utf8');
             assert.ok(drawerJsx.includes('trackingAction'));
             assert.strictEqual(drawerJsx.includes("user?.role === 'admin' && onOpenTrackingModal"), false);
+        });
+    });
+    describe('22. Formularz publiczny: wklejony telefon, wspólne reguły walidacji, limit zgłoszeń i data w Polsce', () => {
+        const validTicket = () => ({
+            imie: 'Jan',
+            nazwisko: 'Kowalski',
+            adres: 'ul. Testowa 1',
+            kod_pocztowy: '00-001',
+            miasto: 'Warszawa',
+            numer_telefonu: '+48600700800',
+            email: 'jan@example.com',
+            przedmiot_zgloszenia: 'Projektory',
+            data_zakupu: '2026-01-01',
+            numer_fv: 'FV/123/2026',
+            nip: '1234567890',
+            opis_usterki: 'Brak obrazu',
+            zgoda_rodo: true
+        });
+
+        it('wklejenie numeru w każdym formacie daje +48 600 700 800 (pole z prefiksem "+48 " i po zaznaczeniu całości)', async () => {
+            const { normalizePhoneDigits, formatPhone, PHONE_PREFIX } = await import('./frontend/src/constants.js');
+            const pasted = ['+48600700800', '48600700800', '0048600700800', '+48 600 700 800', '0048 600 700 800', '600700800', '600-700-800'];
+            for (const value of pasted) {
+                for (const fieldValue of [PHONE_PREFIX + value, value]) {
+                    assert.strictEqual(formatPhone(normalizePhoneDigits(fieldValue)), '+48 600 700 800', `Wklejone: ${JSON.stringify(fieldValue)}`);
+                }
+            }
+            // wpisywanie cyfra po cyfrze i numer zaczynający się od 48 (np. Radom) nie tracą cyfr
+            assert.strictEqual(formatPhone(normalizePhoneDigits('+48 600 70')), '+48 600 70');
+            assert.strictEqual(formatPhone(normalizePhoneDigits('+48 481 234 567')), '+48 481 234 567');
+            assert.strictEqual(formatPhone(normalizePhoneDigits('+48 481 234 5678')), '+48 481 234 567');
+            assert.strictEqual(formatPhone(normalizePhoneDigits('+48 ')), '+48 ');
+
+            const formJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'PublicTicketForm.jsx'), 'utf8');
+            assert.strictEqual(formJsx.includes('maxLength={15}'), false, 'maxLength=15 ucina wklejany numer, zanim trafi do onChange');
+        });
+
+        it('frontend i serwer mają te same reguły (etykiety, długości, regex imienia i e-maila)', async () => {
+            const fe = await import('./frontend/src/constants.js');
+            const be = app.ticketFormRules;
+            assert.deepStrictEqual({ ...fe.FIELD_LABELS }, be.FIELD_LABELS);
+            assert.deepStrictEqual({ ...fe.FIELD_MAX_LENGTHS }, be.FIELD_MAX_LENGTHS);
+            assert.strictEqual(fe.NAME_REGEX.source, be.NAME_REGEX.source);
+            assert.strictEqual(fe.NAME_REGEX.flags, be.NAME_REGEX.flags);
+            assert.strictEqual(fe.EMAIL_REGEX.source, be.EMAIL_REGEX.source);
+        });
+
+        it('walidacja w przeglądarce odrzuca błędne dane bez żądania do serwera i wskazuje pole', async () => {
+            const { validateTicketForm, EMPTY_TICKET_FORM } = await import('./frontend/src/constants.js');
+            const form = (patch) => ({
+                ...EMPTY_TICKET_FORM,
+                ...validTicket(),
+                numer_telefonu: '+48 600 700 800',
+                ...patch
+            });
+            assert.strictEqual(validateTicketForm(form({})), null);
+            for (const imie of ['José', 'Müller', 'O’Brien', "O'Brien", 'Anna-Maria', 'Łukasz']) {
+                assert.strictEqual(validateTicketForm(form({ imie })), null, `${imie} powinno przejść`);
+            }
+            for (const [patch, field] of [
+                [{ imie: 'Jan2' }, 'imie'],
+                [{ nazwisko: 'Kowalski!' }, 'nazwisko'],
+                [{ imie: '   ' }, 'imie'],
+                [{ email: 'jan@' }, 'email'],
+                [{ adres: '' }, 'adres'],
+                [{ miasto: ' ' }, 'miasto'],
+                [{ opis_usterki: '' }, 'opis_usterki'],
+                [{ opis_usterki: 'a'.repeat(5001) }, 'opis_usterki'],
+                [{ numer_telefonu: '+48 600 700' }, 'numer_telefonu'],
+                [{ zgoda_rodo: false }, 'zgoda_rodo']
+            ]) {
+                const err = validateTicketForm(form(patch));
+                assert.ok(err, `Oczekiwano błędu dla ${JSON.stringify(patch).slice(0, 60)}`);
+                assert.strictEqual(err.field, field);
+                assert.ok(!/opis_usterki|"imie"/.test(err.message), `Komunikat z surową nazwą pola: ${err.message}`);
+            }
+            assert.strictEqual(validateTicketForm(form({ opis_usterki: '' })).message, 'Pole „Opis usterki” jest wymagane.');
+        });
+
+        it('serwer przyjmuje imiona spoza polskiego alfabetu i zwraca polskie nazwy pól w błędach', async () => {
+            for (const [imie, nazwisko] of [['José', 'Müller'], ['Seán', 'O’Brien']]) {
+                const res = await request(app).post('/api/zgloszenia').send({ ...validTicket(), imie, nazwisko });
+                assert.strictEqual(res.status, 201, `${imie} ${nazwisko}: ${res.body.error}`);
+            }
+            const resDigits = await request(app).post('/api/zgloszenia').send({ ...validTicket(), imie: 'Jan2' });
+            assert.strictEqual(resDigits.status, 400);
+            assert.ok(resDigits.body.error.startsWith('Pole „Imię”'));
+
+            const resEmpty = await request(app).post('/api/zgloszenia').send({ ...validTicket(), opis_usterki: '   ' });
+            assert.strictEqual(resEmpty.status, 400);
+            assert.strictEqual(resEmpty.body.error, 'Pole „Opis usterki” jest wymagane.');
+
+            const resRodo = await request(app).post('/api/zgloszenia').send({ ...validTicket(), zgoda_rodo: false });
+            assert.strictEqual(resRodo.status, 400);
+            assert.strictEqual(resRodo.body.error.includes('zgoda_rodo'), false);
+        });
+
+        it('limit zgłoszeń liczy tylko przyjęte: 6 odrzuconych z rzędu, potem poprawne -> 201 (limiter włączony)', async () => {
+            const prevEnv = process.env.NODE_ENV;
+            process.env.NODE_ENV = 'production';
+            const ip = '3.3.3.3';
+            try {
+                for (let i = 1; i <= 6; i++) {
+                    const res = await request(app)
+                        .post('/api/zgloszenia')
+                        .set('X-Forwarded-For', ip)
+                        .send({ ...validTicket(), opis_usterki: '' });
+                    assert.strictEqual(res.status, 400, `Próba ${i}`);
+                }
+                const ok = await request(app).post('/api/zgloszenia').set('X-Forwarded-For', ip).send(validTicket());
+                assert.strictEqual(ok.status, 201);
+            } finally {
+                process.env.NODE_ENV = prevEnv;
+                app.zgloszeniaLimiter.resetKey(ip);
+            }
+        });
+
+        it('honeypot (201) nadal zużywa limit: 6. zgłoszenie bota z tego samego IP -> 429', async () => {
+            const prevEnv = process.env.NODE_ENV;
+            process.env.NODE_ENV = 'production';
+            const ip = '4.4.4.4';
+            try {
+                for (let i = 1; i <= 5; i++) {
+                    const res = await request(app).post('/api/zgloszenia').set('X-Forwarded-For', ip).send({ website: 'spam' });
+                    assert.strictEqual(res.status, 201);
+                }
+                const blocked = await request(app).post('/api/zgloszenia').set('X-Forwarded-For', ip).send({ website: 'spam' });
+                assert.strictEqual(blocked.status, 429);
+            } finally {
+                process.env.NODE_ENV = prevEnv;
+                app.zgloszeniaLimiter.resetKey(ip);
+            }
+        });
+
+        it('data zakupu: zegar 23:30 UTC (01:30 w Polsce) - dzisiejsza polska data przechodzi po obu stronach', async () => {
+            const fe = await import('./frontend/src/constants.js');
+            const summer = new Date('2026-07-14T23:30:00Z'); // 01:30 15 lipca w Polsce (CEST)
+            const winter = new Date('2026-01-14T23:30:00Z'); // 00:30 15 stycznia w Polsce (CET)
+            for (const [now, today, tomorrow] of [[summer, '2026-07-15', '2026-07-16'], [winter, '2026-01-15', '2026-01-16']]) {
+                assert.strictEqual(fe.todayInPoland(now), today);
+                assert.strictEqual(app.validatePurchaseDate(today, now), null);
+                assert.strictEqual(fe.validatePurchaseDate(today, now), null);
+                assert.ok(app.validatePurchaseDate(tomorrow, now));
+                assert.ok(fe.validatePurchaseDate(tomorrow, now));
+            }
+
+            const formJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'PublicTicketForm.jsx'), 'utf8');
+            assert.strictEqual(formJsx.includes('toISOString().split'), false, 'Dzisiejsza data nie może być liczona w UTC');
+            assert.ok(formJsx.includes('max={todayInPoland()}'), 'Atrybut max ma być liczony przy renderze');
+        });
+
+        it('błędy formularza nie znikają same, timer alertu jest czyszczony, a zaślepki treści są tylko w tresci.js', () => {
+            const formJsx = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'pages', 'PublicTicketForm.jsx'), 'utf8');
+            const showAlert = formJsx.match(/function showAlert\([^)]*\) \{([\s\S]*?)\n  \}/);
+            assert.ok(showAlert, 'Brak showAlert');
+            assert.ok(showAlert[1].includes('clearTimeout(alertTimerRef.current)'));
+            assert.ok(/if \(type === 'success'\) \{\s*alertTimerRef\.current = setTimeout/.test(showAlert[1]), 'Automatycznie znika tylko sukces');
+            assert.ok(formJsx.includes('scrollIntoView') && formJsx.includes('.focus('), 'Błąd ma być przewinięty i dostać fokus');
+
+            assert.strictEqual(/\[X\]|Placeholder/.test(formJsx), false, 'Zaślepki treści mają być wyłącznie w tresci.js');
+            const tresci = fs.readFileSync(path.join(__dirname, 'frontend', 'src', 'tresci.js'), 'utf8');
+            assert.ok(tresci.includes('CZAS_KONTAKTU_DNI_ROBOCZYCH') && tresci.includes('KLAUZULA_INFORMACYJNA'));
+            const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+            assert.strictEqual(pkg.scripts['check:placeholders'], 'node scripts/check-placeholders.js');
         });
     });
 });

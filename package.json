@@ -16,6 +16,7 @@
     "dev:frontend": "npm --prefix frontend run dev",
     "build": "npm --prefix frontend run build",
     "lint": "npm --prefix frontend run lint",
+    "check:placeholders": "node scripts/check-placeholders.js",
     "seed": "node seed.js",
     "migrate": "node migrate.js",
     "config:testowy": "node config-testowy.js",

@@ -252,13 +252,41 @@ function isSerialNumberAllowed(product) {
     return isMonitor || isTablica;
 }
 
+// Reguły formularza zgłoszenia - te same wartości ma frontend (frontend/src/constants.js); test w app.test.js pilnuje zgodności
+const FIELD_LABELS = {
+    imie: 'Imię',
+    nazwisko: 'Nazwisko',
+    nazwa_firmy: 'Nazwa firmy',
+    adres: 'Adres',
+    kod_pocztowy: 'Kod pocztowy',
+    miasto: 'Miasto',
+    numer_telefonu: 'Telefon kontaktowy',
+    telefon_stacjonarny: 'Telefon stacjonarny',
+    email: 'E-mail',
+    przedmiot_zgloszenia: 'Przedmiot zgłoszenia',
+    numer_seryjny: 'Numer seryjny (S/N)',
+    data_zakupu: 'Data zakupu',
+    numer_fv: 'Numer faktury / paragonu',
+    nip: 'NIP',
+    opis_usterki: 'Opis usterki',
+};
+const poleLabel = (name) => `Pole „${FIELD_LABELS[name] || name}”`;
+
+// Litery dowolnego alfabetu (José, Müller), spacja, łącznik i apostrof prosty lub typograficzny (O’Brien z iPhone'a)
+const NAME_REGEX = /^[\p{L}\p{M}\s'’-]+$/u;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Dzisiejsza data (RRRR-MM-DD) w Polsce - serwer na VPS-ie zwykle działa w UTC
+const todayInPoland = (now = new Date()) =>
+    new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw' }).format(now);
+
 // Pomocnik walidacji daty zakupu:
 // - Sprawdza format RRRR-MM-DD
 // - Weryfikuje istnienie daty w kalendarzu (zapobiega przelewaniu nieistniejących dni np. 2026-02-31 przez Date.parse)
-// - Blokuje daty z przyszłości
-function validatePurchaseDate(dateStr) {
+// - Blokuje daty z przyszłości (względem dzisiejszej daty w Polsce)
+function validatePurchaseDate(dateStr, now = new Date()) {
     if (typeof dateStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-        return 'Pole "data_zakupu" musi mieć poprawny format daty (RRRR-MM-DD).';
+        return 'Pole „Data zakupu” musi mieć poprawny format daty (RRRR-MM-DD).';
     }
     const [year, month, day] = dateStr.split('-').map(Number);
     const parsedDate = new Date(Date.UTC(year, month - 1, day));
@@ -268,12 +296,10 @@ function validatePurchaseDate(dateStr) {
         (parsedDate.getUTCMonth() + 1) !== month ||
         parsedDate.getUTCDate() !== day
     ) {
-        return 'Pole "data_zakupu" zawiera nieprawidłową datę (nie istnieje w kalendarzu).';
+        return 'Pole „Data zakupu” zawiera nieprawidłową datę (nie istnieje w kalendarzu).';
     }
-    const now = new Date();
-    const today = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-    if (parsedDate > today) {
-        return 'Pole "data_zakupu" nie może być datą z przyszłości.';
+    if (dateStr > todayInPoland(now)) {
+        return 'Pole „Data zakupu” nie może być datą z przyszłości.';
     }
     return null;
 }
@@ -287,6 +313,9 @@ const zgloszeniaLimiter = rateLimit({
     },
     standardHeaders: true, // Zwraca nagłówki RateLimit-*
     legacyHeaders: false, // Wyłącza nagłówki X-RateLimit-*
+    // Odrzucone zgłoszenia (4xx/5xx) nie zużywają limitu - klient poprawiający formularz nie blokuje siebie
+    // ani innych osób za tym samym IP. Honeypot odpowiada 201, więc boty nadal są liczone.
+    skipFailedRequests: true,
     skip: () => process.env.NODE_ENV === 'test'
 });
 
@@ -297,7 +326,7 @@ const REQUIRED_FIELDS = [
 const FIELD_MAX_LENGTHS = {
     imie: 50, nazwisko: 50, adres: 500, kod_pocztowy: 6, miasto: 100,
     numer_telefonu: 20, email: 100, przedmiot_zgloszenia: 100, data_zakupu: 10,
-    opis_usterki: 5000, numer_fv: 50, nip: 10
+    opis_usterki: 5000, numer_fv: 50, nip: 10, nazwa_firmy: 100, numer_seryjny: 100
 };
 
 // 2. POST /api/zgloszenia - Publiczne dodawanie nowego zgłoszenia serwisowego
@@ -319,38 +348,35 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
     for (const name of REQUIRED_FIELDS) {
         const value = (req.body || {})[name];
         const error = typeof value !== 'string' ? 'musi być tekstem.'
-            : value.trim().length === 0 ? 'nie może być puste.'
+            : value.trim().length === 0 ? 'jest wymagane.'
                 : value.trim().length > FIELD_MAX_LENGTHS[name]
                     ? `przekracza maksymalną dozwoloną długość (${FIELD_MAX_LENGTHS[name]} znaków).`
                     : null;
-        if (error) return fail(res, `Pole "${name}" ${error}`);
+        if (error) return fail(res, `${poleLabel(name)} ${error}`);
         c[name] = value.trim();
     }
 
     // 2-10. Pozostałe walidacje (w kolejności sprawdzania; pierwszy błąd kończy żądanie)
-    const nameRegex = /^[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ\s\-']+$/;
     const firmaProvided = nazwa_firmy !== undefined && nazwa_firmy !== null && nazwa_firmy !== '';
     const canonicalPrzedmiot = ALLOWED_PRZEDMIOTY.find(item => item.toLowerCase() === c.przedmiot_zgloszenia.toLowerCase());
     const checks = [
-        // imię i nazwisko: bez cyfr, wyłącznie litery
-        [/\d/.test(c.imie), 'Pole "imie" nie może zawierać cyfr.'],
-        [/\d/.test(c.nazwisko), 'Pole "nazwisko" nie może zawierać cyfr.'],
-        [!nameRegex.test(c.imie), 'Pole "imie" może zawierać wyłącznie litery (brak cyfr i znaków specjalnych).'],
-        [!nameRegex.test(c.nazwisko), 'Pole "nazwisko" może zawierać wyłącznie litery (brak cyfr i znaków specjalnych).'],
+        // imię i nazwisko: wyłącznie litery (dowolny alfabet), spacje, łącznik i apostrof
+        [!NAME_REGEX.test(c.imie), `${poleLabel('imie')} może zawierać wyłącznie litery, spacje, łącznik i apostrof.`],
+        [!NAME_REGEX.test(c.nazwisko), `${poleLabel('nazwisko')} może zawierać wyłącznie litery, spacje, łącznik i apostrof.`],
         // opcjonalne pole nazwa_firmy (jeśli zostało podane)
-        [firmaProvided && typeof nazwa_firmy !== 'string', 'Pole "nazwa_firmy" musi być tekstem.'],
-        [firmaProvided && typeof nazwa_firmy === 'string' && nazwa_firmy.trim().length > 100, 'Pole "nazwa_firmy" przekracza maksymalną dozwoloną długość (100 znaków).'],
+        [firmaProvided && typeof nazwa_firmy !== 'string', `${poleLabel('nazwa_firmy')} musi być tekstem.`],
+        [firmaProvided && typeof nazwa_firmy === 'string' && nazwa_firmy.trim().length > FIELD_MAX_LENGTHS.nazwa_firmy, `${poleLabel('nazwa_firmy')} przekracza maksymalną dozwoloną długość (${FIELD_MAX_LENGTHS.nazwa_firmy} znaków).`],
         // NIP (dokładnie 10 cyfr, bez myślników)
-        [!/^\d{10}$/.test(c.nip), 'Pole "nip" musi składać się z dokładnie 10 cyfr (bez myślników).'],
+        [!/^\d{10}$/.test(c.nip), `${poleLabel('nip')} musi składać się z dokładnie 10 cyfr (bez myślników).`],
         // kod pocztowy (dokładnie XX-XXX)
-        [!/^\d{2}-\d{3}$/.test(c.kod_pocztowy), 'Pole "kod_pocztowy" musi mieć format XX-XXX (np. 00-001).'],
+        [!/^\d{2}-\d{3}$/.test(c.kod_pocztowy), `${poleLabel('kod_pocztowy')} musi mieć format XX-XXX (np. 00-001).`],
         // adres e-mail
-        [!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email), 'Pole "email" ma nieprawidłowy format adresu e-mail.'],
+        [!EMAIL_REGEX.test(c.email), `${poleLabel('email')} ma nieprawidłowy format adresu e-mail.`],
         // numer telefonu (+48 i dokładnie 9 cyfr)
-        [!/^\+48\d{9}$/.test(c.numer_telefonu), 'Pole "numer_telefonu" musi zawierać prefiks +48 oraz dokładnie 9 cyfr.'],
+        [!/^\+48\d{9}$/.test(c.numer_telefonu), `${poleLabel('numer_telefonu')} musi zawierać prefiks +48 oraz dokładnie 9 cyfr.`],
         // przedmiot zgłoszenia z listy
         [!canonicalPrzedmiot,
-        `Pole "przedmiot_zgloszenia" zawiera nieprawidłową wartość. Dozwolone: ${ALLOWED_PRZEDMIOTY.join(', ')}`],
+        `${poleLabel('przedmiot_zgloszenia')} zawiera nieprawidłową wartość. Dozwolone: ${ALLOWED_PRZEDMIOTY.join(', ')}`],
         // data zakupu (RRRR-MM-DD, prawidłowa w kalendarzu, nie z przyszłości)
         [Boolean(validatePurchaseDate(c.data_zakupu)), validatePurchaseDate(c.data_zakupu)]
     ];
@@ -363,10 +389,10 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
     if (isSerialNumberAllowed(przedmiot_zgloszenia)) {
         const serial = typeof numer_seryjny === 'string' ? numer_seryjny.trim() : '';
         if (!serial) {
-            return fail(res, 'Pole "numer_seryjny" jest obowiązkowe dla wybranego przedmiotu zgłoszenia.');
+            return fail(res, `${poleLabel('numer_seryjny')} jest obowiązkowe dla wybranego przedmiotu zgłoszenia.`);
         }
-        if (serial.length > 100) {
-            return fail(res, 'Pole "numer_seryjny" przekracza maksymalną dozwoloną długość (100 znaków).');
+        if (serial.length > FIELD_MAX_LENGTHS.numer_seryjny) {
+            return fail(res, `${poleLabel('numer_seryjny')} przekracza maksymalną dozwoloną długość (${FIELD_MAX_LENGTHS.numer_seryjny} znaków).`);
         }
         cleanNumerSeryjny = serial;
     }
@@ -376,16 +402,16 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
     const stacjonarnyProvided = telefon_stacjonarny !== undefined && telefon_stacjonarny !== null && String(telefon_stacjonarny).trim() !== '';
     if (stacjonarnyProvided) {
         if (typeof telefon_stacjonarny !== 'string') {
-            return fail(res, 'Pole "telefon_stacjonarny" musi być tekstem.');
+            return fail(res, `${poleLabel('telefon_stacjonarny')} musi być tekstem.`);
         }
         const trimmedStacjonarny = telefon_stacjonarny.trim();
         if (trimmedStacjonarny.length > 20) {
-            return fail(res, 'Pole "telefon_stacjonarny" przekracza maksymalną dozwoloną długość (20 znaków).');
+            return fail(res, `${poleLabel('telefon_stacjonarny')} przekracza maksymalną dozwoloną długość (20 znaków).`);
         }
         const digitsOnly = trimmedStacjonarny.replace(/\D/g, '');
         const digits = digitsOnly.startsWith('48') && digitsOnly.length === 11 ? digitsOnly.slice(2) : digitsOnly;
         if (digits.length !== 9) {
-            return fail(res, 'Pole "telefon_stacjonarny" musi zawierać 9 cyfr numeru stacjonarnego (np. 22 123 45 67 lub z prefiksem +48).');
+            return fail(res, `${poleLabel('telefon_stacjonarny')} musi zawierać 9 cyfr numeru stacjonarnego (np. 22 123 45 67 lub z prefiksem +48).`);
         }
         cleanTelefonStacjonarny = `+48${digits}`;
     }
@@ -393,7 +419,7 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
     // 12. Walidacja akceptacji klauzuli RODO (wymagany checkbox)
     const isZgodaRodo = zgoda_rodo === true || zgoda_rodo === 'true' || zgoda_rodo === 1 || zgoda_rodo === '1';
     if (!isZgodaRodo) {
-        return fail(res, 'Pole "zgoda_rodo" jest wymagane: należy potwierdzić zapoznanie się z informacją o przetwarzaniu danych osobowych.');
+        return fail(res, 'Należy potwierdzić zapoznanie się z informacją o przetwarzaniu danych osobowych.');
     }
 
     let conn;
@@ -1561,6 +1587,8 @@ app.czyMoznaZmienic = czyMoznaZmienic;
 app.wyznaczDozwoloneAkcje = wyznaczDozwoloneAkcje;
 app.loginLimiter = loginLimiter;
 app.zgloszeniaLimiter = zgloszeniaLimiter;
+app.validatePurchaseDate = validatePurchaseDate;
+app.ticketFormRules = { FIELD_LABELS, FIELD_MAX_LENGTHS, NAME_REGEX, EMAIL_REGEX };
 app.hasloLimiter = hasloLimiter;
 app.DUMMY_PASSWORD_HASH = DUMMY_PASSWORD_HASH;
 app.validateJwtSecret = validateJwtSecret;

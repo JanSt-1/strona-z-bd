@@ -126,6 +126,13 @@ Do weryfikacji i statycznej analizy kodu frontendu skonfigurowany jest linter **
 npm --prefix frontend run lint
 ```
 
+#### Treści do uzupełnienia przed wdrożeniem (klauzula RODO, czas kontaktu)
+Klauzula informacyjna (art. 13 RODO) i deklarowany czas kontaktu są w pliku `frontend/src/tresci.js`. Do czasu uzupełnienia przez właściciela serwisu zawierają zaślepki `[X]`. Sprawdzenie:
+```bash
+npm run check:placeholders
+```
+Polecenie kończy się błędem, dopóki w `frontend/src` lub `frontend/dist` jest `[X]` albo `Placeholder`. W CI ten krok tylko ostrzega (`continue-on-error`). Po uzupełnieniu treści usuń `continue-on-error` z `.github/workflows/ci.yml`.
+
 Po uruchomieniu aplikacja produkcyjna dostępna jest pod adresem:
 👉 **http://localhost:3000** (lub dev serwer frontendu pod **http://localhost:5173**)
 
@@ -181,10 +188,11 @@ Szczegółowe reguły biznesowe i bezpieczeństwa, które sprawdzają testy (prz
 ## Interfejs użytkownika (UI/UX) i responsywność
 
 Frontend aplikacji został zaprojektowany z dbałością o estetykę, czytelność oraz responsywność:
+- **Walidacja formularza zgłoszenia w przeglądarce**: przed wysłaniem formularz sprawdza te same reguły co serwer (imię i nazwisko w dowolnym alfabecie, e-mail, wymagane pola, maksymalne długości). Błąd pojawia się pod konkretnym polem, a strona przewija się do niego i ustawia na nim kursor. Błąd z serwera zostaje widoczny nad formularzem do zamknięcia (nie znika sam). Wklejony numer telefonu jest poprawnie rozpoznawany w formatach `+48600700800`, `48600700800`, `0048600700800` i `+48 600 700 800`. Odrzucone zgłoszenia nie zużywają limitu 5 zgłoszeń na godzinę z jednego IP.
 - **Trwały ekran potwierdzenia przyjęcia zgłoszenia (`PublicTicketForm`)**:
   - Po pomyślnym przesłaniu formularza przez klienta zamiast znikającego po kilku sekundach alertu pojawia się dedykowany, estetyczny ekran potwierdzenia, który **nie znika samoczynnie**.
   - Zawiera wyróżniony nagłówek **„Zgłoszenie nr {id} przyjęte”** z ikoną sukcesu,
-  - Zawiera sekcję **„Co dalej?”** z placeholderem czasu reakcji (**„skontaktujemy się w ciągu [X] dni roboczych”**) oraz czytelnym opisem kolejnych kroków weryfikacji i kontaktu,
+  - Zawiera sekcję **„Co dalej?”** z czasem reakcji z `frontend/src/tresci.js` (**„skontaktujemy się w ciągu N dni roboczych”**) oraz czytelnym opisem kolejnych kroków weryfikacji i kontaktu,
   - Prezentuje podsumowanie przesłanych danych (klient, sprzęt, email, telefon, data przyjęcia),
   - Stan potwierdzenia jest zachowywany w `sessionStorage` (zapobiega utracie widoku przy przypadkowym odświeżeniu strony F5),
   - Udostępnia przycisk: **„Powrót na stronę główną”** (czyszczący stan potwierdzenia i przywracający widok główny formularza).

@@ -47,6 +47,12 @@ jobs:
       - name: Zbuduj aplikację frontendową (Vite)
         run: npm run build
 
+      # Treści klauzuli RODO i czasu kontaktu (frontend/src/tresci.js) czekają na właściciela serwisu.
+      # Po ich uzupełnieniu usuń continue-on-error, żeby zaślepka nie mogła trafić na produkcję.
+      - name: Sprawdź zaślepki treści ([X], Placeholder)
+        run: npm run check:placeholders
+        continue-on-error: true
+
       - name: Zaaplikuj migracje bazy danych
         run: npm run migrate
 
