@@ -61,7 +61,7 @@ export default function RepairModal({ ticket, userId, onClose, onSubmit }) {
             Opis wykonanych prac (co zostało zrobione / wymienione) *
           </label>
           <textarea
-            autoFocus
+            data-autofocus
             id="repairDescription"
             required
             rows={6}

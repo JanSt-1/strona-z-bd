@@ -251,11 +251,13 @@ export default function Dashboard({ user, token, onLogout }) {
 
   useEffect(() => {
     fetchTickets();
+    // oxlint-disable-next-line react/set-state-in-effect -- pobieranie danych: setState dopiero po await
     fetchWorkers();
   }, [fetchTickets, fetchWorkers, token]);
 
   useEffect(() => {
     if (dashboardTab === 'tickets') {
+      // oxlint-disable-next-line react/set-state-in-effect -- pobieranie danych: setState dopiero po await
       fetchWorkers();
     }
   }, [dashboardTab, fetchWorkers]);
@@ -501,6 +503,13 @@ export default function Dashboard({ user, token, onLogout }) {
     }
   }
 
+  // Kliknięcie w wiersz / kartę to wygoda dla myszy. Z klawiatury szczegóły otwiera przycisk z numerem zgłoszenia,
+  // a kliknięcia w przyciski i pola wewnątrz wiersza (akcje, usuwanie) nie otwierają panelu.
+  function handleTicketAreaClick(e, ticket) {
+    if (e.target.closest('button, a, input, select, textarea, label')) return;
+    setDetailsDrawerTicket(ticket);
+  }
+
   const modalHandlers = {
     onOpenAssignModal: (ticket) => {
       fetchWorkers();
@@ -645,6 +654,7 @@ export default function Dashboard({ user, token, onLogout }) {
                   <input
                     type="text"
                     placeholder="Szukaj w zgłoszeniach..."
+                    aria-label="Szukaj w zgłoszeniach"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="app-input py-1.5 pr-7 text-xs w-full"
@@ -655,6 +665,7 @@ export default function Dashboard({ user, token, onLogout }) {
                       onClick={() => applyFilters({ search: '' })}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink text-xs font-bold p-0.5 cursor-pointer"
                       title="Wyczyść szukanie"
+                      aria-label="Wyczyść szukanie"
                     >
                       ✕
                     </button>
@@ -674,6 +685,7 @@ export default function Dashboard({ user, token, onLogout }) {
                 onChange={(e) => applyFilters({ status: e.target.value })}
                 className="app-select py-1.5 text-xs w-auto cursor-pointer"
                 title="Filtruj według statusu zgłoszenia"
+                aria-label="Filtruj według statusu zgłoszenia"
               >
                 <option value="">Wszystkie statusy</option>
                 {user?.role !== 'magazynier' && <option value="nowe">Nowe</option>}
@@ -688,6 +700,7 @@ export default function Dashboard({ user, token, onLogout }) {
                   onChange={(e) => applyFilters({ worker: e.target.value })}
                   className="app-select py-1.5 text-xs w-auto min-w-[180px] cursor-pointer"
                   title="Filtruj według przypisanego pracownika"
+                  aria-label="Filtruj według przypisanego pracownika"
                 >
                   <option value="">Wszyscy pracownicy</option>
                   <option value="nieprzypisane">Nieprzypisane</option>
@@ -706,6 +719,7 @@ export default function Dashboard({ user, token, onLogout }) {
                 onChange={(e) => applyFilters({ sort: e.target.value })}
                 className="app-select py-1.5 text-xs w-auto cursor-pointer"
                 title="Kolejność sortowania po dacie"
+                aria-label="Kolejność sortowania po dacie"
               >
                 <option value="desc">Data: od najnowszych</option>
                 <option value="asc">Data: od najstarszych</option>
@@ -735,6 +749,7 @@ export default function Dashboard({ user, token, onLogout }) {
                   disabled={page <= 1 || loading}
                   onClick={() => handlePageChange(page - 1)}
                   title="Poprzednia strona"
+                  aria-label="Poprzednia strona"
                 >
                   &laquo;
                 </button>
@@ -744,6 +759,7 @@ export default function Dashboard({ user, token, onLogout }) {
                   disabled={page >= totalPages || loading}
                   onClick={() => handlePageChange(page + 1)}
                   title="Następna strona"
+                  aria-label="Następna strona"
                 >
                   &raquo;
                 </button>
@@ -781,12 +797,19 @@ export default function Dashboard({ user, token, onLogout }) {
                   tickets.map((t) => (
                     <tr
                       key={t.id}
-                      onClick={() => setDetailsDrawerTicket(t)}
+                      onClick={(e) => handleTicketAreaClick(e, t)}
                       className="hover:bg-page transition-colors cursor-pointer"
                       title="Kliknij, aby otworzyć panel boczny ze szczegółami"
                     >
                       <td className="text-center font-bold text-ink">
-                        <span className="font-bold text-ink hover:text-primary">#{t.id}</span>
+                        <button
+                          type="button"
+                          onClick={() => setDetailsDrawerTicket(t)}
+                          aria-label={`Szczegóły zgłoszenia #${t.id}`}
+                          className="font-bold text-ink hover:text-primary hover:underline rounded px-1 outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                        >
+                          #{t.id}
+                        </button>
                       </td>
                       <td>
                         <div className="font-semibold text-ink">
@@ -830,7 +853,7 @@ export default function Dashboard({ user, token, onLogout }) {
                           )}
                         </div>
                       </td>
-                      <td onClick={(e) => e.stopPropagation()}>
+                      <td>
                         <StatusControl ticket={t} user={user} {...modalHandlers} />
                       </td>
                       <td>
@@ -846,10 +869,7 @@ export default function Dashboard({ user, token, onLogout }) {
                             : ''}
                         </div>
                         {user?.role === 'admin' && (
-                          <div
-                            className="mt-2 flex items-center gap-1.5 flex-wrap"
-                            onClick={(e) => e.stopPropagation()}
-                          >
+                          <div className="mt-2 flex items-center gap-1.5 flex-wrap">
                             <DeleteTicketButton
                               id={t.id}
                               deletingId={deletingId}
@@ -879,15 +899,24 @@ export default function Dashboard({ user, token, onLogout }) {
               </div>
             ) : (
               tickets.map((t) => (
+                // role="presentation": kliknięcie w kartę to tylko skrót dla myszy, z klawiatury działa przycisk #numer
                 <div
                   key={t.id}
-                  onClick={() => setDetailsDrawerTicket(t)}
+                  role="presentation"
+                  onClick={(e) => handleTicketAreaClick(e, t)}
                   className="bg-card rounded-xl border border-line p-4 shadow-xs space-y-3 hover:border-primary/50 transition-colors cursor-pointer"
                   title="Kliknij, aby otworzyć panel boczny ze szczegółami"
                 >
                   <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-line">
                     <div>
-                      <span className="text-base font-bold text-ink">#{t.id}</span>
+                      <button
+                        type="button"
+                        onClick={() => setDetailsDrawerTicket(t)}
+                        aria-label={`Szczegóły zgłoszenia #${t.id}`}
+                        className="text-base font-bold text-ink hover:text-primary hover:underline rounded px-1 -mx-1 outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                      >
+                        #{t.id}
+                      </button>
                       <div className="text-[0.7rem] text-muted mt-0.5">
                         {formatDateTime(t.created_at)}
                       </div>
@@ -944,15 +973,12 @@ export default function Dashboard({ user, token, onLogout }) {
                     </div>
                   </div>
 
-                  <div className="pt-1" onClick={(e) => e.stopPropagation()}>
+                  <div className="pt-1">
                     <StatusControl ticket={t} user={user} {...modalHandlers} />
                   </div>
 
                   {user?.role === 'admin' && (
-                    <div
-                      className="pt-2 border-t border-line flex items-center justify-end"
-                      onClick={(e) => e.stopPropagation()}
-                    >
+                    <div className="pt-2 border-t border-line flex items-center justify-end">
                       <DeleteTicketButton
                         id={t.id}
                         deletingId={deletingId}

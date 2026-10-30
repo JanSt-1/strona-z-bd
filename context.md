@@ -24,7 +24,7 @@ strona_z_bd/
 ├── create-user.js           # CLI user creator with bcrypt hashing (`node create-user.js <user> <pass> [role]`)
 ├── frontend/                # React 19 + Vite + Tailwind CSS v4 SPA
 │   ├── src/                 # App.jsx (with ErrorBoundary), main.jsx, components/, pages/, api.js, constants.js, index.css
-│   ├── .oxlintrc.json       # oxlint config (`npm run lint`)
+│   ├── .oxlintrc.json       # oxlint config: plugins react, oxc, jsx-a11y (`npm run lint` = `oxlint --deny-warnings`)
 │   ├── public/              # Static assets (logo_mentor4.svg, favicon.svg)
 │   ├── dist/                # Production build served by Express (`npm run build`)
 │   └── vite.config.js       # Vite config: /api proxy to backend, outDir: dist, emptyOutDir: true
@@ -122,7 +122,9 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
 
 - **Single Source of Truth for Actions:** Backend computes `ticket.dozwolone_akcje` via `wyznaczDozwoloneAkcje`. `StatusControl.jsx` (used both in `Dashboard.jsx` and `TicketDetailsDrawer.jsx`) and `constants.js` (`getTicketActionState`) derive `isAssignAction`, `isRepairAction`, `isShipAction`, `rollbackActions`, and `trackingAction` (`akcja: 'edytuj_numer_listu'`, drives the "✏ Edytuj" tracking-number button in `TicketDetailsDrawer.jsx`) directly from `dozwolone_akcje` (rendering `"Przypisz"` in `nowe` and `"Zmień przypisanie"` in `w_realizacji` alongside `"Oznacz jako naprawione"`).
 - **Key Components (`frontend/src/components/`):**
-  - `Modal.jsx`: Shared portal modal base (`createPortal`, `Escape` key via a `keydown` listener, scroll lock, `.modal-card` using `100dvh` for mobile Safari compatibility).
+  - `Modal.jsx`: Shared portal modal base (`createPortal`, `<dialog open aria-modal="true" aria-labelledby>` with the title, "✕" with `aria-label="Zamknij"`, `.modal-card` using `100dvh` for mobile Safari compatibility). Keyboard handling comes from `useDialog`.
+  - `TicketDetailsDrawer.jsx` scroll area: the drawer body is a `<section aria-label tabIndex={0} data-autofocus>` with `overflow-y-auto`, so it gets focus on open and arrow keys / PageUp / PageDown scroll it (focus on the `<dialog>` itself scrolls nothing, because the dialog has `overflow: hidden`). `.oxlintrc.json` allows `tabIndex` on `<section>` only (`jsx-a11y/no-noninteractive-tabindex`, `tags: ["section"]`) for such scroll areas.
+  - `useDialog.js` (`frontend/src/`): shared by `Modal` and `TicketDetailsDrawer`. Keeps a stack of open dialogs: only the top one reacts to `Escape` and `Tab` (a modal opened from the drawer closes alone). Traps focus (Tab / Shift+Tab cycle inside), focuses `[data-autofocus]` or the dialog itself on open, locks body scroll, and on close returns focus to the element that opened it (or to the dialog below if that element is gone). Use `data-autofocus` instead of `autoFocus` (jsx-a11y `no-autofocus`). Native `showModal()` is not used, so `.modal-card` / `.drawer-panel` reset the browser's default `<dialog>` styles in `index.css`.
   - `PasswordModal.jsx`: Unified modal for own password change (`userToEdit = null`) and admin password reset (`userToEdit = user`).
   - `ShipModal.jsx`: Unified modal for shipping (`mode="ship"`) and tracking number editing (`mode="edit"`).
   - `AssignWorkerModal.jsx`: Requires choosing an active `pracownik` or `serwisant` when the ticket is unassigned (`— Wybierz pracownika z listy —`); only offers `"— Brak (Cofnij przypisanie) —"` when the ticket is already assigned (`w_realizacji`).
@@ -136,11 +138,12 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
     - `apiFetch` on `401` clears the session and calls `onUnauthorized(message)`, unless another tab has already replaced the token. On `403` it calls `refreshCurrentUser()` (`GET /api/me`); changed user data goes through `authApi.updateSession` → `onSessionUpdated`.
     - `App.jsx` calls `authApi.me()` whenever the token changes, listens to the `storage` event (`serwis_token`/`serwis_user` changed in another tab → take over that session or log out), and remounts `Dashboard` with `key={`${user?.id}:${user?.role}`}`.
     - `szkice.js` keeps drafts in `sessionStorage`: the repair description (`RepairModal`) and the shipping number in both `ShipModal` modes ("Oznacz jako wysłane" and "Edytuj numer listu", separate keys via `modalDraftKey(kind, userId, ticketId)` with `kind` = `repair` / `ship` / `tracking`), plus the open window (`rememberOpenModal` / `pendingModal`). Keys include the user ID. After logging in again, `Dashboard` reopens that window with the draft if the action is still allowed; otherwise the stale draft is removed. A draft is removed only after a successful save (`runTicketMutation` returns `true`, and `false` on a `401`); `ShipModal` also removes it on a `409`. `ShipModal` stores a draft only when the input differs from the saved `numer_listu`, and it no longer closes itself: `runTicketMutation` closes it on success.
-  - `Dashboard.jsx`: URL query sync, race-condition guard (`fetchRequestIdRef` ignores stale out-of-order responses), automatic fallback to previous page when deleting the last ticket on a page, refreshes active workers (`fetchWorkers`) on tab switch and when opening `AssignWorkerModal`.
+  - `Dashboard.jsx`: The ticket number (`#id`) in the table row and the mobile card is a `<button>` ("Szczegóły zgłoszenia #id") that opens the drawer; clicking the row/card is a mouse shortcut (`handleTicketAreaClick` ignores clicks on buttons, links and form fields, so there are no `stopPropagation` wrappers). Search and filters have `aria-label`. URL query sync, race-condition guard (`fetchRequestIdRef` ignores stale out-of-order responses), automatic fallback to previous page when deleting the last ticket on a page, refreshes active workers (`fetchWorkers`) on tab switch and when opening `AssignWorkerModal`.
 - **Strict Visual System & Accessibility (`frontend/src/index.css`):**
   - **Colors exclusively from `:root` CSS variables:** `--bg-page`, `--bg-card`, `--text-main`, `--text-muted`, `--text-white`, `--primary`, `--primary-dark`, `--danger`, `--border`, `--status-nowe|w-realizacji|do-wysylki|zakonczone`.
   - **Zero raw hex/RGB outside `:root`:** Use semantic classes (`text-ink`, `text-muted`, `text-primary-dark`, `bg-page`, `bg-card`, `border-line`, `text-danger`, `.btn-primary`, `.btn-secondary`, `.btn-danger`) — never default Tailwind palettes (`slate-*`, `red-*`) or inline `style={{}}`.
   - **WCAG AA & Responsiveness:** Contrast ratio $\ge 4.5:1$ for all text/badges. No horizontal scroll at `375px` (iPhone SE) or `1366px` desktop.
+  - **Keyboard & screen readers:** Every clickable thing is a `<button>`/`<a>`/form field (a clickable `div`/`tr` is only a mouse shortcut next to a real button). Every field has `<label htmlFor>` + `id` or `aria-label`. Never `outline-none` without `focus-visible:ring-2 focus-visible:ring-primary` (or `focus:ring-*`). New dialogs go through `Modal` / `useDialog`. `npm run lint` (jsx-a11y, `--deny-warnings`) must stay at 0 warnings; the three `react/set-state-in-effect` disables in `Dashboard.jsx` / `AdminUsersPanel.jsx` mark data fetching where `setState` runs only after `await`.
 
 ---
 
@@ -149,7 +152,7 @@ All errors return `{ error: string }`. Polish error messages are strictly tested
 ```bash
 npm install                                # Install root + frontend workspace dependencies
 npm run build                              # Build Vite SPA into frontend/dist/
-npm run lint                               # Run oxlint on frontend/src/
+npm run lint                               # oxlint (react, oxc, jsx-a11y) on frontend/src/, fails on any warning
 npm test                                   # node --test: runs all *.test.js (mocked tests in app.test.js; integration.test.js is skipped when no DB is reachable)
 npm run test:db                            # Run real MySQL/MariaDB tests (integration.test.js on serwis_db_test)
 npm run migrate                            # Apply pending SQL migrations from migrations/

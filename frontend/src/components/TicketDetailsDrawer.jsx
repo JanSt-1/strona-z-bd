@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import StatusBadge from './StatusBadge';
 import StatusControl from './StatusControl';
 import { ticketApi } from '../api';
+import { useDialog } from '../useDialog';
 import { STATUS_LABELS, HISTORY_ACTION_LABELS, formatDate, formatDateTime, getTicketActionState } from '../constants';
 
 const ACTION_ICONS = {
@@ -29,26 +30,14 @@ export default function TicketDetailsDrawer({
   const [loadingHistory, setLoadingHistory] = useState(Boolean(ticket?.id));
   const [historyError, setHistoryError] = useState(null);
 
-  useEffect(() => {
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      document.body.style.overflow = originalOverflow;
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [onClose]);
+  const dialogRef = useRef(null);
+  const titleId = useId();
+  // Escape zamyka panel tylko wtedy, gdy nie ma nad nim otwartego okna (np. "Cofnij status")
+  useDialog(dialogRef, onClose);
 
   useEffect(() => {
     let isMounted = true;
     if (ticket?.id) {
-      setLoadingHistory(true);
-      setHistoryError(null);
       ticketApi
         .getTicketById(ticket.id)
         .then((res) => {
@@ -79,18 +68,29 @@ export default function TicketDetailsDrawer({
   const curStatus = currentTicket.status || 'nowe';
 
   return createPortal(
+    // Kliknięcie w tło to wygoda dla myszy; z klawiatury panel zamyka Escape albo przycisk "Zamknij"
     <div
       className="drawer-overlay"
+      role="presentation"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="drawer-panel" onClick={(e) => e.stopPropagation()}>
+      <dialog
+        open
+        ref={dialogRef}
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="drawer-panel outline-none"
+      >
         {/* Pasek nagłówka panelu bocznego */}
         <div className="p-4 sm:p-5 border-b border-line bg-card flex items-start justify-between gap-3 shrink-0">
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
-              <span className="text-xl font-bold text-ink">Zgłoszenie #{ticket.id}</span>
+              <h2 id={titleId} className="text-xl font-bold text-ink">
+                Zgłoszenie #{ticket.id}
+              </h2>
               <StatusBadge status={curStatus} />
             </div>
             <div className="text-xs text-muted mt-1">
@@ -104,6 +104,7 @@ export default function TicketDetailsDrawer({
             onClick={onClose}
             className="text-muted hover:text-ink text-xl font-bold p-1 leading-none rounded-md hover:bg-page transition-colors cursor-pointer"
             title="Zamknij panel (Esc)"
+            aria-label="Zamknij panel szczegółów"
           >
             ✕
           </button>
@@ -123,8 +124,13 @@ export default function TicketDetailsDrawer({
           />
         </div>
 
-        {/* Przewijana treść panelu */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+        {/* Przewijana treść panelu: osobny cel fokusu (od razu po otwarciu), żeby strzałki i PageUp/PageDown przewijały ją z klawiatury */}
+        <section
+          aria-label={`Szczegóły zgłoszenia #${ticket.id}`}
+          tabIndex={0}
+          data-autofocus
+          className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+        >
           {/* Sekcja 1: Dane klienta i kontakt */}
           <div className="bg-page rounded-xl p-4 border border-line space-y-3">
             <h4 className="text-xs font-bold text-muted uppercase tracking-wider flex items-center gap-1.5">
@@ -377,7 +383,7 @@ export default function TicketDetailsDrawer({
               </div>
             )}
           </div>
-        </div>
+        </section>
 
         {/* Dolny pasek panelu bocznego */}
         <div className="p-3 sm:p-4 border-t border-line bg-card flex justify-end items-center shrink-0">
@@ -385,7 +391,7 @@ export default function TicketDetailsDrawer({
             Zamknij panel
           </button>
         </div>
-      </div>
+      </dialog>
     </div>,
     document.body
   );

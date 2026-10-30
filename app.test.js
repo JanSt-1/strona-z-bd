@@ -4029,4 +4029,103 @@ describe('Testy integracyjne API i reguł RBAC (node:test + supertest)', () => {
             assert.ok(schema.includes('token_version INT NOT NULL DEFAULT 0'));
         });
     });
+
+    describe('24. Dostępność panelu: klawiatura, okna dialogowe, etykiety pól i linter jsx-a11y', () => {
+        const src = (...parts) => fs.readFileSync(path.join(__dirname, 'frontend', 'src', ...parts), 'utf8');
+        const allSources = () => {
+            const files = [];
+            const walk = (dir) => {
+                for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                    const full = path.join(dir, entry.name);
+                    if (entry.isDirectory()) walk(full);
+                    else if (/\.(jsx?|tsx?)$/.test(entry.name)) files.push([path.relative(__dirname, full), fs.readFileSync(full, 'utf8')]);
+                }
+            };
+            walk(path.join(__dirname, 'frontend', 'src'));
+            return files;
+        };
+
+        it('zgłoszenie otwiera się z klawiatury: numer w wierszu i na karcie to przycisk, bez stopPropagation', () => {
+            const dashboardJsx = src('pages', 'Dashboard.jsx');
+            assert.strictEqual((dashboardJsx.match(/aria-label=\{`Szczegóły zgłoszenia #\$\{t\.id\}`\}/g) || []).length, 2, 'Przycisk z numerem w tabeli i na karcie mobilnej');
+            assert.strictEqual((dashboardJsx.match(/onClick=\{\(e\) => handleTicketAreaClick\(e, t\)\}/g) || []).length, 2);
+            assert.ok(dashboardJsx.includes("e.target.closest('button, a, input, select, textarea, label')"), 'Kliknięcie w przycisk w wierszu nie otwiera panelu');
+            assert.strictEqual(dashboardJsx.includes('stopPropagation'), false);
+        });
+
+        it('Modal i panel szczegółów są oknami dialogowymi z tytułem i nazwanym przyciskiem zamknięcia', () => {
+            const modalJsx = src('components', 'Modal.jsx');
+            const drawerJsx = src('components', 'TicketDetailsDrawer.jsx');
+            for (const [name, code] of [['Modal', modalJsx], ['TicketDetailsDrawer', drawerJsx]]) {
+                assert.ok(code.includes('<dialog'), `${name}: <dialog>`);
+                assert.ok(code.includes('aria-modal="true"'), `${name}: aria-modal`);
+                assert.ok(code.includes('aria-labelledby={titleId}') && code.includes('id={titleId}'), `${name}: aria-labelledby na tytuł`);
+                assert.ok(code.includes('useDialog(dialogRef, onClose)'), `${name}: wspólna obsługa klawiatury`);
+                assert.strictEqual(code.includes("addEventListener('keydown'"), false, `${name}: Escape nie może być nasłuchiwany osobno na window`);
+            }
+            assert.ok(modalJsx.includes('aria-label="Zamknij"'));
+            assert.ok(drawerJsx.includes('aria-label="Zamknij panel szczegółów"'));
+            // Przewijana treść panelu dostaje fokus po otwarciu, żeby strzałki / PageDown przewijały ją z klawiatury
+            assert.ok(/<section\s+aria-label=\{`Szczegóły zgłoszenia #\$\{ticket\.id\}`\}\s+tabIndex=\{0\}\s+data-autofocus\s+className="flex-1 overflow-y-auto/.test(drawerJsx), 'Przewijana treść panelu musi być osiągalna z klawiatury');
+        });
+
+        it('useDialog: Escape i Tab tylko dla okna na wierzchu, pułapka fokusu i powrót fokusu do przycisku', () => {
+            const hook = src('useDialog.js');
+            assert.ok(hook.includes('if (topDialog() !== entry || !node) return;'), 'Okno pod spodem ignoruje Escape i Tab');
+            assert.ok(hook.includes("if (e.key === 'Escape')"));
+            assert.ok(/e\.shiftKey && active === first[\s\S]{0,80}last\.focus\(\)/.test(hook), 'Shift+Tab z pierwszego elementu przechodzi na ostatni');
+            assert.ok(/!e\.shiftKey && active === last[\s\S]{0,80}first\.focus\(\)/.test(hook), 'Tab z ostatniego elementu wraca na pierwszy');
+            assert.ok(hook.includes('const opener = document.activeElement;'));
+            assert.ok(hook.includes('opener?.isConnected'), 'Po zamknięciu fokus wraca do elementu, który otworzył okno');
+            assert.ok(hook.includes("querySelector('[data-autofocus]')"));
+        });
+
+        it('pola mają etykiety: hasła z autoComplete, rola użytkownika, cofnięcie statusu, wyszukiwarka i filtry', () => {
+            const passwordJsx = src('components', 'PasswordModal.jsx');
+            for (const id of ['currentPassword', 'newPassword', 'confirmPassword']) {
+                assert.ok(passwordJsx.includes(`htmlFor="${id}"`) && passwordJsx.includes(`id="${id}"`), id);
+            }
+            assert.ok(passwordJsx.includes('autoComplete="current-password"'));
+            assert.strictEqual((passwordJsx.match(/autoComplete="new-password"/g) || []).length, 2);
+
+            const adminJsx = src('components', 'AdminUsersPanel.jsx');
+            for (const id of ['newUserUsername', 'newUserPassword', 'newUserRole']) {
+                assert.ok(adminJsx.includes(`htmlFor="${id}"`) && adminJsx.includes(`id="${id}"`), id);
+            }
+            assert.ok(adminJsx.includes('htmlFor={`userRole-${u.id}`}'));
+            assert.ok(adminJsx.includes('aria-label={id ? undefined : `Rola użytkownika ${u.username}`}'));
+            assert.strictEqual(adminJsx.includes('focus:border-primary/30'), false, 'Prawie niewidoczny fokus');
+
+            const rollbackJsx = src('components', 'RollbackStatusModal.jsx');
+            assert.ok(/rollbackActions\.length === 1 \? \(\s*<div[^>]*>Status docelowy:<\/div>\s*\) : \(\s*<label htmlFor="targetStatusSelect"/.test(rollbackJsx), 'Etykieta tylko wtedy, gdy istnieje pole wyboru');
+
+            const dashboardJsx = src('pages', 'Dashboard.jsx');
+            for (const label of ['Szukaj w zgłoszeniach', 'Filtruj według statusu zgłoszenia', 'Filtruj według przypisanego pracownika', 'Kolejność sortowania po dacie', 'Wyczyść szukanie']) {
+                assert.ok(dashboardJsx.includes(`aria-label="${label}"`), label);
+            }
+        });
+
+        it('brak autoFocus i outline-none bez widocznego zamiennika fokusu w całym frontendzie', () => {
+            for (const [file, code] of allSources()) {
+                assert.strictEqual(/\bautoFocus\b/.test(code), false, `${file}: autoFocus (użyj data-autofocus)`);
+                for (const cls of code.match(/className=(?:"[^"]*"|\{`[^`]*`\})/g) || []) {
+                    if (/\boutline-none\b/.test(cls)) {
+                        assert.ok(/focus(-visible)?:ring|\b(modal-card|drawer-panel)\b/.test(cls), `${file}: outline-none bez zamiennika: ${cls}`);
+                    }
+                }
+            }
+            const formJsx = src('pages', 'PublicTicketForm.jsx');
+            assert.ok(/<summary className="[^"]*focus-visible:ring-2/.test(formJsx));
+        });
+
+        it('linter: wtyczka jsx-a11y włączona, a ostrzeżenia przerywają CI', () => {
+            const oxlintrc = JSON.parse(fs.readFileSync(path.join(__dirname, 'frontend', '.oxlintrc.json'), 'utf8'));
+            assert.ok(oxlintrc.plugins.includes('jsx-a11y'));
+            assert.deepStrictEqual(oxlintrc.rules['jsx-a11y/no-noninteractive-tabindex'][1].tags, ['section'], 'tabIndex dozwolony tylko dla przewijanej sekcji');
+            const frontendPkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'frontend', 'package.json'), 'utf8'));
+            assert.ok(frontendPkg.scripts.lint.includes('--deny-warnings'));
+            const ci = fs.readFileSync(path.join(__dirname, '.github', 'workflows', 'ci.yml'), 'utf8');
+            assert.ok(ci.includes('run: npm run lint'));
+        });
+    });
 });

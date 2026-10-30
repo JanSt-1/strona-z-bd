@@ -304,6 +304,14 @@
   overflow-y: auto;
 }
 
+/* .modal-card i .drawer-panel to <dialog open> - zerujemy domyślne style przeglądarki dla <dialog> */
+.modal-card,
+.drawer-panel {
+  position: relative;
+  inset: auto;
+  color: var(--text-main);
+}
+
 .modal-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -336,7 +344,11 @@
 
 .drawer-panel {
   background: var(--bg-card);
+  border: 0;
   border-left: 1px solid var(--border);
+  margin: 0;
+  padding: 0;
+  max-height: none;
   width: 100%;
   max-width: 700px;
   height: 100%;

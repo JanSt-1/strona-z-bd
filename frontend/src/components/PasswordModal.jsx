@@ -69,11 +69,15 @@ export default function PasswordModal({ userToEdit = null, onClose, onPasswordCh
       <form onSubmit={handleSubmit} className="space-y-4">
         {isOwnPassword && (
           <div>
-            <label className="block text-ink font-semibold text-sm mb-1.5">Aktualne hasło *</label>
+            <label htmlFor="currentPassword" className="block text-ink font-semibold text-sm mb-1.5">
+              Aktualne hasło *
+            </label>
             <input
+              id="currentPassword"
               type="password"
+              autoComplete="current-password"
               required
-              autoFocus
+              data-autofocus
               placeholder="Wpisz dotychczasowe hasło..."
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
@@ -82,15 +86,17 @@ export default function PasswordModal({ userToEdit = null, onClose, onPasswordCh
           </div>
         )}
         <div>
-          <label className="block text-ink font-semibold text-sm mb-1.5">
+          <label htmlFor="newPassword" className="block text-ink font-semibold text-sm mb-1.5">
             Nowe hasło (min. 8 znaków) *
           </label>
           <input
+            id="newPassword"
             type="password"
+            autoComplete="new-password"
             required
             minLength={8}
             maxLength={72}
-            autoFocus={!isOwnPassword}
+            data-autofocus={isOwnPassword ? undefined : true}
             placeholder="Wpisz nowe hasło (min. 8 znaków)..."
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -98,11 +104,13 @@ export default function PasswordModal({ userToEdit = null, onClose, onPasswordCh
           />
         </div>
         <div>
-          <label className="block text-ink font-semibold text-sm mb-1.5">
+          <label htmlFor="confirmPassword" className="block text-ink font-semibold text-sm mb-1.5">
             Powtórz nowe hasło *
           </label>
           <input
+            id="confirmPassword"
             type="password"
+            autoComplete="new-password"
             required
             minLength={8}
             maxLength={72}

@@ -612,7 +612,7 @@ export default function PublicTicketForm() {
         {/* Klauzula informacyjna z rozwijaną treścią i obowiązkowym checkboxem */}
         <section className="pt-6 border-t border-line mb-6">
           <details className="cursor-pointer mb-3 group">
-            <summary className="font-semibold text-primary-dark text-sm select-none outline-none hover:underline">
+            <summary className="font-semibold text-primary-dark text-sm select-none rounded outline-none hover:underline focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
               Informacja o przetwarzaniu danych osobowych (kliknij, aby rozwinąć)
             </summary>
             <div className="mt-2.5 p-3.5 bg-page rounded-lg text-xs text-ink leading-relaxed border border-line space-y-2">

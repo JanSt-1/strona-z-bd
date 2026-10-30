@@ -121,10 +121,16 @@ npm run dev:frontend
 Aplikacja posiada dedykowany favicon (`favicon.svg`) wygenerowany na bazie sygnetu logo Mentor, serwowany bezpośrednio w nagłówku strony i w pasku zakładek przeglądarki.
 
 #### Jakość kodu i linter frontendu
-Do weryfikacji i statycznej analizy kodu frontendu skonfigurowany jest linter **oxlint**:
+Do weryfikacji i statycznej analizy kodu frontendu skonfigurowany jest linter **oxlint** z wtyczkami `react`, `oxc` i `jsx-a11y` (dostępność):
 ```bash
 npm --prefix frontend run lint
 ```
+Linter działa z `--deny-warnings`, więc każde ostrzeżenie (także o dostępności, np. pole bez etykiety albo klikalny element niedostępny z klawiatury) przerywa CI.
+
+#### Dostępność (klawiatura i czytniki ekranu)
+- Każde zgłoszenie da się otworzyć z klawiatury: numer zgłoszenia (`#123`) w tabeli i na karcie mobilnej jest przyciskiem „Szczegóły zgłoszenia #123”. Kliknięcie w cały wiersz lub kartę działa nadal jako skrót dla myszy.
+- Okna (modale) i panel szczegółów zgłoszenia są oknami dialogowymi dla czytników (`<dialog aria-modal="true">` z tytułem przez `aria-labelledby`). Po otwarciu fokus przechodzi do okna, `Tab` krąży wewnątrz, `Escape` zamyka tylko okno na wierzchu (np. „Cofnij status” otwarte z panelu szczegółów), a po zamknięciu fokus wraca na przycisk, który okno otworzył. Przyciski „✕” mają nazwę „Zamknij”. Treść panelu szczegółów dostaje fokus od razu po otwarciu, więc strzałki i PageUp / PageDown przewijają ją bez użycia myszy.
+- Wszystkie pola formularzy mają powiązaną etykietę (`<label htmlFor>`) albo `aria-label` (wyszukiwarka i filtry nad listą). Pola haseł mają `autoComplete` (`current-password` / `new-password`).
 
 #### Treści do uzupełnienia przed wdrożeniem (klauzula RODO, czas kontaktu)
 Klauzula informacyjna (art. 13 RODO) i deklarowany czas kontaktu są w pliku `frontend/src/tresci.js`. Do czasu uzupełnienia przez właściciela serwisu zawierają zaślepki `[X]`. Sprawdzenie:

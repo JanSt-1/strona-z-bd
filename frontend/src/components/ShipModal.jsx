@@ -100,7 +100,7 @@ export default function ShipModal({ ticket, userId, mode = 'ship', onClose, onSh
           <input
             id="shippingTrackingNumber"
             type="text"
-            autoFocus
+            data-autofocus
             disabled={conflict}
             required={!isEditOnly}
             maxLength={100}

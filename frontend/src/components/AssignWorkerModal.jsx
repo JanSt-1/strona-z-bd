@@ -90,7 +90,7 @@ export default function AssignWorkerModal({
           </label>
           <select
             id="workerSelect"
-            autoFocus
+            data-autofocus
             value={selectedWorkerId}
             onChange={(e) => {
               setSelectedWorkerId(e.target.value);

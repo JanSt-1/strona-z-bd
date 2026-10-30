@@ -33,6 +33,7 @@ export default function AdminUsersPanel({ currentUser, showAlert, onWorkersChang
   const handleClosePasswordModal = useCallback(() => setPasswordModalUser(null), []);
 
   useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- pobieranie danych: setState dopiero po await
     fetchUsers();
   }, [fetchUsers]);
 
@@ -145,13 +146,16 @@ export default function AdminUsersPanel({ currentUser, showAlert, onWorkersChang
       </span>
     );
 
-  const renderRoleSelect = (u, isSelf, isBusy, fullWidth = false) => (
+  // id podajemy, gdy pole ma widoczną etykietę (<label htmlFor>); w tabeli nazwę pola daje aria-label
+  const renderRoleSelect = (u, isSelf, isBusy, fullWidth = false, id = undefined) => (
     <select
+      id={id}
+      aria-label={id ? undefined : `Rola użytkownika ${u.username}`}
       value={u.role}
       disabled={isBusy || (isSelf && u.role === 'admin')}
       onChange={(e) => handleRoleChange(u, e.target.value)}
       title={isSelf ? 'Nie możesz odebrać roli administratora samemu sobie' : 'Zmień rolę'}
-      className={`bg-card border border-line rounded px-2.5 py-1.5 text-xs font-semibold text-ink outline-none focus:border-primary/30 disabled:opacity-60 cursor-pointer ${
+      className={`bg-card border border-line rounded px-2.5 py-1.5 text-xs font-semibold text-ink outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60 cursor-pointer ${
         fullWidth ? 'w-full' : ''
       }`}
     >
@@ -263,9 +267,11 @@ export default function AdminUsersPanel({ currentUser, showAlert, onWorkersChang
           <form onSubmit={handleCreateUser}>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="app-label">Nazwa użytkownika (login) *</label>
+                <label htmlFor="newUserUsername" className="app-label">Nazwa użytkownika (login) *</label>
                 <input
+                  id="newUserUsername"
                   type="text"
+                  autoComplete="off"
                   required
                   maxLength={50}
                   placeholder="np. jankowalski"
@@ -275,9 +281,11 @@ export default function AdminUsersPanel({ currentUser, showAlert, onWorkersChang
                 />
               </div>
               <div>
-                <label className="app-label">Hasło (min. 8 znaków) *</label>
+                <label htmlFor="newUserPassword" className="app-label">Hasło (min. 8 znaków) *</label>
                 <input
+                  id="newUserPassword"
                   type="password"
+                  autoComplete="new-password"
                   required
                   minLength={8}
                   maxLength={72}
@@ -288,8 +296,9 @@ export default function AdminUsersPanel({ currentUser, showAlert, onWorkersChang
                 />
               </div>
               <div>
-                <label className="app-label">Rola *</label>
+                <label htmlFor="newUserRole" className="app-label">Rola *</label>
                 <select
+                  id="newUserRole"
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value)}
                   className="app-select cursor-pointer"
@@ -422,10 +431,13 @@ export default function AdminUsersPanel({ currentUser, showAlert, onWorkersChang
                 </div>
 
                 <div>
-                  <label className="text-[0.7rem] text-muted uppercase font-semibold block mb-1">
+                  <label
+                    htmlFor={`userRole-${u.id}`}
+                    className="text-[0.7rem] text-muted uppercase font-semibold block mb-1"
+                  >
                     Rola użytkownika
                   </label>
-                  {renderRoleSelect(u, isSelf, isBusy, true)}
+                  {renderRoleSelect(u, isSelf, isBusy, true, `userRole-${u.id}`)}
                 </div>
 
                 <div className="pt-2 border-t border-line">
