@@ -14,44 +14,15 @@ export default function StatusControl({
 }) {
   const {
     curStatus,
+    assignAction,
+    repairAction,
+    shipAction,
     rollbackActions,
     isAssignAction,
     isRepairAction,
     isShipAction,
     hasForwardButton
   } = getTicketActionState(ticket, user);
-
-  const forwardBtn = isAssignAction ? (
-    <button
-      type="button"
-      onClick={() => onOpenAssignModal?.(ticket)}
-      title="Przypisz zlecenie pracownikowi, aby rozpocząć realizację"
-      className="btn-primary py-1 px-2.5 text-xs inline-flex items-center gap-1"
-    >
-      <span>👤</span>
-      <span>Przypisz</span>
-    </button>
-  ) : isRepairAction ? (
-    <button
-      type="button"
-      onClick={() => onOpenRepairModal?.(ticket)}
-      title="Opisz wykonane prace i przekaż do magazynu jako Do wysyłki"
-      className="btn-primary py-1 px-2.5 text-xs inline-flex items-center gap-1"
-    >
-      <span>🔧</span>
-      <span>Oznacz jako naprawione</span>
-    </button>
-  ) : isShipAction ? (
-    <button
-      type="button"
-      onClick={() => onOpenShipModal?.(ticket)}
-      title="Wprowadź numer listu przewozowego i oznacz zlecenie jako wysłane"
-      className="btn-primary py-1 px-2.5 text-xs inline-flex items-center gap-1"
-    >
-      <span>📦</span>
-      <span>Oznacz jako wysłane</span>
-    </button>
-  ) : null;
 
   return (
     <div className={barLayout ? 'w-full' : 'flex flex-col gap-2 items-start'}>
@@ -62,7 +33,47 @@ export default function StatusControl({
           barLayout ? 'justify-between w-full gap-3' : ''
         }`}
       >
-        {forwardBtn}
+        {isRepairAction && (
+          <button
+            type="button"
+            onClick={() => onOpenRepairModal?.(ticket)}
+            title="Opisz wykonane prace i przekaż do magazynu jako Do wysyłki"
+            className="btn-primary py-1 px-2.5 text-xs inline-flex items-center gap-1"
+          >
+            <span>🔧</span>
+            <span>{repairAction?.etykieta || 'Oznacz jako naprawione'}</span>
+          </button>
+        )}
+
+        {isShipAction && (
+          <button
+            type="button"
+            onClick={() => onOpenShipModal?.(ticket)}
+            title="Wprowadź numer listu przewozowego i oznacz zlecenie jako wysłane"
+            className="btn-primary py-1 px-2.5 text-xs inline-flex items-center gap-1"
+          >
+            <span>📦</span>
+            <span>{shipAction?.etykieta || 'Oznacz jako wysłane'}</span>
+          </button>
+        )}
+
+        {isAssignAction && (
+          <button
+            type="button"
+            onClick={() => onOpenAssignModal?.(ticket)}
+            title={
+              curStatus === 'nowe'
+                ? 'Przypisz zlecenie pracownikowi, aby rozpocząć realizację'
+                : 'Zmień przypisanego pracownika dla tego zlecenia'
+            }
+            className={`${
+              curStatus === 'nowe' ? 'btn-primary' : 'btn-secondary'
+            } py-1 px-2.5 text-xs inline-flex items-center gap-1`}
+          >
+            <span>👤</span>
+            <span>{assignAction?.etykieta || (curStatus === 'w_realizacji' ? 'Zmień przypisanie' : 'Przypisz')}</span>
+          </button>
+        )}
 
         {!hasForwardButton && (
           <>
@@ -89,7 +100,7 @@ export default function StatusControl({
           </>
         )}
 
-        {user?.role === 'admin' && rollbackActions.length > 0 && onOpenRollbackModal && (
+        {rollbackActions.length > 0 && onOpenRollbackModal && (
           <button
             type="button"
             onClick={() => onOpenRollbackModal(ticket, rollbackActions)}

@@ -1,23 +1,49 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   PRZEDMIOTY_LISTA,
   NUMERY_KIERUNKOWE,
   EMPTY_TICKET_FORM,
+  FIELD_MAX_LENGTHS,
+  PHONE_PREFIX,
+  normalizePhoneDigits,
+  formatPhone,
+  todayInPoland,
   isSerialNumberAllowed,
-  validatePurchaseDate
+  validateTicketForm,
+  formatDateTime
 } from '../constants';
+import { CZAS_KONTAKTU_DNI_ROBOCZYCH, KLAUZULA_INFORMACYJNA } from '../tresci';
 import { ticketApi } from '../api';
 import Alert from '../components/Alert';
 
-const TODAY_ISO = new Date().toISOString().split('T')[0];
+function FieldError({ id, error }) {
+  if (!error || error.field !== id) return null;
+  return (
+    <p id={`${id}-error`} className="text-danger text-xs font-medium mt-1.5">
+      {error.message}
+    </p>
+  );
+}
 
-function Field({ id, label, span2 = false, ...inputProps }) {
+// Atrybuty dostępności dla pola, którego dotyczy bieżący błąd
+function errorProps(id, error) {
+  return error?.field === id ? { 'aria-invalid': true, 'aria-describedby': `${id}-error` } : {};
+}
+
+function Field({ id, label, span2 = false, error, ...inputProps }) {
   return (
     <div className={`w-full ${span2 ? 'md:col-span-2' : ''}`}>
       <label htmlFor={id} className="app-label">
         {label}
       </label>
-      <input id={id} className="app-input w-full" {...inputProps} />
+      <input
+        id={id}
+        className={`app-input w-full ${error?.field === id ? 'border-danger' : ''}`}
+        maxLength={FIELD_MAX_LENGTHS[id]}
+        {...errorProps(id, error)}
+        {...inputProps}
+      />
+      <FieldError id={id} error={error} />
     </div>
   );
 }
@@ -26,6 +52,10 @@ export default function PublicTicketForm() {
   const [formData, setFormData] = useState(EMPTY_TICKET_FORM);
   const [loading, setLoading] = useState(false);
   const [alert, setAlert] = useState(null);
+  // Błąd walidacji przy konkretnym polu; znika, gdy użytkownik zmieni wartość tego pola
+  const [fieldError, setFieldError] = useState(null);
+  const alertRef = useRef(null);
+  const alertTimerRef = useRef(null);
   const [submittedTicket, setSubmittedTicket] = useState(() => {
     try {
       const stored = sessionStorage.getItem('serwis_last_submitted');
@@ -38,9 +68,28 @@ export default function PublicTicketForm() {
   const setField = (key) => (e) =>
     setFormData((prev) => ({ ...prev, [key]: e.target.value }));
 
+  useEffect(() => () => clearTimeout(alertTimerRef.current), []);
+
+  // Błąd z serwera pokazuje się nad formularzem - przewijamy do niego i dajemy mu fokus (na telefonie jest poza ekranem)
+  useEffect(() => {
+    if (alert?.type === 'error' && alertRef.current) {
+      alertRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      alertRef.current.focus({ preventScroll: true });
+    }
+  }, [alert]);
+
+  // Sukces znika sam, błąd zostaje do zamknięcia lub kolejnej próby wysłania
   function showAlert(message, type = 'success') {
+    clearTimeout(alertTimerRef.current);
     setAlert({ message, type });
-    setTimeout(() => setAlert(null), 6000);
+    if (type === 'success') {
+      alertTimerRef.current = setTimeout(() => setAlert(null), 6000);
+    }
+  }
+
+  function clearAlert() {
+    clearTimeout(alertTimerRef.current);
+    setAlert(null);
   }
 
   function handleNewSubmission() {
@@ -48,17 +97,13 @@ export default function PublicTicketForm() {
       sessionStorage.removeItem('serwis_last_submitted');
     } catch {}
     setSubmittedTicket(null);
-    setFormData({ ...EMPTY_TICKET_FORM, numer_telefonu: '+48 ' });
-    setAlert(null);
+    setFormData(EMPTY_TICKET_FORM);
+    setFieldError(null);
+    clearAlert();
   }
 
   function handlePhoneChange(e) {
-    let digits = e.target.value.replace(/\D/g, '');
-    if (digits.startsWith('48')) digits = digits.slice(2);
-    digits = digits.slice(0, 9);
-    const formatted =
-      '+48 ' +
-      [digits.slice(0, 3), digits.slice(3, 6), digits.slice(6)].filter(Boolean).join(' ');
+    const formatted = formatPhone(normalizePhoneDigits(e.target.value));
     setFormData((prev) => ({ ...prev, numer_telefonu: formatted }));
   }
 
@@ -106,32 +151,19 @@ export default function PublicTicketForm() {
 
   async function handleSubmit(e) {
     e.preventDefault();
+    clearAlert();
 
-    const cleanDigits = formData.numer_telefonu.replace(/\D/g, '').replace(/^48/, '');
-    const dateErr = validatePurchaseDate(formData.data_zakupu);
-    const hasLandlineInput = Boolean(formData.telefon_kierunkowy || formData.telefon_firmowy_7);
-
-    const validationError = [
-      [/\d/.test(formData.imie), 'Pole "Imię" nie może zawierać cyfr.'],
-      [/\d/.test(formData.nazwisko), 'Pole "Nazwisko" nie może zawierać cyfr.'],
-      [cleanDigits.length < 9, 'Proszę podać pełny, 9-cyfrowy numer telefonu po prefiksie +48.'],
-      [!/^\d{2}-\d{3}$/.test(formData.kod_pocztowy.trim()), 'Kod pocztowy musi mieć format XX-XXX (np. 00-001).'],
-      [!formData.przedmiot_zgloszenia, 'Proszę wybrać przedmiot zgłoszenia z listy.'],
-      [
-        isSerialNumberAllowed(formData.przedmiot_zgloszenia) && !formData.numer_seryjny.trim(),
-        'Pole "Numer seryjny (S/N)" jest obowiązkowe dla wybranego przedmiotu zgłoszenia.'
-      ],
-      [Boolean(dateErr), dateErr],
-      [!formData.numer_fv.trim(), 'Pole "Numer faktury / paragonu" jest wymagane.'],
-      [!/^\d{10}$/.test(formData.nip.trim()), 'Pole "NIP" jest wymagane i musi składać się z dokładnie 10 cyfr (bez myślników).'],
-      [hasLandlineInput && !formData.telefon_kierunkowy, 'Proszę wybrać 2-cyfrowy numer kierunkowy dla telefonu stacjonarnego.'],
-      [hasLandlineInput && formData.telefon_firmowy_7.length < 7, 'Dla telefonu stacjonarnego należy podać pełne 7 cyfr po numerze kierunkowym.'],
-      [!formData.zgoda_rodo, 'Wymagane jest potwierdzenie zapoznania się z informacją o przetwarzaniu danych osobowych.']
-    ].find(([invalid]) => invalid);
-
+    const validationError = validateTicketForm(formData);
     if (validationError) {
-      return showAlert(validationError[1], 'error');
+      setFieldError({ ...validationError, value: formData[validationError.field] });
+      const el = document.getElementById(validationError.field);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.focus({ preventScroll: true });
+      }
+      return;
     }
+    setFieldError(null);
 
     setLoading(true);
     try {
@@ -142,13 +174,13 @@ export default function PublicTicketForm() {
 
       const payload = {
         website: formData.website || '',
-        imie: formData.imie,
-        nazwisko: formData.nazwisko,
+        imie: formData.imie.trim(),
+        nazwisko: formData.nazwisko.trim(),
         nazwa_firmy: formData.nazwa_firmy ? formData.nazwa_firmy.trim() : null,
-        numer_telefonu: formData.numer_telefonu.replace(/\s+/g, ''),
+        numer_telefonu: `+48${normalizePhoneDigits(formData.numer_telefonu)}`,
         telefon_stacjonarny: stacjonarnyFormatted,
-        email: formData.email,
-        adres: formData.adres,
+        email: formData.email.trim(),
+        adres: formData.adres.trim(),
         kod_pocztowy: formData.kod_pocztowy.trim(),
         miasto: formData.miasto.trim(),
         przedmiot_zgloszenia: formData.przedmiot_zgloszenia,
@@ -172,7 +204,7 @@ export default function PublicTicketForm() {
         numer_telefonu: formData.numer_telefonu,
         telefon_stacjonarny: stacjonarnyFormatted,
         przedmiot_zgloszenia: payload.przedmiot_zgloszenia,
-        createdAt: new Date().toLocaleString('pl-PL')
+        createdAt: new Date().toISOString()
       };
       try {
         sessionStorage.setItem('serwis_last_submitted', JSON.stringify(ticketInfo));
@@ -187,6 +219,7 @@ export default function PublicTicketForm() {
   }
 
   const isSnActive = isSerialNumberAllowed(formData.przedmiot_zgloszenia);
+  const error = fieldError && formData[fieldError.field] === fieldError.value ? fieldError : null;
 
   if (submittedTicket) {
     const summaryItems = [
@@ -198,12 +231,12 @@ export default function PublicTicketForm() {
         ? [['Telefon stacjonarny:', submittedTicket.telefon_stacjonarny]]
         : []),
       ...(submittedTicket.createdAt
-        ? [['Data złożenia:', submittedTicket.createdAt, true]]
+        ? [['Data złożenia:', formatDateTime(submittedTicket.createdAt), true]]
         : [])
     ];
 
     return (
-      <main className="app-card max-w-2xl mx-auto my-4 sm:my-8 p-6 sm:p-10 space-y-6">
+      <div className="app-card max-w-2xl mx-auto my-4 sm:my-8 p-6 sm:p-10 space-y-6">
         <div className="text-center space-y-3">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary-dark mx-auto shadow-sm">
             <svg className="w-9 h-9" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -227,8 +260,8 @@ export default function PublicTicketForm() {
             <p className="font-semibold text-primary-dark">⏱️ Czas reakcji serwisu:</p>
             <p>
               Skontaktujemy się w ciągu{' '}
-              <strong className="font-bold underline decoration-primary">[X] dni roboczych</strong>{' '}
-              (zazwyczaj do 2 dni roboczych) pod wskazanym adresem e-mail lub numerem telefonu.
+              <strong className="font-bold underline decoration-primary">{CZAS_KONTAKTU_DNI_ROBOCZYCH} dni roboczych</strong>{' '}
+              pod wskazanym adresem e-mail lub numerem telefonu.
             </p>
           </div>
 
@@ -237,7 +270,7 @@ export default function PublicTicketForm() {
               <strong>Weryfikacja zgłoszenia:</strong> Serwisant zapozna się ze zgłoszonym problemem dotyczącym sprzętu: <em>{submittedTicket.przedmiot_zgloszenia}</em>.
             </li>
             <li>
-              <strong>Kontakt i decyzja:</strong> Skontaktujemy się w ciągu [X] dni roboczych, aby potwierdzić przyjęcie sprzętu lub uzgodnić sposób wysyłki/odbioru.
+              <strong>Kontakt i decyzja:</strong> Skontaktujemy się w ciągu {CZAS_KONTAKTU_DNI_ROBOCZYCH} dni roboczych, aby potwierdzić przyjęcie sprzętu lub uzgodnić sposób wysyłki/odbioru.
             </li>
             <li>
               <strong>Bieżący monitoring:</strong> Zachowaj numer zgłoszenia <strong>#{submittedTicket.id}</strong> do ewentualnego kontaktu z obsługą serwisu.
@@ -270,12 +303,12 @@ export default function PublicTicketForm() {
             ← Powrót na stronę główną
           </button>
         </div>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="app-card">
+    <div className="app-card">
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-ink mb-1">Zgłoś problem serwisowy</h2>
         <p className="text-sm text-ink">
@@ -283,7 +316,7 @@ export default function PublicTicketForm() {
         </p>
       </div>
 
-      <Alert alert={alert} />
+      <Alert alert={alert} ref={alertRef} onClose={clearAlert} />
 
       <form onSubmit={handleSubmit} noValidate>
         {/* Honeypot: ukryte pole anty-spamowe dla botów */}
@@ -308,6 +341,7 @@ export default function PublicTicketForm() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <Field
+              error={error}
               id="imie"
               label="Imię *"
               type="text"
@@ -317,6 +351,7 @@ export default function PublicTicketForm() {
               onChange={setField('imie')}
             />
             <Field
+              error={error}
               id="nazwisko"
               label="Nazwisko *"
               type="text"
@@ -326,22 +361,25 @@ export default function PublicTicketForm() {
               onChange={setField('nazwisko')}
             />
             <Field
+              error={error}
               id="numer_telefonu"
               label="Telefon kontaktowy *"
               type="tel"
               required
-              maxLength={15}
+              maxLength={undefined}
+              autoComplete="tel-national"
               placeholder="+48 500 600 700"
               value={formData.numer_telefonu}
               onChange={handlePhoneChange}
               onKeyDown={handlePhoneKeyDown}
               onFocus={(e) => {
-                if (!e.target.value || e.target.value.trim() === '+48') {
-                  setFormData((prev) => ({ ...prev, numer_telefonu: '+48 ' }));
+                if (!e.target.value || e.target.value.trim() === PHONE_PREFIX.trim()) {
+                  setFormData((prev) => ({ ...prev, numer_telefonu: PHONE_PREFIX }));
                 }
               }}
             />
             <Field
+              error={error}
               id="email"
               label="E-mail *"
               type="email"
@@ -361,6 +399,7 @@ export default function PublicTicketForm() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <Field
+              error={error}
               id="nazwa_firmy"
               label="Nazwa firmy (opcjonalnie)"
               span2
@@ -370,6 +409,7 @@ export default function PublicTicketForm() {
               onChange={setField('nazwa_firmy')}
             />
             <Field
+              error={error}
               id="adres"
               label="Adres *"
               span2
@@ -380,6 +420,7 @@ export default function PublicTicketForm() {
               onChange={setField('adres')}
             />
             <Field
+              error={error}
               id="kod_pocztowy"
               label="Kod pocztowy * (XX-XXX)"
               type="text"
@@ -392,6 +433,7 @@ export default function PublicTicketForm() {
               onKeyDown={handlePostalCodeKeyDown}
             />
             <Field
+              error={error}
               id="miasto"
               label="Miasto *"
               type="text"
@@ -401,6 +443,7 @@ export default function PublicTicketForm() {
               onChange={setField('miasto')}
             />
             <Field
+              error={error}
               id="nip"
               label="NIP * (10 cyfr, bez myślników)"
               span2
@@ -428,7 +471,8 @@ export default function PublicTicketForm() {
                     id="telefon_kierunkowy"
                     value={formData.telefon_kierunkowy}
                     onChange={setField('telefon_kierunkowy')}
-                    className="app-select cursor-pointer w-full"
+                    {...errorProps('telefon_kierunkowy', error)}
+                    className={`app-select cursor-pointer w-full ${error?.field === 'telefon_kierunkowy' ? 'border-danger' : ''}`}
                   >
                     <option value="">-- Kierunkowy (2 cyfry) --</option>
                     {NUMERY_KIERUNKOWE.map((item) => (
@@ -437,6 +481,7 @@ export default function PublicTicketForm() {
                       </option>
                     ))}
                   </select>
+                  <FieldError id="telefon_kierunkowy" error={error} />
                 </div>
                 <div className="w-full md:w-2/3">
                   <input
@@ -452,8 +497,10 @@ export default function PublicTicketForm() {
                         telefon_firmowy_7: e.target.value.replace(/\D/g, '').slice(0, 7)
                       }))
                     }
-                    className="app-input w-full"
+                    {...errorProps('telefon_firmowy_7', error)}
+                    className={`app-input w-full ${error?.field === 'telefon_firmowy_7' ? 'border-danger' : ''}`}
                   />
+                  <FieldError id="telefon_firmowy_7" error={error} />
                 </div>
               </div>
             </div>
@@ -468,15 +515,17 @@ export default function PublicTicketForm() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <Field
+              error={error}
               id="data_zakupu"
               label="Data zakupu *"
               type="date"
               required
-              max={TODAY_ISO}
+              max={todayInPoland()}
               value={formData.data_zakupu}
               onChange={setField('data_zakupu')}
             />
             <Field
+              error={error}
               id="numer_fv"
               label="Numer faktury / paragonu *"
               type="text"
@@ -494,7 +543,8 @@ export default function PublicTicketForm() {
                 required
                 value={formData.przedmiot_zgloszenia}
                 onChange={handleSubjectChange}
-                className="app-select cursor-pointer w-full"
+                {...errorProps('przedmiot_zgloszenia', error)}
+                className={`app-select cursor-pointer w-full ${error?.field === 'przedmiot_zgloszenia' ? 'border-danger' : ''}`}
               >
                 <option value="">-- Wybierz przedmiot zgłoszenia --</option>
                 {PRZEDMIOTY_LISTA.map((item) => (
@@ -503,6 +553,7 @@ export default function PublicTicketForm() {
                   </option>
                 ))}
               </select>
+              <FieldError id="przedmiot_zgloszenia" error={error} />
             </div>
             <div className="w-full">
               <label htmlFor="numer_seryjny" className="app-label">
@@ -525,10 +576,13 @@ export default function PublicTicketForm() {
                 }
                 value={formData.numer_seryjny}
                 onChange={setField('numer_seryjny')}
+                maxLength={FIELD_MAX_LENGTHS.numer_seryjny}
+                {...errorProps('numer_seryjny', error)}
                 className={`app-input w-full ${
                   !isSnActive ? 'bg-page text-muted cursor-not-allowed border-line' : ''
-                }`}
+                } ${error?.field === 'numer_seryjny' ? 'border-danger' : ''}`}
               />
+              <FieldError id="numer_seryjny" error={error} />
             </div>
             <div className="w-full md:col-span-2">
               <label htmlFor="opis_usterki" className="app-label">
@@ -541,8 +595,16 @@ export default function PublicTicketForm() {
                 placeholder="Opisz objawy, okoliczności powstania awarii oraz model urządzenia..."
                 value={formData.opis_usterki}
                 onChange={setField('opis_usterki')}
-                className="app-textarea w-full"
+                maxLength={FIELD_MAX_LENGTHS.opis_usterki}
+                {...errorProps('opis_usterki', error)}
+                className={`app-textarea w-full ${error?.field === 'opis_usterki' ? 'border-danger' : ''}`}
               />
+              <div className="flex justify-between items-start">
+                <FieldError id="opis_usterki" error={error} />
+                <span className="ml-auto text-xs text-muted mt-1">
+                  {formData.opis_usterki.length}/{FIELD_MAX_LENGTHS.opis_usterki}
+                </span>
+              </div>
             </div>
           </div>
         </section>
@@ -550,11 +612,13 @@ export default function PublicTicketForm() {
         {/* Klauzula informacyjna z rozwijaną treścią i obowiązkowym checkboxem */}
         <section className="pt-6 border-t border-line mb-6">
           <details className="cursor-pointer mb-3 group">
-            <summary className="font-semibold text-primary-dark text-sm select-none outline-none hover:underline">
+            <summary className="font-semibold text-primary-dark text-sm select-none rounded outline-none hover:underline focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
               Informacja o przetwarzaniu danych osobowych (kliknij, aby rozwinąć)
             </summary>
-            <div className="mt-2.5 p-3.5 bg-page rounded-lg text-xs text-ink leading-relaxed border border-line">
-              <p>[Placeholder treści klauzuli.]</p>
+            <div className="mt-2.5 p-3.5 bg-page rounded-lg text-xs text-ink leading-relaxed border border-line space-y-2">
+              {KLAUZULA_INFORMACYJNA.map((akapit, i) => (
+                <p key={i}>{akapit}</p>
+              ))}
             </div>
           </details>
 
@@ -566,12 +630,14 @@ export default function PublicTicketForm() {
               required
               checked={formData.zgoda_rodo}
               onChange={(e) => setFormData((prev) => ({ ...prev, zgoda_rodo: e.target.checked }))}
+              {...errorProps('zgoda_rodo', error)}
               className="w-4 h-4 mt-0.5 rounded text-primary-dark border-line focus:ring-primary cursor-pointer accent-primary"
             />
             <label htmlFor="zgoda_rodo" className="cursor-pointer text-sm font-medium text-ink select-none">
               Zapoznałem/am się z informacją o przetwarzaniu danych osobowych *
             </label>
           </div>
+          <FieldError id="zgoda_rodo" error={error} />
         </section>
 
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4 mt-6">
@@ -583,7 +649,8 @@ export default function PublicTicketForm() {
             className="btn-secondary w-full sm:w-auto"
             onClick={() => {
               setFormData(EMPTY_TICKET_FORM);
-              setAlert(null);
+              setFieldError(null);
+              clearAlert();
             }}
             disabled={loading}
             title="Wyczyść wszystkie dane z formularza"
@@ -599,6 +666,6 @@ export default function PublicTicketForm() {
           </button>
         </div>
       </form>
-    </main>
+    </div>
   );
 }

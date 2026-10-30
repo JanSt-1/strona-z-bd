@@ -1,7 +1,5 @@
--- database/schema.sql
-CREATE DATABASE IF NOT EXISTS serwis_db DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
-USE serwis_db;
+-- schemat.sql
+-- Pełny referencyjny schemat bazy danych (źródłem prawdy dla wdrożeń są migrations/). Baza danych wybierana jest z DB_NAME w .env.
 
 -- Tabela użytkowników musi być tworzona PRZED tabelą zgłoszeń (FK dependency)
 CREATE TABLE IF NOT EXISTS uzytkownicy (
@@ -10,6 +8,7 @@ CREATE TABLE IF NOT EXISTS uzytkownicy (
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(20) DEFAULT 'pracownik',
     aktywny BOOLEAN NOT NULL DEFAULT TRUE,
+    token_version INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -53,7 +52,8 @@ CREATE TABLE IF NOT EXISTS historia_zgloszen (
     akcja VARCHAR(100) NOT NULL,
     z_statusu VARCHAR(50) NULL,
     na_status VARCHAR(50) NULL,
-    szczegoly TEXT NULL,
+    szczegoly MEDIUMTEXT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_historia_zgloszen_zgloszenie_id (zgloszenie_id),
     FOREIGN KEY (uzytkownik_id) REFERENCES uzytkownicy (id) ON DELETE SET NULL
 );

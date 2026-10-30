@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { userApi } from '../api';
 import PasswordModal from './PasswordModal';
+import { formatDateTime } from '../constants';
 
 const ROLES = ['pracownik', 'serwisant', 'magazynier', 'admin'];
 
-export default function AdminUsersPanel({ currentUser, showAlert }) {
+export default function AdminUsersPanel({ currentUser, showAlert, onWorkersChanged }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
@@ -29,15 +30,12 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
     }
   }, [showAlert]);
 
+  const handleClosePasswordModal = useCallback(() => setPasswordModalUser(null), []);
+
   useEffect(() => {
-    userApi
-      .getUsers()
-      .then((data) => {
-        if (Array.isArray(data)) setUsers(data);
-      })
-      .catch((err) => showAlert(err.message, 'error'))
-      .finally(() => setLoading(false));
-  }, [showAlert]);
+    // oxlint-disable-next-line react/set-state-in-effect -- pobieranie danych: setState dopiero po await
+    fetchUsers();
+  }, [fetchUsers]);
 
   async function handleRoleChange(targetUser, nextRole) {
     if (targetUser.id === currentUser?.id && nextRole !== 'admin') {
@@ -49,6 +47,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
       if (!data) return;
       showAlert(data.message, 'success');
       setUsers((prev) => prev.map((u) => (u.id === targetUser.id ? { ...u, role: nextRole } : u)));
+      onWorkersChanged?.();
     } catch (err) {
       showAlert(err.message, 'error');
     } finally {
@@ -70,9 +69,8 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
       const data = await userApi.toggleStatus(targetUser.id, !targetUser.aktywny);
       if (!data) return;
       showAlert(data.message, 'success');
-      setUsers((prev) =>
-        prev.map((u) => (u.id === targetUser.id ? { ...u, aktywny: data.aktywny } : u))
-      );
+      setUsers((prev) => prev.map((u) => (u.id === targetUser.id ? { ...u, aktywny: data.aktywny } : u)));
+      onWorkersChanged?.();
     } catch (err) {
       showAlert(err.message, 'error');
     } finally {
@@ -83,14 +81,14 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
   async function handleCreateUser(e) {
     e.preventDefault();
     setCreateError(null);
-    const cleanPass = newPassword.trim();
-    if (!newUsername.trim() || !cleanPass) {
+    const cleanPass = newPassword;
+    if (!newUsername.trim() || !newPassword.trim()) {
       return setCreateError('Wypełnij nazwę użytkownika oraz hasło.');
     }
     if (cleanPass.length < 8) {
       return setCreateError('Hasło musi mieć co najmniej 8 znaków.');
     }
-    if (cleanPass.length > 72) {
+    if (new TextEncoder().encode(cleanPass).length > 72) {
       return setCreateError('Hasło nie może przekraczać 72 znaków.');
     }
     setCreating(true);
@@ -109,6 +107,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
       setShowCreateForm(false);
       setLoading(true);
       fetchUsers();
+      onWorkersChanged?.();
     } catch (err) {
       setCreateError(err.message);
     } finally {
@@ -147,13 +146,16 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
       </span>
     );
 
-  const renderRoleSelect = (u, isSelf, isBusy, fullWidth = false) => (
+  // id podajemy, gdy pole ma widoczną etykietę (<label htmlFor>); w tabeli nazwę pola daje aria-label
+  const renderRoleSelect = (u, isSelf, isBusy, fullWidth = false, id = undefined) => (
     <select
+      id={id}
+      aria-label={id ? undefined : `Rola użytkownika ${u.username}`}
       value={u.role}
       disabled={isBusy || (isSelf && u.role === 'admin')}
       onChange={(e) => handleRoleChange(u, e.target.value)}
       title={isSelf ? 'Nie możesz odebrać roli administratora samemu sobie' : 'Zmień rolę'}
-      className={`bg-card border border-line rounded px-2.5 py-1.5 text-xs font-semibold text-ink outline-none focus:border-primary/30 disabled:opacity-60 cursor-pointer ${
+      className={`bg-card border border-line rounded px-2.5 py-1.5 text-xs font-semibold text-ink outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-60 cursor-pointer ${
         fullWidth ? 'w-full' : ''
       }`}
     >
@@ -265,9 +267,11 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
           <form onSubmit={handleCreateUser}>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="app-label">Nazwa użytkownika (login) *</label>
+                <label htmlFor="newUserUsername" className="app-label">Nazwa użytkownika (login) *</label>
                 <input
+                  id="newUserUsername"
                   type="text"
+                  autoComplete="off"
                   required
                   maxLength={50}
                   placeholder="np. jankowalski"
@@ -277,9 +281,11 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                 />
               </div>
               <div>
-                <label className="app-label">Hasło (min. 8 znaków) *</label>
+                <label htmlFor="newUserPassword" className="app-label">Hasło (min. 8 znaków) *</label>
                 <input
+                  id="newUserPassword"
                   type="password"
+                  autoComplete="new-password"
                   required
                   minLength={8}
                   maxLength={72}
@@ -290,8 +296,9 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                 />
               </div>
               <div>
-                <label className="app-label">Rola *</label>
+                <label htmlFor="newUserRole" className="app-label">Rola *</label>
                 <select
+                  id="newUserRole"
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value)}
                   className="app-select cursor-pointer"
@@ -372,7 +379,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                     <td>{renderStatusPill(u.aktywny)}</td>
                     <td>
                       <small className="text-muted">
-                        {u.created_at ? new Date(u.created_at).toLocaleString('pl-PL') : '-'}
+                        {formatDateTime(u.created_at)}
                       </small>
                     </td>
                     <td>{renderActionButtons(u, isSelf, isBusy)}</td>
@@ -417,17 +424,20 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
                       )}
                     </div>
                     <div className="text-[0.7rem] text-muted mt-0.5">
-                      Utworzono: {u.created_at ? new Date(u.created_at).toLocaleString('pl-PL') : '-'}
+                      Utworzono: {formatDateTime(u.created_at)}
                     </div>
                   </div>
                   <div className="shrink-0">{renderStatusPill(u.aktywny)}</div>
                 </div>
 
                 <div>
-                  <label className="text-[0.7rem] text-muted uppercase font-semibold block mb-1">
+                  <label
+                    htmlFor={`userRole-${u.id}`}
+                    className="text-[0.7rem] text-muted uppercase font-semibold block mb-1"
+                  >
                     Rola użytkownika
                   </label>
-                  {renderRoleSelect(u, isSelf, isBusy, true)}
+                  {renderRoleSelect(u, isSelf, isBusy, true, `userRole-${u.id}`)}
                 </div>
 
                 <div className="pt-2 border-t border-line">
@@ -442,7 +452,7 @@ export default function AdminUsersPanel({ currentUser, showAlert }) {
       {passwordModalUser && (
         <PasswordModal
           userToEdit={passwordModalUser}
-          onClose={() => setPasswordModalUser(null)}
+          onClose={handleClosePasswordModal}
           onPasswordChanged={fetchUsers}
           showAlert={showAlert}
         />

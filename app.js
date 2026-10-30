@@ -8,10 +8,14 @@ const rateLimit = require('express-rate-limit');
 const { createPool } = require('./db');
 
 const app = express();
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-    throw new Error('Krytyczny błąd konfiguracji: Zmienna środowiskowa JWT_SECRET nie została zdefiniowana.');
+app.set('trust proxy', 'loopback');
+const { validateJwtSecret } = require('./jwt-validation');
+
+const jwtValidation = validateJwtSecret(process.env.JWT_SECRET);
+if (!jwtValidation.valid) {
+    throw new Error(`Krytyczny błąd konfiguracji: ${jwtValidation.reason} Wygeneruj klucz poleceniem: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`);
 }
+const JWT_SECRET = process.env.JWT_SECRET.trim();
 
 // --- Konfiguracja puli połączeń do bazy MySQL ---
 let currentPool = createPool();
@@ -38,14 +42,10 @@ app.use(helmet({
 }));
 app.use(express.json({ limit: '70kb' }));
 
-const isHashedFile = (filePath) => {
-    const fileName = path.basename(filePath);
-    return /[.-][a-f0-9]{8,}\./i.test(fileName) || /[.-][a-zA-Z0-9_-]{8,}\./i.test(fileName);
-};
+const isHashedFile = (filePath) => /[.-][a-zA-Z0-9_-]{8,}\./.test(path.basename(filePath));
 app.isHashedFile = isHashedFile;
 
 const staticDir = path.join(__dirname, 'frontend', 'dist');
-app.staticDir = staticDir;
 
 app.use(express.static(staticDir, {
     setHeaders: (res, filePath) => {
@@ -65,11 +65,22 @@ app.use(express.static(staticDir, {
 // --- Pomocniki ---
 const fail = (res, error, status = 400) => res.status(status).json({ error });
 
+// Bezpieczne logowanie błędów backendu (ochrona RODO: bez wycieku err.sql / err.sqlMessage z danymi osobowymi i haszami)
+function logError(msg, err) {
+    if (!err) {
+        console.error(msg);
+        return;
+    }
+    const code = err.code ? `[${err.code}] ` : '';
+    const message = err.message || (typeof err === 'string' ? err : 'Nieznany błąd');
+    console.error(`${msg} ${code}${message}`.trim());
+}
+
 const safe = (logMsg, errMsg, handler) => async (req, res) => {
     try {
         return await handler(req, res);
     } catch (err) {
-        console.error(logMsg, err);
+        logError(logMsg, err);
         return fail(res, errMsg, 500);
     }
 };
@@ -98,16 +109,78 @@ const canViewTicket = (user, ticket) => {
     return true;
 };
 
-async function dodajWpisHistorii(zgloszenieId, uzytkownikId, akcja, zStatusu = null, naStatus = null, szczegoly = null) {
-    try {
-        await currentPool.query(
-            `INSERT INTO historia_zgloszen (zgloszenie_id, uzytkownik_id, akcja, z_statusu, na_status, szczegoly)
-             VALUES (?, ?, ?, ?, ?, ?)`,
-            [zgloszenieId, uzytkownikId || null, akcja, zStatusu || null, naStatus || null, szczegoly || null]
-        );
-    } catch (err) {
-        console.error('Błąd podczas zapisywania historii zgłoszenia:', err);
-    }
+const CONFLICT_ERR = 'Zlecenie zostało w międzyczasie zmienione, odśwież widok.';
+
+async function getTransactionConnection() {
+    const rawConn = typeof currentPool.getConnection === 'function'
+        ? await currentPool.getConnection()
+        : null;
+    return {
+        query: (sql, params) => (rawConn && typeof rawConn.query === 'function')
+            ? rawConn.query(sql, params)
+            : currentPool.query(sql, params),
+        beginTransaction: async () => {
+            if (rawConn && typeof rawConn.beginTransaction === 'function') {
+                await rawConn.beginTransaction();
+            }
+        },
+        commit: async () => {
+            if (rawConn && typeof rawConn.commit === 'function') {
+                await rawConn.commit();
+            }
+        },
+        rollback: async () => {
+            if (rawConn && typeof rawConn.rollback === 'function') {
+                await rawConn.rollback();
+            }
+        },
+        release: () => {
+            if (rawConn && typeof rawConn.release === 'function') {
+                rawConn.release();
+            }
+        }
+    };
+}
+
+async function dodajWpisHistorii(connOrId, zgloszenieId, uzytkownikId, akcja, zStatusu = null, naStatus = null, szczegoly = null) {
+    const hasConn = connOrId && typeof connOrId === 'object' && typeof connOrId.query === 'function';
+    const conn = hasConn ? connOrId : currentPool;
+    const [id, userId, act, fromSt, toSt, details] = hasConn
+        ? [zgloszenieId, uzytkownikId, akcja, zStatusu, naStatus, szczegoly]
+        : [connOrId, zgloszenieId, uzytkownikId, akcja, zStatusu, naStatus];
+
+    await conn.query(
+        `INSERT INTO historia_zgloszen (zgloszenie_id, uzytkownik_id, akcja, z_statusu, na_status, szczegoly)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [id, userId || null, act, fromSt || null, toSt || null, details || null]
+    );
+}
+
+// --- Tokeny JWT ---
+// Claim "tv" to uzytkownicy.token_version z chwili logowania; tokeny bez "tv" (sprzed migracji 004) traktujemy jak wersję 0
+const tokenVersionOf = (value) => Number(value ?? 0) || 0;
+const SESSION_REVOKED_ERR = 'Sesja została zakończona (np. po zmianie hasła lub uprawnień). Zaloguj się ponownie.';
+
+const publicUser = (user) => ({ id: user.id, username: user.username, role: user.role });
+
+// Token JWT ważny przez 24 godziny
+const signToken = (user) => jwt.sign(
+    { ...publicUser(user), tv: tokenVersionOf(user.token_version) },
+    JWT_SECRET,
+    { expiresIn: '24h', algorithm: 'HS256' }
+);
+
+// Zwiększa wersję tokenów użytkownika (unieważnia wszystkie jego dotychczasowe tokeny) i zwraca aktualny wiersz
+async function revokeUserTokens(userId, extraSet = '', extraParams = []) {
+    await currentPool.query(
+        `UPDATE uzytkownicy SET ${extraSet}token_version = token_version + 1 WHERE id = ?`,
+        [...extraParams, userId]
+    );
+    const [rows] = await currentPool.query(
+        'SELECT id, username, role, aktywny, token_version FROM uzytkownicy WHERE id = ?',
+        [userId]
+    );
+    return rows?.[0] || null;
 }
 
 // --- Middleware autoryzacji JWT ---
@@ -131,18 +204,22 @@ async function authenticateToken(req, res, next) {
 
     try {
         const [rows] = await currentPool.query(
-            'SELECT id, username, role, aktywny FROM uzytkownicy WHERE id = ?',
+            'SELECT id, username, role, aktywny, token_version FROM uzytkownicy WHERE id = ?',
             [decodedUser.id]
         );
         const dbUser = rows?.[0];
         if (!isUserActive(dbUser)) {
             return fail(res, 'Odmowa dostępu: Konto użytkownika nie istnieje lub zostało zablokowane.', 401);
         }
+        // Zmiana hasła, roli lub "Wyloguj wszędzie" podbija token_version - starsze tokeny przestają działać
+        if (tokenVersionOf(decodedUser.tv) !== tokenVersionOf(dbUser.token_version)) {
+            return fail(res, SESSION_REVOKED_ERR, 401);
+        }
 
-        req.user = { id: dbUser.id, username: dbUser.username, role: dbUser.role };
+        req.user = publicUser(dbUser);
         next();
     } catch (err) {
-        console.error('Błąd podczas weryfikacji użytkownika w authenticateToken:', err);
+        logError('Błąd podczas weryfikacji użytkownika w authenticateToken:', err);
         return fail(res, 'Błąd serwera podczas autoryzacji użytkownika.', 500);
     }
 }
@@ -163,7 +240,7 @@ app.get('/api/health', async (req, res) => {
         await currentPool.query('SELECT 1');
         return res.json({ status: 'ok' });
     } catch (err) {
-        console.error('Błąd połączenia z bazą danych w /api/health:', err);
+        logError('Błąd połączenia z bazą danych w /api/health:', err);
         return res.status(500).json({ status: 'error' });
     }
 });
@@ -206,13 +283,41 @@ function isSerialNumberAllowed(product) {
     return isMonitor || isTablica;
 }
 
+// Reguły formularza zgłoszenia - te same wartości ma frontend (frontend/src/constants.js); test w app.test.js pilnuje zgodności
+const FIELD_LABELS = {
+    imie: 'Imię',
+    nazwisko: 'Nazwisko',
+    nazwa_firmy: 'Nazwa firmy',
+    adres: 'Adres',
+    kod_pocztowy: 'Kod pocztowy',
+    miasto: 'Miasto',
+    numer_telefonu: 'Telefon kontaktowy',
+    telefon_stacjonarny: 'Telefon stacjonarny',
+    email: 'E-mail',
+    przedmiot_zgloszenia: 'Przedmiot zgłoszenia',
+    numer_seryjny: 'Numer seryjny (S/N)',
+    data_zakupu: 'Data zakupu',
+    numer_fv: 'Numer faktury / paragonu',
+    nip: 'NIP',
+    opis_usterki: 'Opis usterki',
+};
+const poleLabel = (name) => `Pole „${FIELD_LABELS[name] || name}”`;
+
+// Litery dowolnego alfabetu (José, Müller), spacja, łącznik i apostrof prosty lub typograficzny (O’Brien z iPhone'a)
+const NAME_REGEX = /^[\p{L}\p{M}\s'’-]+$/u;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+// Dzisiejsza data (RRRR-MM-DD) w Polsce - serwer na VPS-ie zwykle działa w UTC
+const todayInPoland = (now = new Date()) =>
+    new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Warsaw' }).format(now);
+
 // Pomocnik walidacji daty zakupu:
 // - Sprawdza format RRRR-MM-DD
 // - Weryfikuje istnienie daty w kalendarzu (zapobiega przelewaniu nieistniejących dni np. 2026-02-31 przez Date.parse)
-// - Blokuje daty z przyszłości
-function validatePurchaseDate(dateStr) {
+// - Blokuje daty z przyszłości (względem dzisiejszej daty w Polsce)
+function validatePurchaseDate(dateStr, now = new Date()) {
     if (typeof dateStr !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-        return 'Pole "data_zakupu" musi mieć poprawny format daty (RRRR-MM-DD).';
+        return 'Pole „Data zakupu” musi mieć poprawny format daty (RRRR-MM-DD).';
     }
     const [year, month, day] = dateStr.split('-').map(Number);
     const parsedDate = new Date(Date.UTC(year, month - 1, day));
@@ -222,12 +327,10 @@ function validatePurchaseDate(dateStr) {
         (parsedDate.getUTCMonth() + 1) !== month ||
         parsedDate.getUTCDate() !== day
     ) {
-        return 'Pole "data_zakupu" zawiera nieprawidłową datę (nie istnieje w kalendarzu).';
+        return 'Pole „Data zakupu” zawiera nieprawidłową datę (nie istnieje w kalendarzu).';
     }
-    const now = new Date();
-    const today = new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
-    if (parsedDate > today) {
-        return 'Pole "data_zakupu" nie może być datą z przyszłości.';
+    if (dateStr > todayInPoland(now)) {
+        return 'Pole „Data zakupu” nie może być datą z przyszłości.';
     }
     return null;
 }
@@ -241,6 +344,9 @@ const zgloszeniaLimiter = rateLimit({
     },
     standardHeaders: true, // Zwraca nagłówki RateLimit-*
     legacyHeaders: false, // Wyłącza nagłówki X-RateLimit-*
+    // Odrzucone zgłoszenia (4xx/5xx) nie zużywają limitu - klient poprawiający formularz nie blokuje siebie
+    // ani innych osób za tym samym IP. Honeypot odpowiada 201, więc boty nadal są liczone.
+    skipFailedRequests: true,
     skip: () => process.env.NODE_ENV === 'test'
 });
 
@@ -249,9 +355,9 @@ const REQUIRED_FIELDS = [
     'email', 'przedmiot_zgloszenia', 'data_zakupu', 'opis_usterki', 'numer_fv', 'nip'
 ];
 const FIELD_MAX_LENGTHS = {
-    imie: 50, nazwisko: 50, adres: 65535, kod_pocztowy: 6, miasto: 100,
+    imie: 50, nazwisko: 50, adres: 500, kod_pocztowy: 6, miasto: 100,
     numer_telefonu: 20, email: 100, przedmiot_zgloszenia: 100, data_zakupu: 10,
-    opis_usterki: 65535, numer_fv: 50, nip: 10
+    opis_usterki: 5000, numer_fv: 50, nip: 10, nazwa_firmy: 100, numer_seryjny: 100
 };
 
 // 2. POST /api/zgloszenia - Publiczne dodawanie nowego zgłoszenia serwisowego
@@ -273,52 +379,51 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
     for (const name of REQUIRED_FIELDS) {
         const value = (req.body || {})[name];
         const error = typeof value !== 'string' ? 'musi być tekstem.'
-            : value.trim().length === 0 ? 'nie może być puste.'
+            : value.trim().length === 0 ? 'jest wymagane.'
                 : value.trim().length > FIELD_MAX_LENGTHS[name]
                     ? `przekracza maksymalną dozwoloną długość (${FIELD_MAX_LENGTHS[name]} znaków).`
                     : null;
-        if (error) return fail(res, `Pole "${name}" ${error}`);
+        if (error) return fail(res, `${poleLabel(name)} ${error}`);
         c[name] = value.trim();
     }
 
     // 2-10. Pozostałe walidacje (w kolejności sprawdzania; pierwszy błąd kończy żądanie)
-    const nameRegex = /^[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ\s\-']+$/;
     const firmaProvided = nazwa_firmy !== undefined && nazwa_firmy !== null && nazwa_firmy !== '';
+    const canonicalPrzedmiot = ALLOWED_PRZEDMIOTY.find(item => item.toLowerCase() === c.przedmiot_zgloszenia.toLowerCase());
     const checks = [
-        // imię i nazwisko: bez cyfr, wyłącznie litery
-        [/\d/.test(c.imie), 'Pole "imie" nie może zawierać cyfr.'],
-        [/\d/.test(c.nazwisko), 'Pole "nazwisko" nie może zawierać cyfr.'],
-        [!nameRegex.test(c.imie), 'Pole "imie" może zawierać wyłącznie litery (brak cyfr i znaków specjalnych).'],
-        [!nameRegex.test(c.nazwisko), 'Pole "nazwisko" może zawierać wyłącznie litery (brak cyfr i znaków specjalnych).'],
+        // imię i nazwisko: wyłącznie litery (dowolny alfabet), spacje, łącznik i apostrof
+        [!NAME_REGEX.test(c.imie), `${poleLabel('imie')} może zawierać wyłącznie litery, spacje, łącznik i apostrof.`],
+        [!NAME_REGEX.test(c.nazwisko), `${poleLabel('nazwisko')} może zawierać wyłącznie litery, spacje, łącznik i apostrof.`],
         // opcjonalne pole nazwa_firmy (jeśli zostało podane)
-        [firmaProvided && typeof nazwa_firmy !== 'string', 'Pole "nazwa_firmy" musi być tekstem.'],
-        [firmaProvided && typeof nazwa_firmy === 'string' && nazwa_firmy.trim().length > 100, 'Pole "nazwa_firmy" przekracza maksymalną dozwoloną długość (100 znaków).'],
+        [firmaProvided && typeof nazwa_firmy !== 'string', `${poleLabel('nazwa_firmy')} musi być tekstem.`],
+        [firmaProvided && typeof nazwa_firmy === 'string' && nazwa_firmy.trim().length > FIELD_MAX_LENGTHS.nazwa_firmy, `${poleLabel('nazwa_firmy')} przekracza maksymalną dozwoloną długość (${FIELD_MAX_LENGTHS.nazwa_firmy} znaków).`],
         // NIP (dokładnie 10 cyfr, bez myślników)
-        [!/^\d{10}$/.test(c.nip), 'Pole "nip" musi składać się z dokładnie 10 cyfr (bez myślników).'],
+        [!/^\d{10}$/.test(c.nip), `${poleLabel('nip')} musi składać się z dokładnie 10 cyfr (bez myślników).`],
         // kod pocztowy (dokładnie XX-XXX)
-        [!/^\d{2}-\d{3}$/.test(c.kod_pocztowy), 'Pole "kod_pocztowy" musi mieć format XX-XXX (np. 00-001).'],
+        [!/^\d{2}-\d{3}$/.test(c.kod_pocztowy), `${poleLabel('kod_pocztowy')} musi mieć format XX-XXX (np. 00-001).`],
         // adres e-mail
-        [!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email), 'Pole "email" ma nieprawidłowy format adresu e-mail.'],
+        [!EMAIL_REGEX.test(c.email), `${poleLabel('email')} ma nieprawidłowy format adresu e-mail.`],
         // numer telefonu (+48 i dokładnie 9 cyfr)
-        [!/^\+48\d{9}$/.test(c.numer_telefonu), 'Pole "numer_telefonu" musi zawierać prefiks +48 oraz dokładnie 9 cyfr.'],
+        [!/^\+48\d{9}$/.test(c.numer_telefonu), `${poleLabel('numer_telefonu')} musi zawierać prefiks +48 oraz dokładnie 9 cyfr.`],
         // przedmiot zgłoszenia z listy
-        [!ALLOWED_PRZEDMIOTY.some(item => item.toLowerCase() === c.przedmiot_zgloszenia.toLowerCase()),
-        `Pole "przedmiot_zgloszenia" zawiera nieprawidłową wartość. Dozwolone: ${ALLOWED_PRZEDMIOTY.join(', ')}`],
+        [!canonicalPrzedmiot,
+        `${poleLabel('przedmiot_zgloszenia')} zawiera nieprawidłową wartość. Dozwolone: ${ALLOWED_PRZEDMIOTY.join(', ')}`],
         // data zakupu (RRRR-MM-DD, prawidłowa w kalendarzu, nie z przyszłości)
         [Boolean(validatePurchaseDate(c.data_zakupu)), validatePurchaseDate(c.data_zakupu)]
     ];
     const failed = checks.find(([invalid]) => invalid);
     if (failed) return fail(res, failed[1]);
+    c.przedmiot_zgloszenia = canonicalPrzedmiot;
 
     // 11. Walidacja numeru seryjnego (obowiązkowy dla monitorów i tablic interaktywnych, dla innych ignorowany)
     let cleanNumerSeryjny = null;
     if (isSerialNumberAllowed(przedmiot_zgloszenia)) {
         const serial = typeof numer_seryjny === 'string' ? numer_seryjny.trim() : '';
         if (!serial) {
-            return fail(res, 'Pole "numer_seryjny" jest obowiązkowe dla wybranego przedmiotu zgłoszenia.');
+            return fail(res, `${poleLabel('numer_seryjny')} jest obowiązkowe dla wybranego przedmiotu zgłoszenia.`);
         }
-        if (serial.length > 100) {
-            return fail(res, 'Pole "numer_seryjny" przekracza maksymalną dozwoloną długość (100 znaków).');
+        if (serial.length > FIELD_MAX_LENGTHS.numer_seryjny) {
+            return fail(res, `${poleLabel('numer_seryjny')} przekracza maksymalną dozwoloną długość (${FIELD_MAX_LENGTHS.numer_seryjny} znaków).`);
         }
         cleanNumerSeryjny = serial;
     }
@@ -328,16 +433,16 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
     const stacjonarnyProvided = telefon_stacjonarny !== undefined && telefon_stacjonarny !== null && String(telefon_stacjonarny).trim() !== '';
     if (stacjonarnyProvided) {
         if (typeof telefon_stacjonarny !== 'string') {
-            return fail(res, 'Pole "telefon_stacjonarny" musi być tekstem.');
+            return fail(res, `${poleLabel('telefon_stacjonarny')} musi być tekstem.`);
         }
         const trimmedStacjonarny = telefon_stacjonarny.trim();
         if (trimmedStacjonarny.length > 20) {
-            return fail(res, 'Pole "telefon_stacjonarny" przekracza maksymalną dozwoloną długość (20 znaków).');
+            return fail(res, `${poleLabel('telefon_stacjonarny')} przekracza maksymalną dozwoloną długość (20 znaków).`);
         }
         const digitsOnly = trimmedStacjonarny.replace(/\D/g, '');
         const digits = digitsOnly.startsWith('48') && digitsOnly.length === 11 ? digitsOnly.slice(2) : digitsOnly;
         if (digits.length !== 9) {
-            return fail(res, 'Pole "telefon_stacjonarny" musi zawierać 9 cyfr numeru stacjonarnego (np. 22 123 45 67 lub z prefiksem +48).');
+            return fail(res, `${poleLabel('telefon_stacjonarny')} musi zawierać 9 cyfr numeru stacjonarnego (np. 22 123 45 67 lub z prefiksem +48).`);
         }
         cleanTelefonStacjonarny = `+48${digits}`;
     }
@@ -345,10 +450,14 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
     // 12. Walidacja akceptacji klauzuli RODO (wymagany checkbox)
     const isZgodaRodo = zgoda_rodo === true || zgoda_rodo === 'true' || zgoda_rodo === 1 || zgoda_rodo === '1';
     if (!isZgodaRodo) {
-        return fail(res, 'Pole "zgoda_rodo" jest wymagane: należy potwierdzić zapoznanie się z informacją o przetwarzaniu danych osobowych.');
+        return fail(res, 'Należy potwierdzić zapoznanie się z informacją o przetwarzaniu danych osobowych.');
     }
 
+    let conn;
     try {
+        conn = await getTransactionConnection();
+        await conn.beginTransaction();
+
         const query = `
             INSERT INTO zgloszenia (imie, nazwisko, nazwa_firmy, adres, kod_pocztowy, miasto, numer_telefonu, telefon_stacjonarny, email, przedmiot_zgloszenia, numer_seryjny, data_zakupu, zgoda_rodo_data, opis_usterki, numer_fv, nip, status)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, 'nowe')
@@ -371,9 +480,10 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
             c.nip
         ];
 
-        const [result] = await currentPool.query(query, values);
+        const [result] = await conn.query(query, values);
 
         await dodajWpisHistorii(
+            conn,
             result.insertId,
             null,
             'utworzenie',
@@ -382,13 +492,20 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
             'Utworzono zgłoszenie serwisowe.'
         );
 
+        await conn.commit();
+
         return res.status(201).json({
             message: 'Zgłoszenie serwisowe zostało pomyślnie przyjęte.',
             id: result.insertId
         });
     } catch (err) {
-        console.error('Błąd podczas zapisywania zgłoszenia:', err);
+        if (conn) {
+            try { await conn.rollback(); } catch (_) { /* ignore */ }
+        }
+        logError('Błąd podczas zapisywania zgłoszenia:', err);
         return fail(res, 'Błąd serwera podczas zapisywania zgłoszenia do bazy danych.', 500);
+    } finally {
+        if (conn) conn.release();
     }
 });
 
@@ -396,6 +513,7 @@ app.post('/api/zgloszenia', zgloszeniaLimiter, async (req, res) => {
 const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minut
     limit: 10, // 10 prób z jednego adresu IP
+    skipSuccessfulRequests: true, // Udane logowania nie zużywają puli prób
     message: {
         error: 'Zbyt wiele prób logowania z tego adresu IP. Spróbuj ponownie za 15 minut.'
     },
@@ -404,26 +522,30 @@ const loginLimiter = rateLimit({
     skip: () => process.env.NODE_ENV === 'test'
 });
 
+// Stały hash bcrypt (koszt 10) używany do porównania hasła, gdy użytkownik nie istnieje w bazie (ochrona przed enumeracją loginów po czasie odpowiedzi)
+const DUMMY_PASSWORD_HASH = '$2b$10$eGNTFcaRQvqm.RrAD/kcSOQNfCFTrnqt8/1IiVV7woTU4BTCSvvXe';
+
 // 3. POST /api/login - Logowanie użytkownika i generowanie tokenu JWT (wyłącznie username, rate limited)
 app.post('/api/login', loginLimiter, async (req, res) => {
     const { username, password } = req.body || {};
     const loginUsername = typeof username === 'string' ? username.trim() : '';
 
-    if (!loginUsername || typeof password !== 'string' || !password) {
+    if (!loginUsername || typeof password !== 'string' || !password.trim()) {
         return fail(res, 'Podaj nazwę użytkownika oraz hasło.');
     }
 
     return safe('Błąd podczas logowania:', 'Błąd serwera podczas procesu logowania.', async () => {
         const [rows] = await currentPool.query(
-            'SELECT id, username, password_hash, role, aktywny FROM uzytkownicy WHERE username = ?',
+            'SELECT id, username, password_hash, role, aktywny, token_version FROM uzytkownicy WHERE username = ?',
             [loginUsername]
         );
 
         const user = rows?.[0];
-        // Hasło porównywane wyłącznie przez bcrypt (hash musi mieć prefiks $2a$/$2b$/$2y$)
-        const isPasswordValid = !!user && typeof user.password_hash === 'string' &&
-            /^\$2[aby]\$/.test(user.password_hash) &&
-            await bcrypt.compare(password, user.password_hash);
+        // Hasło porównywane wyłącznie przez bcrypt (hash musi mieć prefiks $2a$/$2b$/$2y$); gdy użytkownika nie ma, porównujemy ze stałym hashem (ochrona przed timing attack)
+        const hasValidHash = Boolean(user && typeof user.password_hash === 'string' && /^\$2[aby]\$/.test(user.password_hash));
+        const hashToCompare = hasValidHash ? user.password_hash : DUMMY_PASSWORD_HASH;
+        const passwordMatches = await bcrypt.compare(password, hashToCompare);
+        const isPasswordValid = hasValidHash && passwordMatches;
 
         if (!isPasswordValid) {
             return fail(res, 'Nieprawidłowa nazwa użytkownika lub hasło.', 401);
@@ -433,15 +555,10 @@ app.post('/api/login', loginLimiter, async (req, res) => {
             return fail(res, 'Konto użytkownika zostało zablokowane. Skontaktuj się z administratorem.', 403);
         }
 
-        const payload = { id: user.id, username: user.username, role: user.role };
-
-        // Generowanie tokenu JWT ważnego przez 24 godziny
-        const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '24h', algorithm: 'HS256' });
-
         return res.json({
             message: 'Zalogowano pomyślnie.',
-            token,
-            user: payload
+            token: signToken(user),
+            user: publicUser(user)
         });
     })(req, res);
 });
@@ -461,7 +578,6 @@ app.get('/api/pracownicy', authenticateToken, requireAdminOrSerwisant,
 // - do_wysylki -> zakończone: magazynier, admin
 // - cofanie statusu: tylko admin
 const STATUS_ORDER = ['nowe', 'w_realizacji', 'do_wysylki', 'zakończone'];
-const ALLOWED_STATUSES = STATUS_ORDER;
 
 const STATUS_LABELS = {
     nowe: 'Nowe',
@@ -474,6 +590,12 @@ const PRZEJSCIA = {
     nowe: { w_realizacji: ['admin', 'serwisant'] },
     w_realizacji: { do_wysylki: ['admin', 'serwisant', 'pracownik'] },
     do_wysylki: { 'zakończone': ['admin', 'magazynier'] }
+};
+
+// Statusy, w których dana rola może edytować numer listu przez /numer-listu (admin także przed wysyłką, magazynier tylko po wysyłce)
+const NUMER_LISTU_EDYCJA = {
+    admin: ['do_wysylki', 'zakończone'],
+    magazynier: ['zakończone']
 };
 
 /**
@@ -616,12 +738,23 @@ function wyznaczDozwoloneAkcje(user, ticket) {
             continue;
         }
 
-        // D. Inne dozwolone zmiany statusu
+    }
+
+    if (currentStatus === 'w_realizacji' && (role === 'admin' || role === 'serwisant')) {
         akcje.push({
-            akcja: 'zmien_status',
-            na_status: targetStatus,
-            etykieta: `Zmień na: ${STATUS_LABELS[targetStatus] || targetStatus}`,
-            typ: 'status'
+            akcja: 'przypisz',
+            na_status: 'w_realizacji',
+            etykieta: 'Zmień przypisanie',
+            typ: 'przypisanie'
+        });
+    }
+
+    if (NUMER_LISTU_EDYCJA[role]?.includes(currentStatus)) {
+        akcje.push({
+            akcja: 'edytuj_numer_listu',
+            na_status: currentStatus,
+            etykieta: 'Edytuj numer listu',
+            typ: 'numer_listu'
         });
     }
 
@@ -636,8 +769,8 @@ const TICKET_SELECT_FIELDS = `
     z.przypisany_pracownik_id,
     u.username AS przypisany_pracownik_username,
     z.opis_naprawy,
-    DATE_FORMAT(z.opis_naprawy_data, '%Y-%m-%d %H:%i:%s') AS opis_naprawy_data,
-    DATE_FORMAT(z.data_wyslania, '%Y-%m-%d %H:%i:%s') AS data_wyslania,
+    z.opis_naprawy_data,
+    z.data_wyslania,
     z.numer_listu
 `;
 
@@ -650,7 +783,7 @@ const SEARCH_COLUMNS = [
 async function pobierzHistorieZgloszenia(zgloszenieId) {
     const [rows] = await currentPool.query(`
         SELECT h.id, h.zgloszenie_id, h.uzytkownik_id, u.username, h.akcja, h.z_statusu, h.na_status, h.szczegoly,
-                DATE_FORMAT(h.created_at, '%Y-%m-%d %H:%i:%s') AS created_at
+                h.created_at
         FROM historia_zgloszen h
         LEFT JOIN uzytkownicy u ON h.uzytkownik_id = u.id
         WHERE h.zgloszenie_id = ?
@@ -684,17 +817,17 @@ app.get('/api/zgloszenia', authenticateToken,
             if (['nieprzypisane', '0', 'null'].includes(pracownikQuery.toLowerCase())) {
                 whereConditions.push('z.przypisany_pracownik_id IS NULL');
             } else {
-                const pracownikId = parseInt(pracownikQuery, 10);
-                if (!isNaN(pracownikId) && pracownikId > 0) {
-                    whereConditions.push('z.przypisany_pracownik_id = ?');
-                    params.push(pracownikId);
-                }
+                const pracownikId = parsePositiveInt(pracownikQuery);
+                if (isNaN(pracownikId)) return fail(res, 'Nieprawidłowa wartość parametru "pracownik".', 400);
+                whereConditions.push('z.przypisany_pracownik_id = ?');
+                params.push(pracownikId);
             }
         }
 
         const szukajQuery = typeof req.query.szukaj === 'string' ? req.query.szukaj.trim() : '';
         if (szukajQuery) {
-            const likePattern = `%${szukajQuery}%`;
+            const escapedSzukaj = szukajQuery.replace(/[\\%_]/g, '\\$&');
+            const likePattern = `%${escapedSzukaj}%`;
             whereConditions.push(`(${SEARCH_COLUMNS.map(col => `${col} LIKE ?`).join(' OR ')})`);
             SEARCH_COLUMNS.forEach(() => params.push(likePattern));
         }
@@ -709,10 +842,13 @@ app.get('/api/zgloszenia', authenticateToken,
         `, params);
         const total = countRows?.[0]?.total ? Number(countRows[0].total) : 0;
 
-        const page = Math.max(1, parseInt(req.query.strona, 10) || 1);
+
+
         const limit = Math.max(1, Math.min(100, parseInt(req.query.limit, 10) || 25));
-        const offset = (page - 1) * limit;
         const totalPages = Math.ceil(total / limit) || 1;
+        const page = Math.min(Math.max(1, parseInt(req.query.strona, 10) || 1), totalPages);
+        const offset = (page - 1) * limit;
+
         const sortDirection = String(req.query.sort || '').trim().toLowerCase() === 'asc' ? 'ASC' : 'DESC';
 
         const [rows] = await currentPool.query(`
@@ -734,8 +870,7 @@ app.get('/api/zgloszenia', authenticateToken,
             page,
             limit,
             totalPages,
-            data: rowsWithActions,
-            zgloszenia: rowsWithActions
+            data: rowsWithActions
         });
     }));
 
@@ -792,9 +927,7 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
             if (!users || users.length === 0) return fail(res, 'Nie znaleziono wybranego pracownika.', 404);
 
             const candidate = users[0];
-            const assignableRoles = req.user.role === 'admin'
-                ? ['pracownik', 'serwisant', 'admin']
-                : ['pracownik', 'serwisant'];
+            const assignableRoles = ['pracownik', 'serwisant'];
             if (!assignableRoles.includes(candidate.role)) {
                 return fail(res, 'Zlecenie można przypisać wyłącznie do pracownika lub serwisanta.', 400);
             }
@@ -805,9 +938,42 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
             assignedUsername = candidate.username;
         }
 
-        const [tickets] = await currentPool.query('SELECT id, status FROM zgloszenia WHERE id = ?', [id]);
+        const [tickets] = await currentPool.query('SELECT id, status, przypisany_pracownik_id FROM zgloszenia WHERE id = ?', [id]);
         if (!tickets || tickets.length === 0) return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
         const ticket = tickets[0];
+
+        if (!canViewTicket(req.user, ticket)) {
+            return fail(res, 'Brak uprawnień do przeglądania tego zgłoszenia.', 403);
+        }
+
+        if (ticket.status !== 'nowe' && ticket.status !== 'w_realizacji') {
+            return fail(res, `Zmiana przypisania pracownika jest dozwolona tylko dla zleceń w statusie "nowe" lub "w_realizacji" (aktualny status: "${ticket.status}").`, 409);
+        }
+
+        // Serwisant może przepiąć cudze zlecenie tylko na innego pracownika - przejęcie lub odpięcie obchodziłoby zakaz opisu cudzej naprawy w /naprawione
+        if (req.user.role === 'serwisant' && isAssignedToOther(ticket, req.user.id)
+            && (assignedId === null || Number(assignedId) === Number(req.user.id))) {
+            return fail(res, 'Serwisant nie może przepisać na siebie ani odpiąć zlecenia przypisanego do innego pracownika.', 403);
+        }
+
+        if (ticket.status === 'nowe' && assignedId === null) {
+            return fail(res, 'Nie można cofnąć przypisania dla nowego zlecenia. Wybierz pracownika do realizacji.', 400);
+        }
+
+        if (!ticket.przypisany_pracownik_id && assignedId === null) {
+            return fail(res, 'Zlecenie nie ma przypisanego pracownika — nie można cofnąć przypisania.', 400);
+        }
+
+        if (ticket.przypisany_pracownik_id && Number(ticket.przypisany_pracownik_id) === Number(assignedId)) {
+            return res.json({
+                message: `Zlecenie #${id} jest już przypisane do pracownika ${assignedUsername}.`,
+                id,
+                przypisany_pracownik_id: assignedId,
+                przypisany_pracownik_username: assignedUsername,
+                status: ticket.status,
+                dozwolone_akcje: wyznaczDozwoloneAkcje(req.user, ticket)
+            });
+        }
 
         let targetStatus = ticket.status;
         if (ticket.status === 'nowe' && assignedId !== null) {
@@ -816,15 +982,43 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
             if (!check.allowed) return fail(res, check.error, check.status);
         }
 
-        await currentPool.query(
-            'UPDATE zgloszenia SET przypisany_pracownik_id = ?, status = ? WHERE id = ?',
-            [assignedId, targetStatus, id]
-        );
+        const conn = await getTransactionConnection();
+        try {
+            await conn.beginTransaction();
 
-        await dodajWpisHistorii(
-            id, req.user.id, 'przypisanie', ticket.status, targetStatus,
-            assignedId ? `Przypisano pracownika: ${assignedUsername}` : 'Cofnięto przypisanie pracownika'
-        );
+            // CAS: status i dotychczasowe przypisanie muszą być takie, jak przy walidacji (<=> porównuje także NULL)
+            const [assignResult] = await conn.query(
+                'UPDATE zgloszenia SET przypisany_pracownik_id = ? WHERE id = ? AND status = ? AND przypisany_pracownik_id <=> ?',
+                [assignedId, id, ticket.status, ticket.przypisany_pracownik_id ?? null]
+            );
+            if (assignResult && assignResult.affectedRows === 0) {
+                await conn.rollback();
+                return fail(res, CONFLICT_ERR, 409);
+            }
+
+            if (ticket.status === 'nowe' && assignedId !== null) {
+                const [statusResult] = await conn.query(
+                    "UPDATE zgloszenia SET status = 'w_realizacji' WHERE id = ? AND status = 'nowe'",
+                    [id]
+                );
+                if (statusResult && statusResult.affectedRows === 0) {
+                    await conn.rollback();
+                    return fail(res, CONFLICT_ERR, 409);
+                }
+            }
+
+            await dodajWpisHistorii(
+                conn, id, req.user.id, 'przypisanie', ticket.status, targetStatus,
+                assignedId ? `Przypisano pracownika: ${assignedUsername}` : 'Cofnięto przypisanie pracownika'
+            );
+
+            await conn.commit();
+        } catch (err) {
+            try { await conn.rollback(); } catch (_) { /* ignore */ }
+            throw err;
+        } finally {
+            conn.release();
+        }
 
         return res.json({
             message: assignedId
@@ -843,7 +1037,7 @@ app.patch('/api/zgloszenia/:id/przypisz', authenticateToken, requireAdminOrSerwi
     }));
 
 // 7. PATCH /api/zgloszenia/:id/naprawione - Opisanie naprawy przez przypisanego pracownika, serwisanta lub admina
-app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
+app.patch('/api/zgloszenia/:id/naprawione', authenticateToken, requireRoles('admin', 'serwisant', 'pracownik'),
     safe('Błąd podczas zatwierdzania naprawy:', 'Błąd serwera podczas zatwierdzania naprawy zgłoszenia.', async (req, res) => {
         const id = parsePositiveInt(req.params.id);
         if (isNaN(id)) return fail(res, ID_ERR);
@@ -853,16 +1047,28 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
             return fail(res, 'Przed oznaczeniem zlecenia jako naprawione wymagany jest opis wykonanych prac naprawczych (np. co zostało zrobione).');
         }
         const cleanOpis = opis_naprawy.trim();
-        if (cleanOpis.length > 65535) {
-            return fail(res, 'Pole "opis_naprawy" przekracza maksymalną dozwoloną długość (65535 znaków).');
+        if (cleanOpis.length > 5000) {
+            return fail(res, 'Pole "opis_naprawy" przekracza maksymalną dozwoloną długość (5000 znaków).');
         }
 
         const [rows] = await currentPool.query('SELECT id, status, przypisany_pracownik_id FROM zgloszenia WHERE id = ?', [id]);
         if (!rows || rows.length === 0) return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
         const ticket = rows[0];
 
-        const check = czyMoznaZmienic(req.user.role, ticket.status, 'do_wysylki');
-        if (!check.allowed) return fail(res, check.error, check.status);
+        if (!canViewTicket(req.user, ticket)) {
+            return fail(
+                res,
+                req.user.role === 'pracownik'
+                    ? 'Możesz oznaczyć jako naprawione tylko zlecenie przypisane do Ciebie.'
+                    : 'Brak uprawnień do przeglądania tego zgłoszenia.',
+                403
+            );
+        }
+
+        if (ticket.status !== 'w_realizacji') {
+            return fail(res, `Nie można zmienić statusu z »${ticket.status}« na »do_wysylki«.`, 409);
+        }
+
 
         if (req.user.role === 'pracownik' && Number(ticket.przypisany_pracownik_id) !== Number(req.user.id)) {
             return fail(res, 'Możesz oznaczyć jako naprawione tylko zlecenie przypisane do Ciebie.', 403);
@@ -874,19 +1080,35 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
 
         const newAssignedId = req.user.role === 'serwisant' ? req.user.id : ticket.przypisany_pracownik_id;
 
-        await currentPool.query(
-            "UPDATE zgloszenia SET opis_naprawy = ?, opis_naprawy_data = NOW(), status = 'do_wysylki', przypisany_pracownik_id = ? WHERE id = ?",
-            [cleanOpis, newAssignedId, id]
-        );
+        const conn = await getTransactionConnection();
+        try {
+            await conn.beginTransaction();
 
-        if (ticket.przypisany_pracownik_id !== newAssignedId) {
-            await dodajWpisHistorii(
-                id, req.user.id, 'przypisanie', ticket.status, ticket.status,
-                `Automatycznie przypisano serwisanta: ${req.user.username}`
+            const [updateResult] = await conn.query(
+                "UPDATE zgloszenia SET opis_naprawy = ?, opis_naprawy_data = NOW(), status = 'do_wysylki', przypisany_pracownik_id = ? WHERE id = ? AND status = ?",
+                [cleanOpis, newAssignedId, id, ticket.status]
             );
-        }
+            if (updateResult && updateResult.affectedRows === 0) {
+                await conn.rollback();
+                return fail(res, CONFLICT_ERR, 409);
+            }
 
-        await dodajWpisHistorii(id, req.user.id, 'naprawa', ticket.status, 'do_wysylki', `Opis naprawy: ${cleanOpis}`);
+            if (ticket.przypisany_pracownik_id !== newAssignedId) {
+                await dodajWpisHistorii(
+                    conn, id, req.user.id, 'przypisanie', ticket.status, ticket.status,
+                    `Automatycznie przypisano serwisanta: ${req.user.username}`
+                );
+            }
+
+            await dodajWpisHistorii(conn, id, req.user.id, 'naprawa', ticket.status, 'do_wysylki', `Opis naprawy: ${cleanOpis}`);
+
+            await conn.commit();
+        } catch (err) {
+            try { await conn.rollback(); } catch (_) { /* ignore */ }
+            throw err;
+        } finally {
+            conn.release();
+        }
 
         return res.json({
             message: 'Zlecenie zostało opisane i przekazane do magazynu ze statusem "Do wysyłki".',
@@ -903,50 +1125,59 @@ app.patch('/api/zgloszenia/:id/naprawione', authenticateToken,
         });
     }));
 
+const NUMER_LISTU_TYLKO_PRZY_WYSYLCE_ERR =
+    'Numer listu można podać tylko przy oznaczaniu zlecenia jako wysłanego. Aby zmienić numer listu, użyj opcji "Edytuj numer listu" w szczegółach zlecenia.';
+
+const validateNumerListu = (numer_listu) => {
+    if (numer_listu === undefined || numer_listu === null) return null;
+    if (typeof numer_listu !== 'string') return 'Pole "numer_listu" musi być tekstem.';
+    if (numer_listu.trim().length > 100) return 'Pole "numer_listu" przekracza maksymalną dozwoloną długość (100 znaków).';
+    return null;
+};
+
 // 8. PATCH/PUT /api/zgloszenia/:id/status - Aktualizacja statusu zgłoszenia
 const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd serwera podczas aktualizacji statusu zgłoszenia.', async (req, res) => {
     const id = parsePositiveInt(req.params.id);
     if (isNaN(id)) return fail(res, ID_ERR_INT);
     const { status, numer_listu } = req.body || {};
 
-    if (numer_listu !== undefined && numer_listu !== null) {
-        if (typeof numer_listu !== 'string') return fail(res, 'Pole "numer_listu" musi być tekstem.');
-        if (numer_listu.trim().length > 100) {
-            return fail(res, 'Pole "numer_listu" przekracza maksymalną dozwoloną długość (100 znaków).');
-        }
+    const numerListuErr = validateNumerListu(numer_listu);
+    if (numerListuErr) return fail(res, numerListuErr);
+
+    if (!status || !STATUS_ORDER.includes(status)) {
+        return fail(res, `Nieprawidłowy status. Dozwolone wartości to: ${STATUS_ORDER.join(', ')}.`);
     }
 
-    if (!status || !ALLOWED_STATUSES.includes(status)) {
-        return fail(res, `Nieprawidłowy status. Dozwolone wartości to: ${ALLOWED_STATUSES.join(', ')}.`);
-    }
-
-    const [rows] = await currentPool.query('SELECT id, status, przypisany_pracownik_id, opis_naprawy FROM zgloszenia WHERE id = ?', [id]);
+    const [rows] = await currentPool.query('SELECT id, status, przypisany_pracownik_id, opis_naprawy, numer_listu FROM zgloszenia WHERE id = ?', [id]);
     if (!rows || rows.length === 0) return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
     const ticket = rows[0];
 
+    if (!canViewTicket(req.user, ticket)) {
+        return fail(
+            res,
+            req.user.role === 'pracownik'
+                ? 'Możesz zmieniać status tylko zlecenia przypisanego do Ciebie.'
+                : 'Brak uprawnień do przeglądania tego zgłoszenia.',
+            403
+        );
+    }
+
+    // Numer listu przyjmujemy tu wyłącznie przy wysyłce (-> zakończone); samą edycję obsługuje /numer-listu,
+    // żeby nieaktualny status z widoku nie zamienił poprawki numeru w zmianę statusu
+    if (numer_listu !== undefined && status !== 'zakończone') {
+        return fail(res, NUMER_LISTU_TYLKO_PRZY_WYSYLCE_ERR);
+    }
+
     if (ticket.status === status) {
+        // Tu trafia tylko ponowna wysyłka (zakończone -> zakończone): ktoś inny zdążył już wysłać zlecenie
         if (numer_listu !== undefined) {
-            if (req.user.role !== 'magazynier' && req.user.role !== 'admin') {
-                return fail(res, 'Brak uprawnień do edycji numeru listu przewozowego.', 403);
-            }
-            if (req.user.role === 'magazynier' && status !== 'zakończone') {
-                return fail(res, 'Magazynier może edytować numer listu tylko dla zgłoszeń o statusie "zakończone".', 403);
-            }
-            const listu = numer_listu ? numer_listu.trim() : null;
-            if (req.user.role === 'magazynier' && !listu) {
-                return fail(res, 'Podanie numeru listu przewozowego jest obowiązkowe przy oznaczaniu zlecenia jako wysłane.');
-            }
-            await currentPool.query('UPDATE zgloszenia SET numer_listu = ? WHERE id = ?', [listu, id]);
-            await dodajWpisHistorii(
-                id, req.user.id, 'zmiana_numeru_listu', status, status,
-                listu ? `Zaktualizowano numer listu: ${listu}` : 'Usunięto numer listu przewozowego'
+            return fail(
+                res,
+                `Zlecenie #${id} zostało już oznaczone jako wysłane przez innego użytkownika` +
+                    (ticket.numer_listu ? ` (numer listu: ${ticket.numer_listu})` : ' (bez numeru listu)') +
+                    '. Jeśli numer listu wymaga poprawki, użyj opcji "Edytuj numer listu" w szczegółach zlecenia.',
+                409
             );
-            return res.json({
-                message: 'Numer listu przewozowego został zaktualizowany.',
-                id: Number(id),
-                status,
-                numer_listu: listu
-            });
         }
         return res.json({
             message: 'Status zgłoszenia pozostaje bez zmian.',
@@ -966,8 +1197,8 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
         return fail(res, 'Możesz zmieniać status tylko zlecenia przypisanego do Ciebie.', 403);
     }
 
-    let updateQuery = 'UPDATE zgloszenia SET status = ? WHERE id = ?';
-    let updateParams = [status, id];
+    let updateQuery = 'UPDATE zgloszenia SET status = ? WHERE id = ? AND status = ?';
+    let updateParams = [status, id, ticket.status];
     let akcja = 'zmiana_statusu';
     let szczegoly = `Zmieniono status z "${ticket.status}" na "${status}"`;
 
@@ -975,6 +1206,7 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
         const targetIndex = STATUS_ORDER.indexOf(status);
         const clearWysylka = targetIndex < STATUS_ORDER.indexOf('zakończone');
         const clearNaprawa = targetIndex < STATUS_ORDER.indexOf('do_wysylki');
+        const clearPrzypisanie = targetIndex < STATUS_ORDER.indexOf('w_realizacji');
 
         const setClauses = ['status = ?'];
         updateParams = [status];
@@ -985,41 +1217,125 @@ const handleUpdateStatus = safe('Błąd podczas aktualizacji statusu:', 'Błąd 
             if (ticket.opis_naprawy) szczegoly += `. Poprzedni opis naprawy: ${ticket.opis_naprawy}`;
         }
 
-        updateQuery = `UPDATE zgloszenia SET ${setClauses.join(', ')} WHERE id = ?`;
-        updateParams.push(id);
+        if (clearPrzypisanie) {
+            setClauses.push('przypisany_pracownik_id = NULL');
+            if (ticket.przypisany_pracownik_id) {
+                const [uRows] = await currentPool.query('SELECT username FROM uzytkownicy WHERE id = ?', [ticket.przypisany_pracownik_id]);
+                const prevWorker = uRows?.[0]?.username || `ID ${ticket.przypisany_pracownik_id}`;
+                szczegoly += `. Poprzednio przypisany pracownik: ${prevWorker}`;
+            }
+        }
+
+        updateQuery = `UPDATE zgloszenia SET ${setClauses.join(', ')} WHERE id = ? AND status = ?`;
+        updateParams.push(id, ticket.status);
     } else if (status === 'zakończone') {
         const listu = (numer_listu && typeof numer_listu === 'string') ? numer_listu.trim() : null;
         if (req.user.role === 'magazynier' && !listu) {
             return fail(res, 'Podanie numeru listu przewozowego jest obowiązkowe przy oznaczaniu zlecenia jako wysłane.');
         }
-        updateQuery = 'UPDATE zgloszenia SET status = ?, data_wyslania = NOW(), numer_listu = ? WHERE id = ?';
-        updateParams = [status, listu, id];
+        updateQuery = 'UPDATE zgloszenia SET status = ?, data_wyslania = NOW(), numer_listu = ? WHERE id = ? AND status = ?';
+        updateParams = [status, listu, id, ticket.status];
         akcja = 'wysyłka';
         szczegoly = `Wysłano przesyłkę. Numer listu: ${listu || 'brak'}`;
-    } else if (req.user.role === 'admin' && numer_listu !== undefined) {
-        const listu = numer_listu ? numer_listu.trim() : null;
-        updateQuery = 'UPDATE zgloszenia SET status = ?, numer_listu = ? WHERE id = ?';
-        updateParams = [status, listu, id];
-        szczegoly = `Zmieniono status z "${ticket.status}" na "${status}". Numer listu: ${listu || 'brak'}`;
     }
 
-    await currentPool.query(updateQuery, updateParams);
-    await dodajWpisHistorii(id, req.user.id, akcja, ticket.status, status, szczegoly);
+    const conn = await getTransactionConnection();
+    try {
+        await conn.beginTransaction();
+
+        const [updateResult] = await conn.query(updateQuery, updateParams);
+        if (updateResult && updateResult.affectedRows === 0) {
+            await conn.rollback();
+            return fail(res, CONFLICT_ERR, 409);
+        }
+
+        await dodajWpisHistorii(conn, id, req.user.id, akcja, ticket.status, status, szczegoly);
+
+        await conn.commit();
+    } catch (err) {
+        try { await conn.rollback(); } catch (_) { /* ignore */ }
+        throw err;
+    } finally {
+        conn.release();
+    }
 
     return res.json({
         message: 'Status zgłoszenia został zaktualizowany.',
+        przypisany_pracownik_id: (check.isRollback && status === 'nowe') ? null : ticket.przypisany_pracownik_id,
         id: Number(id),
         status,
         dozwolone_akcje: wyznaczDozwoloneAkcje(req.user, {
             id: Number(id),
             status,
-            przypisany_pracownik_id: ticket.przypisany_pracownik_id
+            przypisany_pracownik_id: (check.isRollback && status === 'nowe') ? null : ticket.przypisany_pracownik_id
         })
     });
 });
 
 app.patch('/api/zgloszenia/:id/status', authenticateToken, handleUpdateStatus);
 app.put('/api/zgloszenia/:id/status', authenticateToken, handleUpdateStatus);
+
+// 8a. PATCH /api/zgloszenia/:id/numer-listu - Edycja numeru listu przewozowego (nigdy nie zmienia statusu)
+app.patch('/api/zgloszenia/:id/numer-listu', authenticateToken, requireRoles('admin', 'magazynier'),
+    safe('Błąd podczas zmiany numeru listu:', 'Błąd serwera podczas zmiany numeru listu przewozowego.', async (req, res) => {
+        const id = parsePositiveInt(req.params.id);
+        if (isNaN(id)) return fail(res, ID_ERR_INT);
+
+        const { numer_listu } = req.body || {};
+        if (numer_listu === undefined) return fail(res, 'Pole "numer_listu" jest wymagane.');
+        const numerListuErr = validateNumerListu(numer_listu);
+        if (numerListuErr) return fail(res, numerListuErr);
+
+        const [rows] = await currentPool.query('SELECT id, status, przypisany_pracownik_id FROM zgloszenia WHERE id = ?', [id]);
+        if (!rows || rows.length === 0) return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
+        const ticket = rows[0];
+
+        if (!canViewTicket(req.user, ticket)) {
+            return fail(res, 'Brak uprawnień do przeglądania tego zgłoszenia.', 403);
+        }
+
+        if (!NUMER_LISTU_EDYCJA[req.user.role].includes(ticket.status)) {
+            return req.user.role === 'magazynier'
+                ? fail(res, 'Magazynier może edytować numer listu tylko dla zgłoszeń o statusie "zakończone". Przy statusie "do_wysylki" numer listu podaje się przy wysyłce.', 403)
+                : fail(res, `Numer listu można edytować tylko dla zgłoszeń w statusie "do_wysylki" lub "zakończone" (aktualny status: "${ticket.status}").`, 409);
+        }
+
+        const listu = numer_listu ? numer_listu.trim() || null : null;
+        if (req.user.role === 'magazynier' && !listu) {
+            return fail(res, 'Numer listu przewozowego wysłanego zlecenia nie może być pusty.');
+        }
+
+        const conn = await getTransactionConnection();
+        try {
+            await conn.beginTransaction();
+            const [updateResult] = await conn.query(
+                'UPDATE zgloszenia SET numer_listu = ? WHERE id = ? AND status = ?',
+                [listu, id, ticket.status]
+            );
+            if (updateResult && updateResult.affectedRows === 0) {
+                await conn.rollback();
+                return fail(res, CONFLICT_ERR, 409);
+            }
+            await dodajWpisHistorii(
+                conn, id, req.user.id, 'zmiana_numeru_listu', ticket.status, ticket.status,
+                listu ? `Zaktualizowano numer listu: ${listu}` : 'Usunięto numer listu przewozowego'
+            );
+            await conn.commit();
+        } catch (err) {
+            try { await conn.rollback(); } catch (_) { /* ignore */ }
+            throw err;
+        } finally {
+            conn.release();
+        }
+
+        return res.json({
+            message: 'Numer listu przewozowego został zaktualizowany.',
+            id,
+            status: ticket.status,
+            numer_listu: listu,
+            dozwolone_akcje: wyznaczDozwoloneAkcje(req.user, ticket)
+        });
+    }));
 
 // 6. DELETE /api/zgloszenia/:id - Usunięcie zgłoszenia (chroniony, tylko admin)
 app.delete('/api/zgloszenia/:id', authenticateToken, requireAdmin,
@@ -1031,10 +1347,25 @@ app.delete('/api/zgloszenia/:id', authenticateToken, requireAdmin,
         if (!tickets || tickets.length === 0) return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
         const ticket = tickets[0];
 
-        await dodajWpisHistorii(id, req.user.id, 'usunięcie', ticket.status, null, `Wpis usunięty przez ${req.user.username}`);
+        const conn = await getTransactionConnection();
+        try {
+            await conn.beginTransaction();
 
-        const [result] = await currentPool.query('DELETE FROM zgloszenia WHERE id = ?', [id]);
-        if (result.affectedRows === 0) return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
+            await dodajWpisHistorii(conn, id, req.user.id, 'usunięcie', ticket.status, null, `Wpis usunięty przez ${req.user.username}`);
+
+            const [result] = await conn.query('DELETE FROM zgloszenia WHERE id = ?', [id]);
+            if (result && result.affectedRows === 0) {
+                await conn.rollback();
+                return fail(res, `Nie znaleziono zgłoszenia o ID ${id}.`, 404);
+            }
+
+            await conn.commit();
+        } catch (err) {
+            try { await conn.rollback(); } catch (_) { /* ignore */ }
+            throw err;
+        } finally {
+            conn.release();
+        }
 
         return res.json({ message: 'Zgłoszenie zostało pomyślnie usunięte.', id });
     }));
@@ -1062,25 +1393,33 @@ app.post('/api/admin/users', authenticateToken, requireAdmin, async (req, res) =
         return fail(res, 'Podaj nazwę użytkownika i hasło.');
     }
     const cleanUsername = username.trim();
-    const cleanPassword = password.trim();
+    const cleanPassword = password;
 
-    if (!cleanUsername || !cleanPassword) return fail(res, 'Podaj nazwę użytkownika i hasło.');
+    if (!cleanUsername || !password.trim()) return fail(res, 'Podaj nazwę użytkownika i hasło.');
     if (cleanUsername.length > 50) return fail(res, 'Pole "username" przekracza maksymalną dozwoloną długość (50 znaków).');
     if (cleanPassword.length < 8) return fail(res, 'Hasło musi mieć co najmniej 8 znaków.');
-    if (cleanPassword.length > 72) return fail(res, 'Hasło nie może przekraczać 72 znaków.');
+    if (Buffer.byteLength(cleanPassword) > 72) return fail(res, 'Hasło nie może przekraczać 72 znaków.');
     if (!ALLOWED_ROLES.includes(role)) {
         return fail(res, `Nieprawidłowa rola. Dozwolone: ${ALLOWED_ROLES.join(', ')}`);
     }
 
     return safe('Błąd podczas tworzenia użytkownika:', 'Błąd serwera podczas tworzenia użytkownika.', async () => {
         const [existing] = await currentPool.query('SELECT id FROM uzytkownicy WHERE username = ?', [cleanUsername]);
-        if (existing.length > 0) return fail(res, 'Użytkownik o tej nazwie już istnieje.', 409);
+        if (existing.length > 0) return fail(res, 'Taki użytkownik już istnieje.', 409);
 
-        const hashedPassword = await bcrypt.hash(cleanPassword, 10);
-        const [result] = await currentPool.query(
-            'INSERT INTO uzytkownicy (username, password_hash, role) VALUES (?, ?, ?)',
-            [cleanUsername, hashedPassword, role]
-        );
+        const hashedPassword = await bcrypt.hash(password, 10);
+        let result;
+        try {
+            [result] = await currentPool.query(
+                'INSERT INTO uzytkownicy (username, password_hash, role) VALUES (?, ?, ?)',
+                [cleanUsername, hashedPassword, role]
+            );
+        } catch (err) {
+            if (err && err.code === 'ER_DUP_ENTRY') {
+                return fail(res, 'Taki użytkownik już istnieje.', 409);
+            }
+            throw err;
+        }
 
         return res.status(201).json({
             message: 'Użytkownik został pomyślnie utworzony.',
@@ -1123,7 +1462,10 @@ app.patch('/api/admin/users/:id', authenticateToken, requireAdmin,
         const [users] = await currentPool.query('SELECT id, username, role FROM uzytkownicy WHERE id = ?', [id]);
         if (!users || users.length === 0) return fail(res, `Nie znaleziono użytkownika o ID ${id}.`, 404);
 
-        await currentPool.query('UPDATE uzytkownicy SET role = ? WHERE id = ?', [role, id]);
+        // Zmiana roli unieważnia sesje użytkownika - panel nie może dalej działać ze starymi uprawnieniami
+        if (users[0].role !== role) {
+            await revokeUserTokens(id, 'role = ?, ', [role]);
+        }
 
         return res.json({
             message: `Rola użytkownika ${users[0].username} została zmieniona na "${role}".`,
@@ -1143,19 +1485,21 @@ app.patch('/api/admin/users/:id/haslo', authenticateToken, requireAdmin,
             return fail(res, 'Podaj nowe hasło dla użytkownika.');
         }
 
-        const cleanPassword = password.trim();
+        const cleanPassword = password;
         if (cleanPassword.length < 8) return fail(res, 'Hasło musi mieć co najmniej 8 znaków.');
-        if (cleanPassword.length > 72) return fail(res, 'Hasło nie może przekraczać 72 znaków.');
+        if (Buffer.byteLength(cleanPassword) > 72) return fail(res, 'Hasło nie może przekraczać 72 znaków.');
 
         const [users] = await currentPool.query('SELECT id, username FROM uzytkownicy WHERE id = ?', [id]);
         if (!users || users.length === 0) return fail(res, `Nie znaleziono użytkownika o ID ${id}.`, 404);
 
-        const hashedPassword = await bcrypt.hash(cleanPassword, 10);
-        await currentPool.query('UPDATE uzytkownicy SET password_hash = ? WHERE id = ?', [hashedPassword, id]);
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const updated = await revokeUserTokens(id, 'password_hash = ?, ', [hashedPassword]);
 
         return res.json({
             message: `Hasło dla użytkownika ${users[0].username} zostało pomyślnie zmienione.`,
-            id
+            id,
+            // Admin resetujący własne hasło dostaje nowy token, żeby nie wylogować bieżącej karty
+            ...(Number(req.user.id) === id && updated ? { token: signToken(updated), user: publicUser(updated) } : {})
         });
     }));
 
@@ -1164,13 +1508,17 @@ const handleToggleUserStatus = safe('Błąd podczas zmiany statusu konta:', 'Bł
     const id = parsePositiveInt(req.params.id);
     if (isNaN(id)) return fail(res, USER_ID_ERR_INT);
 
+    if (req.body && Object.keys(req.body).length > 0 && typeof req.body.aktywny !== 'boolean') {
+        return fail(res, 'Pole "aktywny" musi mieć wartość true lub false.', 400);
+    }
+
     const [users] = await currentPool.query('SELECT id, username, role, aktywny FROM uzytkownicy WHERE id = ?', [id]);
     if (!users || users.length === 0) return fail(res, `Nie znaleziono użytkownika o ID ${id}.`, 404);
 
     const target = users[0];
     const currentActive = isUserActive(target);
-    const nextActive = req.body && req.body.aktywny !== undefined
-        ? isUserActive({ aktywny: req.body.aktywny })
+    const nextActive = typeof req.body?.aktywny === 'boolean'
+        ? req.body.aktywny
         : !currentActive;
 
     if (Number(req.user.id) === id && !nextActive) {
@@ -1191,8 +1539,21 @@ const handleToggleUserStatus = safe('Błąd podczas zmiany statusu konta:', 'Bł
 app.patch('/api/admin/users/:id/status', authenticateToken, requireAdmin, handleToggleUserStatus);
 app.patch('/api/admin/users/:id/aktywny', authenticateToken, requireAdmin, handleToggleUserStatus);
 
+// Rate limiting dla zmiany własnego hasła (5 prób / 15 minut po req.user.id)
+const hasloLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minut
+    limit: 5, // 5 prób na zalogowanego użytkownika (req.user.id)
+    keyGenerator: (req) => String(req.user.id),
+    message: {
+        error: 'Zbyt wiele prób zmiany hasła. Spróbuj ponownie za 15 minut.'
+    },
+    standardHeaders: true, // Zwraca nagłówki RateLimit-*
+    legacyHeaders: false, // Wyłącza nagłówki X-RateLimit-*
+    skip: () => process.env.NODE_ENV === 'test'
+});
+
 // 12. PATCH /api/profil/haslo - Każdy zalogowany użytkownik może zmienić własne hasło (wymaga podania starego hasła)
-app.patch('/api/profil/haslo', authenticateToken,
+app.patch('/api/profil/haslo', authenticateToken, hasloLimiter,
     safe('Błąd podczas zmiany własnego hasła:', 'Błąd serwera podczas zmiany hasła.', async (req, res) => {
         const { currentPassword, newPassword } = req.body || {};
         const oldPass = (currentPassword ?? req.body?.stare_haslo ?? '');
@@ -1203,9 +1564,9 @@ app.patch('/api/profil/haslo', authenticateToken,
             return fail(res, 'Podaj aktualne oraz nowe hasło.');
         }
 
-        const cleanNewPass = newPass.trim();
+        const cleanNewPass = newPass;
         if (cleanNewPass.length < 8) return fail(res, 'Nowe hasło musi mieć co najmniej 8 znaków.');
-        if (cleanNewPass.length > 72) return fail(res, 'Nowe hasło nie może przekraczać 72 znaków.');
+        if (Buffer.byteLength(cleanNewPass) > 72) return fail(res, 'Nowe hasło nie może przekraczać 72 znaków.');
 
         const [rows] = await currentPool.query(
             'SELECT id, username, password_hash, aktywny FROM uzytkownicy WHERE id = ?',
@@ -1220,36 +1581,62 @@ app.patch('/api/profil/haslo', authenticateToken,
 
         if (!isPasswordValid) return fail(res, 'Aktualne hasło jest nieprawidłowe.', 400);
 
-        const hashedPassword = await bcrypt.hash(cleanNewPass, 10);
-        await currentPool.query('UPDATE uzytkownicy SET password_hash = ? WHERE id = ?', [hashedPassword, user.id]);
+        const hashedPassword = await bcrypt.hash(newPass, 10);
+        const updated = await revokeUserTokens(user.id, 'password_hash = ?, ', [hashedPassword]);
 
-        return res.json({ message: 'Twoje hasło zostało pomyślnie zmienione.' });
+        // Pozostałe sesje (inne urządzenia) są unieważnione; ta karta dostaje nowy token
+        return res.json({
+            message: 'Twoje hasło zostało pomyślnie zmienione. Pozostałe sesje zostały wylogowane.',
+            ...(updated ? { token: signToken(updated), user: publicUser(updated) } : {})
+        });
     }));
 
+// 13. GET /api/me - Aktualne dane zalogowanego użytkownika z bazy (panel bierze z nich rolę, nie z localStorage)
+app.get('/api/me', authenticateToken, (req, res) => res.json(req.user));
 
-// Obsługa błędu przekroczenia limitu payloadu express.json (413 Payload Too Large) oraz błędów parsowania JSON
-app.use((err, req, res, next) => {
-    if (err && (err.type === 'entity.too.large' || err.status === 413)) {
-        return res.status(413).json({ error: 'Przesłany ładunek żądania (payload) przekracza dozwolony limit.' });
-    }
-    if (err && err.status === 400 && 'body' in err) {
-        return res.status(400).json({ error: 'Nieprawidłowy format JSON w ciele żądania.' });
-    }
-    next(err);
-});
+// 14. POST /api/wyloguj-wszedzie - Unieważnia wszystkie tokeny zalogowanego użytkownika (także bieżący)
+app.post('/api/wyloguj-wszedzie', authenticateToken,
+    safe('Błąd podczas wylogowywania sesji:', 'Błąd serwera podczas wylogowywania sesji.', async (req, res) => {
+        await revokeUserTokens(req.user.id);
+        return res.json({ message: 'Wylogowano ze wszystkich urządzeń.' });
+    }));
+
 
 // Obsługa błędów 404 dla nieistniejących tras API
 app.use('/api', (req, res) => {
     res.status(404).json({ error: 'Endpoint API nie został odnaleziony.' });
 });
 
+// Centralna obsługa błędów aplikacji (zawsze zwraca JSON { error } bez ujawniania stack trace'a i ścieżek serwera)
+app.use((err, req, res, next) => {
+    if (res.headersSent) {
+        return next(err);
+    }
+    logError('Błąd w middleware aplikacji:', err);
+
+    if (err && (err.type === 'entity.too.large' || err.status === 413)) {
+        return res.status(413).json({ error: 'Przesłany ładunek żądania (payload) przekracza dozwolony limit.' });
+    }
+    if (err && err.status === 400 && 'body' in err) {
+        return res.status(400).json({ error: 'Nieprawidłowy format JSON w ciele żądania.' });
+    }
+    if (err instanceof URIError || err?.status === 400) {
+        return res.status(400).json({ error: 'Nieprawidłowe parametry zapytania URL.' });
+    }
+
+    const statusCode = typeof err?.status === 'number' && err.status >= 400 && err.status < 600 ? err.status : 500;
+    return res.status(statusCode).json({ error: 'Wystąpił wewnętrzny błąd serwera.' });
+});
+
 app.czyMoznaZmienic = czyMoznaZmienic;
 app.wyznaczDozwoloneAkcje = wyznaczDozwoloneAkcje;
-app.PRZEJSCIA = PRZEJSCIA;
-app.STATUS_ORDER = STATUS_ORDER;
-app.STATUS_LABELS = STATUS_LABELS;
-app.dodajWpisHistorii = dodajWpisHistorii;
 app.loginLimiter = loginLimiter;
 app.zgloszeniaLimiter = zgloszeniaLimiter;
+app.validatePurchaseDate = validatePurchaseDate;
+app.ticketFormRules = { FIELD_LABELS, FIELD_MAX_LENGTHS, NAME_REGEX, EMAIL_REGEX };
+app.hasloLimiter = hasloLimiter;
+app.DUMMY_PASSWORD_HASH = DUMMY_PASSWORD_HASH;
+app.validateJwtSecret = validateJwtSecret;
+app.logError = logError;
 
 module.exports = app;

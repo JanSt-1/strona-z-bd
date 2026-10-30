@@ -7,19 +7,21 @@ To pełna aplikacja webowa (SPA) umożliwiająca klientom szybkie rejestrowanie 
 ## Architektura i Separation of Concerns
 
 Aplikacja jest rozdzielona zgodnie z zasadą separacji odpowiedzialności:
-- **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (nagłówki bezpieczeństwa helmet, limit rozmiaru JSON, serwowanie plików statycznych z `frontend/dist/`), autoryzacji JWT, kontroli dostępu RBAC, rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
-- **`db.js`**: Centralny moduł konfiguracji bazy danych MySQL uwzględniający `DB_PORT`, `DB_HOST`, `DB_USER`, `DB_PASSWORD` oraz `DB_NAME`. Udostępnia metody `createPool()` oraz `createConnection()`, z których korzystają `app.js`, `seed.js` oraz `create-user.js`.
-- **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację obecności `JWT_SECRET`, test połączenia z bazą MySQL oraz uruchomienie nasłuchiwania HTTP (`app.listen()`).
+- **`app.js`**: Wyodrębniona instancja aplikacji Express – konfiguracja middleware (nagłówki bezpieczeństwa helmet, limit rozmiaru JSON, serwowanie plików statycznych z `frontend/dist/`), autoryzacji JWT, kontroli dostępu RBAC, transakcji bazodanowych i ochrony przed wyścigami (CAS / `409 Conflict`), bezpiecznego logowania bez danych osobowych (`logError`), rate-limitera oraz tras API. Udostępnia metody `app.setPool()` i `app.getPool()` do zarządzania pulą bazy danych. **Nie wywołuje `app.listen()`**, co pozwala na łatwy import w testach integracyjnych.
+- **`db.js`**: Centralny moduł konfiguracji bazy danych MySQL uwzględniający `DB_PORT`, `DB_HOST`, `DB_USER`, `DB_PASSWORD` oraz `DB_NAME`. Udostępnia metody `createPool()` oraz `createConnection()`, z których korzystają `app.js`, `migrate.js`, `seed.js` oraz `create-user.js`.
+- **`migrate.js` & `migrations/`**: Lekki, bez-ORM system migracji SQL. Skrypt `npm run migrate` aplikuje oczekujące migracje po kolei w transakcjach, zapisując stan w tabeli `schema_migrations`. Zapewnia pełną idempotencję i kompatybilność z MariaDB oraz MySQL 8 (bezpieczne dodawanie kolumn i indeksów).
+- **`index.js`**: Główny punkt wejściowy serwera produkcyjnego. Odpowiada za wczytanie konfiguracji `.env`, weryfikację obecności `JWT_SECRET`, test połączenia z bazą MySQL, **sprawdzenie czy wszystkie migracje zostały wykonane** oraz uruchomienie nasłuchiwania HTTP (`app.listen()`).
 - **`frontend/`**: Źródła interfejsu użytkownika SPA napisane w React 19 z bundlerem Vite i nowoczesnym stylem Tailwind CSS v4 opartym na zmiennych CSS. Kod został podzielony modularnie na komponenty (`components/`), strony (`pages/`), scentralizowaną warstwę API (`api.js`) oraz stałe biznesowe (`constants.js`). Aplikacja zabezpieczona jest komponentem `ErrorBoundary`. Wynik kompilacji trafia do katalogu `frontend/dist/`.
 - **`frontend/dist/`**: Katalog dystrybucyjny serwowany przez Express. Zawiera skompilowany, zoptymalizowany pakiet produkcyjny wygenerowany poleceniem `npm run build` (`index.html`, zhaszowane `assets/index-*.js`, `assets/index-*.css`, `favicon.svg` oraz `logo_mentor4.svg`).
-- **`app.test.js`**: Zestaw testów integracyjnych API bazujący na natywnym runnerze `node:test` oraz bibliotece `supertest`.
+- **`app.test.js`**: Zestaw testów jednostkowych i integracyjnych API oraz reguł RBAC bazujący na runnerze `node:test` i mocku bazy.
+- **`integration.test.js`**: Zestaw testów na prawdziwej bazie danych MySQL/MariaDB (pełny cykl życia, polskie znaki utf8mb4, równoległe zapytania, migracja starych schematów, wykorzystanie indeksów).
 
 ---
 
 ## Wymagania wstępne
 
 Przed uruchomieniem projektu upewnij się, że masz zainstalowane:
-- **Node.js** (wersja 18 lub nowsza, zalecana 20+ z obsługą `node:test`) oraz menedżer pakietów **npm**
+- **Node.js** w wersji **22.12 lub nowszej** (pole `engines` w `package.json`, wersja dla `nvm`/CI w pliku `.nvmrc`; Node 20 nie jest już wspierany) oraz menedżer pakietów **npm**
 - **MySQL** lub **MariaDB** (np. zainstalowany lokalnie serwer MySQL, pakiet XAMPP, Laragon lub kontener Docker)
 
 ---
@@ -39,7 +41,9 @@ cp .env.example .env
 ```
 Wypełnij plik danymi dostępowymi do lokalnej bazy MySQL oraz własnym kluczem JWT:
 ```ini
+NODE_ENV=production
 PORT=3000
+HOST=127.0.0.1
 DB_HOST=localhost
 DB_USER=root
 DB_PASSWORD=
@@ -47,20 +51,23 @@ DB_NAME=serwis_db
 DB_PORT=3306
 JWT_SECRET=twoj_klucz_jtw
 ```
+`NODE_ENV=production` zapewnia ukrywanie szczegółów technicznych błędów, uniemożliwia wyciek stack trace'a w odpowiedziach HTTP oraz włącza optymalizacje wydajnościowe Express.js.
+`HOST` domyślnie przyjmuje `127.0.0.1` (aplikacja nasłuchuje wyłącznie na pętli zwrotnej za Reverse Proxy, chroniąc przed wystawieniem niezaszyfrowanego portu HTTP do sieci). Aby świadomie udostępnić aplikację w sieci lokalnej (np. podczas testów bez proxy), ustaw `HOST=0.0.0.0`.
 `JWT_SECRET` jest wymagany (brak domyślnej wartości – serwer się nie uruchomi). Wygeneruj silny klucz:
 ```bash
 node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-### Krok 3: Inicjalizacja bazy danych (Seed)
-Uruchom skrypt tworzący bazę `serwis_db` oraz tabele na podstawie schematu `schemat.sql`:
+### Krok 3: Inicjalizacja i migracje bazy danych
+Uruchom migracje bazy danych, które utworzą bazę (zgodnie z `DB_NAME` w `.env`) oraz zaaplikują wszystkie migracje z katalogu `migrations/` (w tym bezpieczne dodanie kolumn takich jak `telefon_stacjonarny`, indeksu na `historia_zgloszen` oraz rozszerzenie kolumny `szczegoly` w `historia_zgloszen` do `MEDIUMTEXT`):
 ```bash
-npm run seed
+npm run migrate
 ```
-*(Skrypt ten aplikuje pełną strukturę tabel `uzytkownicy`, `zgloszenia` oraz `historia_zgloszen` z pliku `schemat.sql`, w tym pola `telefon_stacjonarny`, `numer_listu`, `data_wyslania`, `opis_naprawy` itp.).*
+*(Alternatywnie polecenie `npm run seed` również wykonuje migracje i przygotowuje tabele na nowe zgłoszenia).*
+
 
 ### Krok 3a: Konfiguracja środowiska testowego (konta + 200 nowych zgłoszeń)
-Aby utworzyć 4 konta testowe (`admin`, `pracownik`, `serwisant`, `magazynier` z hasłem `admin123`) oraz wypełnić bazę 200 zgłoszeniami serwisowymi ze statusem `"nowe"`, uruchom lokalny skrypt (ignorowany przez Git):
+Aby utworzyć 4 konta testowe (`admin`, `pracownik`, `serwisant`, `magazynier` z hasłem `admin123`) oraz wypełnić bazę 200 zgłoszeniami serwisowymi ze statusem `"nowe"`, uruchom skrypt testowy (`config-testowy.js`, tylko do środowiska lokalnego – nie uruchamiaj go na produkcji):
 ```bash
 npm run config:testowy
 # lub bezpośrednio:
@@ -92,7 +99,6 @@ node create-user.js nazwa_magazyniera HasloMagazyniera magazynier
 Najpierw skompiluj aplikację React za pomocą Vite (wygeneruje zoptymalizowane pliki w katalogu `frontend/dist/` serwowanym bezpośrednio przez Express):
 ```bash
 npm run build
-# (alias: npm run build:frontend)
 ```
 
 Następnie uruchom aplikację w trybie produkcyjnym:
@@ -107,8 +113,7 @@ npm run dev
 #### Praca nad frontendem (Live HMR)
 Jeśli rozwijasz interfejs użytkownika, możesz uruchomić niezależny serwer deweloperski Vite z natychmiastowym odświeżaniem HMR na porcie 5173:
 ```bash
-npm run dev:front
-# (alias: npm run dev:frontend)
+npm run dev:frontend
 ```
 *Vite posiada skonfigurowany w `vite.config.js` proxy (`server.proxy`), który automatycznie przekierowuje zapytania do `/api` na adres `http://localhost:3000` uruchomionego backendu Express.*
 
@@ -116,23 +121,84 @@ npm run dev:front
 Aplikacja posiada dedykowany favicon (`favicon.svg`) wygenerowany na bazie sygnetu logo Mentor, serwowany bezpośrednio w nagłówku strony i w pasku zakładek przeglądarki.
 
 #### Jakość kodu i linter frontendu
-Do weryfikacji i statycznej analizy kodu frontendu skonfigurowany jest linter **oxlint**:
+Do weryfikacji i statycznej analizy kodu frontendu skonfigurowany jest linter **oxlint** z wtyczkami `react`, `oxc` i `jsx-a11y` (dostępność):
 ```bash
 npm --prefix frontend run lint
 ```
+Linter działa z `--deny-warnings`, więc każde ostrzeżenie (także o dostępności, np. pole bez etykiety albo klikalny element niedostępny z klawiatury) przerywa CI.
+
+#### Dostępność (klawiatura i czytniki ekranu)
+- Każde zgłoszenie da się otworzyć z klawiatury: numer zgłoszenia (`#123`) w tabeli i na karcie mobilnej jest przyciskiem „Szczegóły zgłoszenia #123”. Kliknięcie w cały wiersz lub kartę działa nadal jako skrót dla myszy.
+- Okna (modale) i panel szczegółów zgłoszenia są oknami dialogowymi dla czytników (`<dialog aria-modal="true">` z tytułem przez `aria-labelledby`). Po otwarciu fokus przechodzi do okna, `Tab` krąży wewnątrz, `Escape` zamyka tylko okno na wierzchu (np. „Cofnij status” otwarte z panelu szczegółów), a po zamknięciu fokus wraca na przycisk, który okno otworzył. Przyciski „✕” mają nazwę „Zamknij”. Treść panelu szczegółów dostaje fokus od razu po otwarciu, więc strzałki i PageUp / PageDown przewijają ją bez użycia myszy.
+- Wszystkie pola formularzy mają powiązaną etykietę (`<label htmlFor>`) albo `aria-label` (wyszukiwarka i filtry nad listą). Pola haseł mają `autoComplete` (`current-password` / `new-password`).
+
+#### Treści do uzupełnienia przed wdrożeniem (klauzula RODO, czas kontaktu)
+Klauzula informacyjna (art. 13 RODO) i deklarowany czas kontaktu są w pliku `frontend/src/tresci.js`. Do czasu uzupełnienia przez właściciela serwisu zawierają zaślepki `[X]`. Sprawdzenie:
+```bash
+npm run check:placeholders
+```
+Polecenie kończy się błędem, dopóki w `frontend/src` lub `frontend/dist` jest `[X]` albo `Placeholder`. W CI ten krok tylko ostrzega (`continue-on-error`). Po uzupełnieniu treści usuń `continue-on-error` z `.github/workflows/ci.yml`.
 
 Po uruchomieniu aplikacja produkcyjna dostępna jest pod adresem:
 👉 **http://localhost:3000** (lub dev serwer frontendu pod **http://localhost:5173**)
 
 ---
 
-## Interfejs użytkownika (UI/UX) i dostępność (WCAG AA)
+## Aktualizacja wersji
 
-Frontend aplikacji został zaprojektowany z dbałością o estetykę, responsywność oraz ścisłe standardy dostępności WCAG AA:
+W przypadku wdrażania nowej wersji aplikacji na serwerze produkcyjnym wykonaj następującą procedurę:
+
+```bash
+# 1. Pobierz najnowszy kod z repozytorium
+git pull
+
+# 2. Zainstaluj nowe lub zaktualizowane zależności w trybie ci
+npm ci
+
+# 3. Zbuduj zoptymalizowane pliki produkcyjne frontendu
+npm run build
+
+# 4. Zastosuj nowe migracje bazy danych
+npm run migrate
+
+# 5. Zrestartuj proces aplikacji (np. pm2, systemd, docker)
+pm2 restart serwis-app
+```
+
+> [!IMPORTANT]
+> Przy starcie serwera (`index.js`) aplikacja automatycznie weryfikuje w tabeli `schema_migrations`, czy wszystkie migracje z katalogu `migrations/` zostały zaaplikowane. W przypadku wykrycia brakujących migracji serwer odmawia uruchomienia i wyświetla czytelny komunikat: `❌ Wykryto niezastosowane migracje bazy danych (...). Uruchom: npm run migrate`.
+
+---
+
+## Testy automatyczne
+
+Projekt posiada dwa zestawy testów:
+
+1. **Testy jednostkowe API i reguł RBAC (szybkie, z mockiem bazy)**:
+   ```bash
+   npm test
+   ```
+   Weryfikują wszystkie endpointy REST API, logikę biznesową, autoryzację ról (admin, pracownik, serwisant, magazynier) oraz nagłówki bezpieczeństwa bez konieczności uruchamiania bazy danych. `npm test` (`node --test`) uruchamia wszystkie pliki `*.test.js`, więc również `integration.test.js` – jego testy są pomijane, gdy baza nie jest osiągalna. Same testy z mockiem: `node --test app.test.js`.
+
+2. **Testy integracyjne z prawdziwą bazą danych (MySQL / MariaDB)**:
+   ```bash
+   # Uruchomienie na dedykowanej bazie testowej (nigdy na produkcyjnej!)
+   npm run test:db
+   ```
+   *Uwaga: Testy integracyjne używają bazy określonej w zmiennej `DB_NAME` (domyślnie `serwis_db_test`). Ze względów bezpieczeństwa skrypt blokuje uruchomienie testów na bazie o nazwie produkcyjnej (`serwis_db`). Testy te są również automatycznie wykonywane w potoku CI (GitHub Actions) z kontenerem MariaDB.*
+
+Szczegółowe reguły biznesowe i bezpieczeństwa, które sprawdzają testy (przejścia statusów, RBAC, CAS / `409`, limity, nagłówki, cache plików statycznych), opisuje [`context.md`](context.md). README opisuje uruchomienie i wdrożenie, `context.md` reguły i API – nie kopiujemy ich między plikami.
+
+---
+
+## Interfejs użytkownika (UI/UX) i responsywność
+
+Frontend aplikacji został zaprojektowany z dbałością o estetykę, czytelność oraz responsywność:
+- **Walidacja formularza zgłoszenia w przeglądarce**: przed wysłaniem formularz sprawdza te same reguły co serwer (imię i nazwisko w dowolnym alfabecie, e-mail, wymagane pola, maksymalne długości). Błąd pojawia się pod konkretnym polem, a strona przewija się do niego i ustawia na nim kursor. Błąd z serwera zostaje widoczny nad formularzem do zamknięcia (nie znika sam). Wklejony numer telefonu jest poprawnie rozpoznawany w formatach `+48600700800`, `48600700800`, `0048600700800` i `+48 600 700 800`. Odrzucone zgłoszenia nie zużywają limitu 5 zgłoszeń na godzinę z jednego IP.
 - **Trwały ekran potwierdzenia przyjęcia zgłoszenia (`PublicTicketForm`)**:
   - Po pomyślnym przesłaniu formularza przez klienta zamiast znikającego po kilku sekundach alertu pojawia się dedykowany, estetyczny ekran potwierdzenia, który **nie znika samoczynnie**.
   - Zawiera wyróżniony nagłówek **„Zgłoszenie nr {id} przyjęte”** z ikoną sukcesu,
-  - Zawiera sekcję **„Co dalej?”** z placeholderem czasu reakcji (**„skontaktujemy się w ciągu [X] dni roboczych”**) oraz czytelnym opisem kolejnych kroków weryfikacji i kontaktu,
+  - Zawiera sekcję **„Co dalej?”** z czasem reakcji z `frontend/src/tresci.js` (**„skontaktujemy się w ciągu N dni roboczych”**) oraz czytelnym opisem kolejnych kroków weryfikacji i kontaktu,
   - Prezentuje podsumowanie przesłanych danych (klient, sprzęt, email, telefon, data przyjęcia),
   - Stan potwierdzenia jest zachowywany w `sessionStorage` (zapobiega utracie widoku przy przypadkowym odświeżeniu strony F5),
   - Udostępnia przycisk: **„Powrót na stronę główną”** (czyszczący stan potwierdzenia i przywracający widok główny formularza).
@@ -143,7 +209,7 @@ Frontend aplikacji został zaprojektowany z dbałością o estetykę, responsywn
   - `.btn-danger` – czerwony (akcje niebezpieczne / usuwanie).
 - **Zasada „Jedna akcja = jeden przycisk w jednym miejscu”**:
   - Zamiast przeładowanych list rozwijanych statusów i ciasnych formularzy w komórkach tabeli, interfejs udostępnia dokładnie jeden, intuicyjny przycisk głównej akcji dla danego etapu zlecenia:
-    - **„Przypisz”** (etap `nowe`) – otwiera modal przypisania pracownika (`AssignWorkerModal`), a wybór pracownika automatycznie zmienia status na `w_realizacji`,
+    - **„Przypisz”** (etap `nowe`) oraz **„Zmień przypisanie”** (etap `w_realizacji` dla administratora i serwisanta) – otwiera modal przypisania pracownika (`AssignWorkerModal`), a wybór pracownika na zleceniu `nowe` automatycznie zmienia status na `w_realizacji` (na etapie `w_realizacji` pozwala przepiąć zlecenie np. w razie choroby lub blokady konta pracownika),
     - **„Oznacz jako naprawione”** (etap `w_realizacji`) – otwiera modal raportu naprawy (`RepairModal`), w którym wprowadza się opis wykonanych prac (dla serwisanta automatycznie przypisuje zlecenie do niego),
     - **„Oznacz jako wysłane”** (etap `do_wysylki`) – otwiera dedykowany modal wysyłki (`ShipModal`) z polem na numer listu przewozowego i podsumowaniem adresu odbiorcy,
     - **„Cofnij status”** – osobny przycisk dostępny wyłącznie dla administratora na etapach zaawansowanych, otwierający modal potwierdzenia (`RollbackStatusModal`) z wyborem docelowego statusu i czytelnym ostrzeżeniem o wyczyszczeniu danych późniejszych etapów (np. numeru listu czy archiwizacji opisu naprawy).
@@ -160,9 +226,9 @@ Frontend aplikacji został zaprojektowany z dbałością o estetykę, responsywn
     - Po odświeżeniu strony (`F5`) lub przesłaniu linku innemu pracownikowi filtry i strona nie znikają i zostają automatycznie załadowane z adresu.
     - Obsługiwana jest również pełna nawigacja historii przeglądarki (przyciski *Wstecz* / *Dalej* przez zdarzenie `popstate`).
 - **Tabela desktopowa (`md+`) i podgląd usterki**:
-  - Zwięzła tabela o 6 kolumnach (*Nr*, *Klient*, *Produkt / Usterka*, *Przypisany*, *Status i akcja*, *Data*).
+  - Zwięzła tabela o 6 kolumnach (*Nr*, *Klient*, *Produkt / Usterka*, *Przypisany*, *Status*, *Data*).
   - Kolumna *Produkt / Usterka* zawiera 2-linijkowy skrót zgłoszenia (`.ticket-excerpt` z atrybutem `title`), co pozwala natychmiast rozróżnić zlecenia od tego samego klienta przy zachowaniu równej, stabilnej wysokości wierszy.
-  - Kolumna *Przypisany* prezentuje czytelny tekst pracownika (lub informację *— Nieprzypisane —*), bez dodatkowych przycisków – zgodnie z zasadą jednej akcji całe sterowanie etapem zlecenia skupione jest w kolumnie *Status i akcja*.
+  - Kolumna *Przypisany* prezentuje czytelny tekst pracownika (lub informację *— Nieprzypisane —*), bez dodatkowych przycisków – zgodnie z zasadą jednej akcji całe sterowanie etapem zlecenia skupione jest w kolumnie *Status*.
   - Cały wiersz tabeli jest klikalny i otwiera panel boczny ze szczegółami (zastąpiono osobny przycisk „Szczegóły”).
   - Tabela bez problemu mieści się na ekranach laptopów (1366 px) bez konieczności przewijania w bok.
 - **Karty mobilne (wąskie ekrany / telefon 375 px)**:
@@ -171,8 +237,8 @@ Frontend aplikacji został zaprojektowany z dbałością o estetykę, responsywn
   - Zakładki w nagłówku układają się elastycznie pod logo na pełną szerokość.
 - **Wysuwany panel boczny szczegółów zgłoszenia (`TicketDetailsDrawer`)**:
   - Kliknięcie w dowolne zgłoszenie (wiersz na desktopie lub kartę na telefonie) wysuwa estetyczny panel boczny z animacją slajdu.
-  - Panel zawiera: pełne dane klienta i rozliczenia (NIP, faktura/paragon, adres wysyłki, telefon komórkowy oraz opcjonalny telefon stacjonarny, email), pełne dane urządzenia i numer seryjny, kompletny opis usterki, sekcję realizacji z raportem prac naprawczych i datą zatwierdzenia, sekcję wysyłki z numerem listu przewozowego (oraz opcją edycji dla admina) oraz **graficzną pionową oś czasu zdarzeń (historię audytową)** z dedykowanymi ikonami pobieraną z `GET /api/zgloszenia/:id`.
-  - Posiada zintegrowany górny pasek akcji z pojedynczym przyciskiem etapu („Przypisz”, „Oznacz jako naprawione”, „Oznacz jako wysłane”, a dla admina „Cofnij status”), co pozwala przeprowadzić operację bezpośrednio podczas analizy szczegółów zlecenia.
+  - Panel zawiera: pełne dane klienta i rozliczenia (NIP, faktura/paragon, adres wysyłki, telefon komórkowy oraz opcjonalny telefon stacjonarny, email), pełne dane urządzenia i numer seryjny, kompletny opis usterki, sekcję realizacji z raportem prac naprawczych i datą zatwierdzenia, sekcję wysyłki z numerem listu przewozowego (z przyciskiem „✏ Edytuj” widocznym wg `dozwolone_akcje`: admin na etapach `do_wysylki` i `zakończone`, magazynier na `zakończone`) oraz **graficzną pionową oś czasu zdarzeń (historię audytową)** z dedykowanymi ikonami pobieraną z `GET /api/zgloszenia/:id`.
+  - Posiada zintegrowany górny pasek akcji z pojedynczym przyciskiem etapu („Przypisz” / „Zmień przypisanie”, „Oznacz jako naprawione”, „Oznacz jako wysłane”, a dla admina „Cofnij status”), co pozwala przeprowadzić operację bezpośrednio podczas analizy szczegółów zlecenia.
 - **Puste stany i elegancki szkielet ładowania (Skeletons & Spinners)**:
   - W przypadku braku wyników dla wybranych kryteriów filtrowania lub wyszukiwania, użytkownik widzi estetyczny komunikat **„Brak zgłoszeń dla wybranych filtrów”** wraz z przyciskiem **„Wyczyść filtry”**, który natychmiast przywraca pełną listę.
   - Podczas pobierania danych z serwera (`loading`) tabela oraz karty zastępowane są płynnym szkieletem animowanym (`TableSkeleton` / `CardsSkeleton` z `animate-pulse`) oraz wskaźnikiem ładowania (`animate-spin`), eliminując migotanie i przesunięcia układu (CLS).
@@ -184,80 +250,22 @@ Frontend aplikacji został zaprojektowany z dbałością o estetykę, responsywn
 
 ---
 
-## Testy integracyjne
-
-Projekt posiada rozbudowany zestaw testów integracyjnych weryfikujących poprawność działania kluczowych endpointów API (walidacja pól, autoryzacja JWT, mechanizm logowania, uprawnienia tras RBAC, blokowanie kont, ochrona ról admina oraz zarządzanie hasłami).
-
-Uruchomienie testów:
-```bash
-npm test
-```
-*Skrypt wykonuje polecenie `node --test` z użyciem `supertest`. Dzięki wbudowanemu mockowaniu puli bazy danych w `app.test.js`, testy wykonują się błyskawicznie i nie wymagają aktywnego serwera MySQL.*
-
-Główne grupy przypadków testowych (łącznie **124 testy** w 18 suitach):
-1. **Uwierzytelnianie, logowanie, ochrona Honeypot, klauzula RODO i walidacja zgłoszeń**: walidacja pól obowiązkowych, obsługa opcjonalnego telefonu stacjonarnego (`telefon_stacjonarny` – zapis z prefiksem `+48` po podaniu 9 cyfr, dopuszczenie `null` gdy brak, błąd 400 przy niepoprawnym formacie), obowiązkowy checkbox zgody RODO (odrzucenie 400 przy braku lub false, utrwalenie znacznika czasu w `zgoda_rodo_data` przy akceptacji), ochrona antyspamowa Honeypot (wypełnione pole `website` zwraca 201 bez zapisu do bazy), brak tokenu (401), błędne dane logowania (401), poprawny token JWT (200), blokada nieprawidłowych formatów i dat z przyszłości (400).
-2. **Przejście `nowe` → `w_realizacji`**: automatyczne przypisanie zlecenia, uprawnienia serwisanta i admina (200), blokada pracownika i magazyniera (403).
-3. **Przejście `w_realizacji` → `do_wysylki`**: wyłączność dedykowanego endpointu `/naprawione`, wymóg opisu prac, uprawnienia przypisanego pracownika/serwisanta/admina (200; zatwierdzenie naprawy przez serwisanta automatycznie przypisuje do niego to zlecenie), blokada magazyniera (403) oraz blokada przejścia ze statusu `nowe` (409 Conflict).
-4. **Przejście `do_wysylki` → `zakończone`**: uprawnienia magazyniera i admina, wymóg numeru listu przewozowego (`numer_listu`), walidacja długości (max 100 znaków), możliwość aktualizacji numeru listu na zakończonym zleceniu.
-5. **Cofanie statusu (Rollback)**: wyłączne prawo administratora do cofania statusu wstecz (200); blokada dla pozostałych ról (403).
-6. **Niedozwolone skoki w przód**: blokowanie pomijania kroków w procesie (409 Conflict) nawet dla administratora.
-7. **Uprawnienia do dedykowanych endpointów (RBAC) oraz parametry listy**: `/przypisz`, `/pracownicy`, `DELETE /api/zgloszenia/:id`, filtrowanie listy zgłoszeń zgodnie z rolą oraz obsługa parametrów query (`?szukaj=`, `?status=`, `?pracownik=`, `?strona=`, `?limit=`, `?sort=`) wyłącznie przez placeholdery `?` w SQL wraz ze zwracaniem metadanych paginacji (`total`, `page`, `limit`, `totalPages`).
-8. **Jednostkowa weryfikacja funkcji `czyMoznaZmienic`**: precyzyjna kontrola macierzy przejść i kodów błędów 409 vs 403.
-9. **Panel administratora – zarządzanie użytkownikami**:
-   - `GET /api/admin/users`: lista kont bez pola `password_hash` (403 dla nie-admina, 200 dla admina).
-   - `POST /api/admin/users`: tworzenie kont przez admina (wymóg hasła min. 8 znaków, login max 50 znaków).
-   - `PATCH /api/admin/users/:id`: zmiana roli (zabezpieczenie: admin nie może odebrać roli admina samemu sobie – 400).
-   - `PATCH /api/admin/users/:id/haslo`: ustawienie nowego hasła przez admina (wymóg min. 8 znaków).
-   - `PATCH /api/admin/users/:id/status` (oraz `/aktywny`): przełączanie blokady konta (zabezpieczenie: admin nie może zablokować samego siebie – 400).
-   - Blokada logowania dla nieaktywnych kont (`aktywny = FALSE` -> 403).
-   - `authenticateToken`: pobieranie aktualnej roli z bazy danych (unieważnia spreparowaną rolę w tokenie) oraz odrzucanie nieistniejących lub zablokowanych użytkowników (401).
-10. **Zmiana własnego hasła użytkownika (`PATCH /api/profil/haslo`)**:
-    - Dostępne dla każdego zalogowanego użytkownika.
-    - Wymaga podania dotychczasowego hasła (weryfikacja `bcrypt`) oraz nowego hasła o długości min. 8 znaków.
-    - Zwraca 400 przy błędnym haśle lub zbyt krótkim nowym haśle; 200 po udanej zmianie.
-11. **Historia zgłoszeń (`historia_zgloszen` i endpoint `GET /api/zgloszenia/:id/historia`)**:
-    - Tabela audytowa przechowująca pełną historię zmian (`zgloszenie_id`, `uzytkownik_id`, `akcja`, `z_statusu`, `na_status`, `szczegoly`, `created_at`).
-    - Automatyczne wywoływanie funkcji pomocniczej `dodajWpisHistorii` przy każdej akcji: utworzenie zgłoszenia (`utworzenie`), przypisanie pracownika (`przypisanie`), zatwierdzenie naprawy (`naprawa`), wysyłka (`wysyłka`), aktualizacja numeru listu (`zmiana_numeru_listu`), zmiana / cofnięcie statusu (`zmiana_statusu`).
-    - Usunięcie zgłoszenia (`DELETE /api/zgloszenia/:id`) trwale zapisuje wpis `usunięcie` z informacją o usuwającym (np. `Wpis usunięty przez admin`), a brak kaskadowego usuwania na kluczu obcym w `historia_zgloszen` gwarantuje zachowanie pełnej historii po usunięciu zgłoszenia.
-12. **Szczegóły zgłoszenia (`GET /api/zgloszenia/:id`) oraz czyszczenie etapów przy cofaniu statusu**:
-    - Pobieranie pełnych danych zgłoszenia wraz z powiązaną historią audytową. Egzekwowanie uprawnień RBAC (pracownik widzi tylko swoje, magazynier tylko `do_wysylki` i `zakończone`, admin/serwisant wszystkie).
-    - Przy cofaniu statusu wstecz (przez administratora) automatyczne czyszczenie danych późniejszych etapów:
-      - cofnięcie przed `zakończone` resetuje `data_wyslania = NULL` oraz `numer_listu = NULL`,
-      - cofnięcie przed `do_wysylki` resetuje `opis_naprawy = NULL` oraz `opis_naprawy_data = NULL`, a poprzednia treść naprawy jest bezpiecznie utrwalana w historii zdarzeń.
-13. **Rate limiting (`POST /api/zgloszenia` oraz `POST /api/login`)**:
-    - Pomijany w środowisku testowym (`skip: () => process.env.NODE_ENV === 'test'`).
-    - Ograniczenie do 5 zgłoszeń na godzinę z jednego IP na `POST /api/zgloszenia` (oraz 10 prób / 15 min na `POST /api/login`).
-    - Blokowanie nadmiarowych zapytań z kodem HTTP 429 Too Many Requests i czytelnym komunikatem błędu w języku polskim.
-14. **Limit rozmiaru ciała żądania JSON (`express.json limit: 70kb`)**:
-    - Jawnie skonfigurowany limit `express.json({ limit: '70kb' })` dopasowany do najdłuższego dopuszczalnego opisu usterki (65535 znaków + narzut JSON), bez niepotrzebnego dopuszczania większych danych.
-    - Zgłoszenie z maksymalnym dozwolonym opisem (65535 znaków) mieści się w limicie i zwraca 201 Created.
-    - Żądania przekraczające limit (np. 80KB) zwracają status 413 Payload Too Large z czytelnym komunikatem JSON.
-    - Błędnie sformatowane JSON-y zwracają status 400 Bad Request.
-15. **Nagłówki bezpieczeństwa HTTP (`helmet`)**:
-    - Zabezpieczenie serwera Express za pomocą biblioteki `helmet` z wyłączonym `contentSecurityPolicy`. Frontend kompilowany jest z wyprzedzeniem przez Vite (brak Babel Standalone w przeglądarce).
-    - Aktywne nagłówki ochronne: `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Strict-Transport-Security`, `X-Download-Options: noopen`, `X-Permitted-Cross-Domain-Policies: none`.
-16. **Endpoint `/api/health` (bezpieczny health check)**:
-    - Weryfikacja działania bazy danych (`SELECT 1`).
-    - Sukces zwraca kod HTTP 200 oraz ciało `{ status: "ok" }`.
-    - Awaria bazy danych zwraca kod HTTP 500 oraz ciało `{ status: "error" }` bez ujawniania `err.message` i konfiguracji na zewnątrz.
-    - Pełne szczegóły błędu logowane są wewnętrznie do `console.error`.
-17. **Cache-Control dla plików statycznych (`express.static`)**:
-    - `index.html`: nagłówek `Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate`, `Pragma: no-cache`, `Expires: 0` – wymusza pobieranie zawsze świeżego punktu wejścia SPA przy każdym wejściu użytkownika.
-    - Pliki z buildu z hashem w nazwie (np. `bundle.a1b2c3d4.js`, `style-D7x2v_4z.css`): długie cache'owanie `Cache-Control: public, max-age=31536000, immutable` (1 rok), eliminujące ponowne pobieranie niezmienionych assetów produkcyjnych.
-    - Pozostałe pliki statyczne bez hasha (np. `logo_mentor4.svg`): standardowe cache'owanie (`public, max-age=86400`) bez flagi `no-store`.
-
----
-
 ## Role użytkowników i przejścia statusów (Single Source of Truth)
 
 W systemie reguły cyklu życia zgłoszeń znajdują się w jednym miejscu na backendzie (`czyMoznaZmienic` i `PRZEJSCIA`). Przy każdym zgłoszeniu zwracana jest dynamicznie obliczona tablica `dozwolone_akcje` (z uwzględnieniem roli użytkownika, statusu oraz przypisania). Dzięki temu frontend (`StatusControl.jsx` i `TicketDetailsDrawer.jsx`) nie powiela reguł i wyświetla wyłącznie legalne przyciski/akcje, eliminując ryzyko wywołania błędów `403 Forbidden` czy `409 Conflict`:
 
-- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie zadań dowolnym użytkownikom (w tym serwisantom, pracownikom i magazynierom na dowolnym etapie), zmiana i cofanie statusów (w panelu pojawia się wyłącznie lista dozwolonych statusów cofnięcia), dodawanie/edycja numeru listu przewozowego na dowolnym etapie, wysyłka paczek, usuwanie zgłoszeń (`DELETE`), zakładka **„Użytkownicy”** do pełnego zarządzania kontami (tworzenie, zmiana roli, zmiana hasła, blokowanie/odblokowywanie kont). Admin może przeprowadzić każdą poprawną operację w cyklu życia zgłoszenia.
-- **`serwisant`**: Przegląd wszystkich zleceń i przypisywanie ich pracownikom, serwisantom lub magazynierom (przypisanie zlecenia o statusie "nowe" automatycznie zmienia status na "w realizacji" lub rozpoczęcie realizacji przyciskiem). Może również oznaczyć zlecenie jako naprawione ("w realizacji" -> "do wysyłki") z opisem naprawy.
+- **`admin`**: Pełny wgląd we wszystkie zlecenia, przypisywanie zadań aktywnym pracownikom i serwisantom (na etapach `nowe` oraz `w_realizacji`), zmiana i cofanie statusów (w panelu pojawia się wyłącznie lista dozwolonych statusów cofnięcia; cofnięcie do `nowe` czyści przypisanego pracownika), dodawanie/edycja numeru listu przewozowego na etapach `do_wysylki` i `zakończone` (osobny endpoint `/numer-listu`, który nie zmienia statusu), wysyłka paczek, usuwanie zgłoszeń (`DELETE`), zakładka **„Użytkownicy”** do pełnego zarządzania kontami (tworzenie, zmiana roli, zmiana hasła, blokowanie/odblokowywanie kont). Admin może przeprowadzić każdą poprawną operację w cyklu życia zgłoszenia.
+- **`serwisant`**: Przegląd wszystkich zleceń i przypisywanie ich aktywnym pracownikom lub serwisantom na etapach `nowe` oraz `w_realizacji` (przypisanie zlecenia o statusie `nowe` automatycznie zmienia status na `w_realizacji`). Może przepiąć zlecenie innego pracownika na innego pracownika/serwisanta (np. podczas L4 lub po zablokowaniu konta), ale nie może przepisać cudzego zlecenia na siebie ani go odpiąć (`403`), co blokuje obejście zakazu opisywania cudzej naprawy przez `/przypisz` + `/naprawione`. Próba przypisania na kolejnych etapach (`do_wysylki`, `zakończone`) zwraca błąd `409 Conflict`. Może oznaczyć jako naprawione (`w_realizacji` -> `do_wysylki`) zlecenie przypisane do siebie lub nieprzypisane.
 - **`pracownik`**: Domyślnie widzi wyłącznie zlecenia przypisane do siebie. Gdy zadanie jest w statusie "w realizacji" i jest przypisane do danego pracownika, otrzymuje przycisk "Oznacz jako naprawione" ze sporządzeniem wymaganego opisu prac. Panel nigdy nie wyświetla pracownikowi nielegalnych przycisków startu czy cofania.
-- **`magazynier`**: Widzi zlecenia gotowe do wysyłki ("do wysyłki") oraz zakończone. Dla zleceń do wysyłki otrzymuje przycisk „Oznacz jako wysłane” (`ShipModal`), umożliwiający oznaczenie jako wysłane z podaniem numeru listu przewozowego (`numer_listu`).
+- **`magazynier`**: Widzi zlecenia gotowe do wysyłki ("do wysyłki") oraz zakończone. Dla zleceń do wysyłki otrzymuje przycisk „Oznacz jako wysłane” (`ShipModal`), umożliwiający oznaczenie jako wysłane z podaniem numeru listu przewozowego (`numer_listu`). Na zleceniach zakończonych może poprawić numer listu (przycisk „✏ Edytuj” w szczegółach).
 
 Każdy zalogowany użytkownik ma dodatkowo możliwość zmiany swojego hasła w nagłówku panelu po podaniu dotychczasowego hasła.
+
+**Sesje i bezpieczeństwo kont:**
+- Zmiana hasła (własnego lub reset przez administratora) oraz zmiana roli natychmiast unieważniają wszystkie wcześniejsze sesje tego konta. Osoba, która zmienia własne hasło, zostaje zalogowana w bieżącej karcie.
+- Przycisk **„Wyloguj wszędzie”** w nagłówku panelu kończy sesje konta na wszystkich urządzeniach.
+- Po wygaśnięciu sesji (24 h) lub jej unieważnieniu panel pokazuje ekran logowania z komunikatem „Sesja wygasła…”. Niezapisany opis naprawy i wpisany numer listu przewozowego (przy „Oznacz jako wysłane” i przy edycji numeru listu) są przechowywane w karcie przeglądarki, a po ponownym zalogowaniu to samo okno otwiera się z zachowanym wpisem – o ile ta akcja jest nadal dostępna.
+- Zalogowanie innego użytkownika lub wylogowanie w innej karcie przeglądarki od razu zmienia też pozostałe otwarte karty panelu.
 
 ---
 
@@ -270,7 +278,7 @@ W projekcie dostępny jest skrypt `create-user.js`, który bezpiecznie haszuje h
 node create-user.js <nazwa_uzytkownika> <haslo> [rola]
 ```
 - Dostępne role: `admin`, `serwisant`, `pracownik`, `magazynier` (domyślnie: `pracownik`).
-- **Wymagania dla hasła**: minimum 8 znaków (hasła krótsze zostaną odrzucone).
+- **Wymagania dla hasła**: minimum 8 znaków, maksymalnie 72 bajty (limit bcrypt).
 - Przykłady:
   ```bash
   node create-user.js admin HasloAdmina123 admin
@@ -315,7 +323,7 @@ Niniejsza instrukcja krok po kroku opisuje uruchomienie aplikacji na zewnętrzny
 
 - **System operacyjny:** Linux (zalecany Ubuntu 22.04 LTS / 24.04 LTS lub Debian 12).
 - **Zasoby sprzętowe:** min. 1 vCPU, 1–2 GB RAM, dysk SSD (wielkość zależna od liczby zgłoszeń i retencji kopii zapasowych).
-- **Środowisko uruchomieniowe:** Node.js (wersja 20 LTS lub 22 LTS) oraz menedżer pakietów `npm`.
+- **Środowisko uruchomieniowe:** Node.js 22 LTS (min. 22.12, zgodnie z `.nvmrc`) lub nowszy LTS oraz menedżer pakietów `npm`.
 - **Baza danych:** MySQL 8.0+ lub MariaDB 10.6+ zainstalowana lokalnie na serwerze.
 - **Oprogramowanie pomocnicze:**
   - Menedżer procesów: `pm2` lub wbudowany `systemd`.
@@ -410,7 +418,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 
 #### Inicjalizacja schematu bazy danych i pierwsze konto administratora
 ```bash
-# Utworzenie struktury tabel (schemat.sql)
+# Utworzenie bazy i tabel (seed uruchamia migracje z katalogu migrations/)
 npm run seed
 
 # Utworzenie głównego konta administratora
@@ -766,15 +774,15 @@ W przypadku awarii, uszkodzenia danych lub migracji na nowy serwer wykonaj poni�
 7. **Sprawdź logi aplikacji i health check:**
    ```bash
    # Test endpointu health check
-   curl -I http://127.0.0.1:3000/api/health
-   # Oczekiwany wynik: HTTP/1.1 200 OK {"status":"ok"}
+   curl -i http://127.0.0.1:3000/api/health
+   # Oczekiwany wynik: HTTP/1.1 200 OK (nagłówki), a w treści {"status":"ok"}
    ```
 
 ---
 
 ### Podsumowanie checklisty wdrożeniowej
 
-- [ ] Zainstalowano Node.js (v20+), MySQL 8+ oraz Nginx/Caddy.
+- [ ] Zainstalowano Node.js (v22.12+), MySQL 8+ oraz Nginx/Caddy.
 - [ ] Utworzono użytkownika systemowego `serwis` i pobrano aplikację do `/var/www/serwis`.
 - [ ] Zainstalowano zależności projektu (`npm ci`) oraz zbudowano zoptymalizowany frontend do `frontend/dist/` (`npm run build`).
 - [ ] Utworzono plik `.env` z `NODE_ENV=production` oraz bezpiecznym `JWT_SECRET`.

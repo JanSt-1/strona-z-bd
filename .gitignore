@@ -3,8 +3,21 @@ node_modules/
 
 # Środowisko, sekrety
 .env
-.env.local
+.env.*
+!.env.example
 *.local
+*.pem
+*.key
+
+# Zrzuty i kopie zapasowe bazy (dane osobowe klientów!)
+*.sql
+*.sql.gz
+*.dump
+!schemat.sql
+!migrations/*.sql
+
+# Raporty pokrycia testów
+coverage/
 
 # Logi
 logs/

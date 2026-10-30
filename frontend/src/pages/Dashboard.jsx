@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { ticketApi, workerApi } from '../api';
+import { authApi, ticketApi, workerApi } from '../api';
 import Alert from '../components/Alert';
 import StatusControl from '../components/StatusControl';
 import RepairModal from '../components/RepairModal';
@@ -10,6 +10,8 @@ import PasswordModal from '../components/PasswordModal';
 import AdminUsersPanel from '../components/AdminUsersPanel';
 import TicketDetailsDrawer from '../components/TicketDetailsDrawer';
 import StatusBadge from '../components/StatusBadge';
+import { STATUS_LABELS, formatDate, formatDateTime, getTicketActionState } from '../constants';
+import { rememberOpenModal, forgetOpenModal, pendingModal, clearDraft, modalDraftKey } from '../szkice';
 
 function readFiltersFromUrl() {
   const sp = new URLSearchParams(window.location.search);
@@ -186,6 +188,7 @@ export default function Dashboard({ user, token, onLogout }) {
   const [sortOrder, setSortOrder] = useState(initialFilters.sort);
 
   const filtersRef = useRef(initialFilters);
+  const fetchRequestIdRef = useRef(0);
   useEffect(() => {
     filtersRef.current = {
       page,
@@ -203,6 +206,7 @@ export default function Dashboard({ user, token, onLogout }) {
 
   const fetchTickets = useCallback(
     async (overrides = {}) => {
+      const requestId = ++fetchRequestIdRef.current;
       try {
         const base = filtersRef.current;
         const current = {
@@ -214,41 +218,74 @@ export default function Dashboard({ user, token, onLogout }) {
         };
 
         const data = await ticketApi.getTickets({ ...current, limit: 25 });
+        if (requestId !== fetchRequestIdRef.current) return;
         if (!data) return;
 
-        const list = Array.isArray(data) ? data : data.data || data.zgloszenia || [];
+        const list = Array.isArray(data?.data) ? data.data : [];
         setTickets(list);
 
-        if (data && typeof data === 'object' && !Array.isArray(data)) {
-          setTotal(typeof data.total === 'number' ? data.total : list.length);
-          const resolvedPage = data.page || current.page || 1;
-          setPage(resolvedPage);
-          setTotalPages(data.totalPages || 1);
-          syncUrlWithFilters({ ...current, page: resolvedPage }, true);
-        } else {
-          setTotal(list.length);
-          setTotalPages(1);
-        }
+        setTotal(typeof data?.total === 'number' ? data.total : list.length);
+        const resolvedPage = data?.page || current.page || 1;
+        setPage(resolvedPage);
+        setTotalPages(data?.totalPages || 1);
+        syncUrlWithFilters({ ...current, page: resolvedPage }, true);
       } catch (err) {
-        showAlert(err.message, 'error');
+        if (requestId === fetchRequestIdRef.current) showAlert(err.message, 'error');
       } finally {
-        setLoading(false);
+        if (requestId === fetchRequestIdRef.current) setLoading(false);
       }
     },
     [showAlert]
   );
 
+  const fetchWorkers = useCallback(async () => {
+    if (user?.role === 'admin' || user?.role === 'serwisant') {
+      try {
+        const data = await workerApi.getWorkers();
+        if (Array.isArray(data)) setWorkers(data);
+      } catch (err) {
+        console.error('Błąd pobierania pracowników:', err);
+      }
+    }
+  }, [user?.role]);
+
   useEffect(() => {
     fetchTickets();
-    if (user?.role === 'admin' || user?.role === 'serwisant') {
-      workerApi
-        .getWorkers()
-        .then((data) => {
-          if (Array.isArray(data)) setWorkers(data);
-        })
-        .catch((err) => console.error('Błąd pobierania pracowników:', err));
+    // oxlint-disable-next-line react/set-state-in-effect -- pobieranie danych: setState dopiero po await
+    fetchWorkers();
+  }, [fetchTickets, fetchWorkers, token]);
+
+  useEffect(() => {
+    if (dashboardTab === 'tickets') {
+      // oxlint-disable-next-line react/set-state-in-effect -- pobieranie danych: setState dopiero po await
+      fetchWorkers();
     }
-  }, [fetchTickets, user?.role, token]);
+  }, [dashboardTab, fetchWorkers]);
+
+  // Po ponownym zalogowaniu (np. po wygaśnięciu sesji) otwieramy okno, które było otwarte (naprawa, wysyłka, numer listu) - szkic wraca w nim
+  useEffect(() => {
+    const pending = pendingModal(user?.id);
+    if (!pending) return;
+    let active = true;
+    ticketApi
+      .getTicketById(pending.ticketId)
+      .then((t) => {
+        if (!active) return;
+        const state = t ? getTicketActionState(t) : null;
+        if (pending.kind === 'repair' && state?.isRepairAction) setRepairModalTicket(t);
+        else if (pending.kind === 'ship' && state?.isShipAction) setShipModalTicket(t);
+        else if (pending.kind === 'tracking' && state?.trackingAction) setTrackingModalTicket(t);
+        else {
+          // Akcja nie jest już dostępna (np. ktoś inny wysłał zlecenie) - nieaktualny szkic usuwamy
+          if (t) clearDraft(modalDraftKey(pending.kind, user?.id, pending.ticketId));
+          forgetOpenModal();
+        }
+      })
+      .catch(() => forgetOpenModal());
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
 
   useEffect(() => {
     function handlePopState() {
@@ -312,17 +349,63 @@ export default function Dashboard({ user, token, onLogout }) {
   async function runTicketMutation(ticketId, apiCall, getSuccessMsg, closeFn, refreshOnErr = false) {
     try {
       const data = await apiCall();
-      if (!data) return;
+      // null = sesja wygasła (401) - aplikacja przechodzi do ekranu logowania, okno i szkic zostają do przywrócenia
+      if (!data) return false;
       showAlert(getSuccessMsg(data), 'success');
       if (closeFn) closeFn();
       fetchTickets();
       refreshDrawerTicket(ticketId);
+      return true;
     } catch (err) {
       showAlert(err.message, 'error');
-      if (refreshOnErr) fetchTickets();
+      // 409 = ktoś inny zmienił zlecenie w międzyczasie; okno zostaje otwarte z błędem, a w tle odświeżamy aktualny stan
+      if (err.status === 409) {
+        fetchTickets();
+        refreshDrawerTicket(ticketId);
+      } else if (refreshOnErr) {
+        fetchTickets();
+      }
       throw err;
     }
   }
+
+  const handleCloseDrawer = useCallback(() => setDetailsDrawerTicket(null), []);
+  const handleCloseAssignModal = useCallback(() => setAssignModalTicket(null), []);
+  const handleCloseRepairModal = useCallback(() => {
+    forgetOpenModal();
+    setRepairModalTicket(null);
+  }, []);
+  const handleOpenRepairModal = useCallback(
+    (ticket) => {
+      rememberOpenModal('repair', user?.id, ticket.id);
+      setRepairModalTicket(ticket);
+    },
+    [user?.id]
+  );
+  const handleCloseShipModal = useCallback(() => {
+    forgetOpenModal();
+    setShipModalTicket(null);
+  }, []);
+  const handleOpenShipModal = useCallback(
+    (ticket) => {
+      rememberOpenModal('ship', user?.id, ticket.id);
+      setShipModalTicket(ticket);
+    },
+    [user?.id]
+  );
+  const handleCloseRollbackModal = useCallback(() => setRollbackModalData(null), []);
+  const handleCloseTrackingModal = useCallback(() => {
+    forgetOpenModal();
+    setTrackingModalTicket(null);
+  }, []);
+  const handleOpenTrackingModal = useCallback(
+    (ticket) => {
+      rememberOpenModal('tracking', user?.id, ticket.id);
+      setTrackingModalTicket(ticket);
+    },
+    [user?.id]
+  );
+  const handleCloseOwnPasswordModal = useCallback(() => setShowOwnPasswordModal(false), []);
 
   const handleAssignWorker = (ticketId, pracownikId) =>
     runTicketMutation(
@@ -333,7 +416,7 @@ export default function Dashboard({ user, token, onLogout }) {
           pracownikId === '' || pracownikId === null ? null : Number(pracownikId)
         ),
       (data) => data.message,
-      () => setAssignModalTicket(null)
+      handleCloseAssignModal
     );
 
   const handleRepairSubmit = (ticketId, opisNaprawy) =>
@@ -341,7 +424,7 @@ export default function Dashboard({ user, token, onLogout }) {
       ticketId,
       () => ticketApi.submitRepair(ticketId, opisNaprawy),
       () => `Zgłoszenie #${ticketId} zostało opisane i przekazane do magazynu jako "Do wysyłki"!`,
-      () => setRepairModalTicket(null),
+      handleCloseRepairModal,
       true
     );
 
@@ -350,26 +433,24 @@ export default function Dashboard({ user, token, onLogout }) {
       ticketId,
       () => ticketApi.updateStatus(ticketId, 'zakończone', { numer_listu: numerListu }),
       () => `Zgłoszenie #${ticketId} zostało oznaczone jako wysłane.`,
-      () => setShipModalTicket(null)
+      handleCloseShipModal
     );
 
   const handleRollbackSubmit = (ticketId, targetStatus) =>
     runTicketMutation(
       ticketId,
       () => ticketApi.updateStatus(ticketId, targetStatus),
-      () => `Status zgłoszenia #${ticketId} został cofnięty do "${targetStatus}".`,
-      () => setRollbackModalData(null)
+      () => `Status zgłoszenia #${ticketId} został cofnięty do "${STATUS_LABELS[targetStatus] || targetStatus}".`,
+      handleCloseRollbackModal
     );
 
-  const handleSaveTrackingNumber = (id, numerListu) => {
-    const currentStatus = tickets.find((t) => t.id === id)?.status || 'zakończone';
-    return runTicketMutation(
+  const handleSaveTrackingNumber = (id, numerListu) =>
+    runTicketMutation(
       id,
-      () => ticketApi.saveTrackingNumber(id, currentStatus, numerListu),
+      () => ticketApi.saveTrackingNumber(id, numerListu),
       () => `Zgłoszenie #${id}: numer listu przewozowego został pomyślnie zapisany.`,
-      () => setTrackingModalTicket(null)
+      handleCloseTrackingModal
     );
-  };
 
   async function handleDeleteTicket(id) {
     if (user?.role !== 'admin') {
@@ -382,8 +463,15 @@ export default function Dashboard({ user, token, onLogout }) {
       const data = await ticketApi.deleteTicket(id);
       if (!data) return;
       showAlert(`Zgłoszenie #${id} zostało pomyślnie usunięte.`, 'success');
-      setTickets((prev) => prev.filter((t) => t.id !== id));
-      setTotal((prev) => Math.max(0, prev - 1));
+      const remainingOnPage = tickets.filter((t) => t.id !== id).length;
+      const targetPage = remainingOnPage === 0 && page > 1 ? page - 1 : page;
+      if (targetPage !== page) {
+        setLoading(true);
+        setPage(targetPage);
+      } else {
+        setTickets((prev) => prev.filter((t) => t.id !== id));
+      }
+      await fetchTickets({ page: targetPage });
       if (detailsDrawerTicket?.id === id) setDetailsDrawerTicket(null);
     } catch (err) {
       showAlert(err.message, 'error');
@@ -405,10 +493,30 @@ export default function Dashboard({ user, token, onLogout }) {
 
   const currentTab = user?.role === 'admin' ? dashboardTab : 'tickets';
 
+  async function handleLogoutEverywhere() {
+    if (!window.confirm('Wylogować to konto ze wszystkich urządzeń i kart przeglądarki (także z tej)?')) return;
+    try {
+      const data = await authApi.logoutEverywhere();
+      if (data) onLogout(data.message);
+    } catch (err) {
+      showAlert(err.message, 'error');
+    }
+  }
+
+  // Kliknięcie w wiersz / kartę to wygoda dla myszy. Z klawiatury szczegóły otwiera przycisk z numerem zgłoszenia,
+  // a kliknięcia w przyciski i pola wewnątrz wiersza (akcje, usuwanie) nie otwierają panelu.
+  function handleTicketAreaClick(e, ticket) {
+    if (e.target.closest('button, a, input, select, textarea, label')) return;
+    setDetailsDrawerTicket(ticket);
+  }
+
   const modalHandlers = {
-    onOpenAssignModal: setAssignModalTicket,
-    onOpenRepairModal: setRepairModalTicket,
-    onOpenShipModal: setShipModalTicket,
+    onOpenAssignModal: (ticket) => {
+      fetchWorkers();
+      setAssignModalTicket(ticket);
+    },
+    onOpenRepairModal: handleOpenRepairModal,
+    onOpenShipModal: handleOpenShipModal,
     onOpenRollbackModal: (ticket, actions) => setRollbackModalData({ ticket, actions })
   };
 
@@ -459,7 +567,7 @@ export default function Dashboard({ user, token, onLogout }) {
           <button
             type="button"
             className="btn-secondary py-1.5 px-3 text-xs inline-flex items-center gap-1.5"
-            onClick={onLogout}
+            onClick={() => onLogout()}
             title="Wyloguj z systemu"
           >
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
@@ -468,6 +576,14 @@ export default function Dashboard({ user, token, onLogout }) {
               <line x1="21" y1="12" x2="9" y2="12" />
             </svg>
             Wyloguj
+          </button>
+          <button
+            type="button"
+            className="btn-secondary py-1.5 px-3 text-xs inline-flex items-center gap-1.5"
+            onClick={handleLogoutEverywhere}
+            title="Zakończ wszystkie sesje tego konta na wszystkich urządzeniach (także tę)"
+          >
+            Wyloguj wszędzie
           </button>
         </div>
       </div>
@@ -521,7 +637,7 @@ export default function Dashboard({ user, token, onLogout }) {
       <Alert alert={alert} />
 
       {currentTab === 'users' && user?.role === 'admin' ? (
-        <AdminUsersPanel currentUser={user} showAlert={showAlert} />
+        <AdminUsersPanel currentUser={user} showAlert={showAlert} onWorkersChanged={fetchWorkers} />
       ) : (
         <>
           {/* Pasek kontrolny filtrów i stronicowania nad listą */}
@@ -538,6 +654,7 @@ export default function Dashboard({ user, token, onLogout }) {
                   <input
                     type="text"
                     placeholder="Szukaj w zgłoszeniach..."
+                    aria-label="Szukaj w zgłoszeniach"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="app-input py-1.5 pr-7 text-xs w-full"
@@ -548,6 +665,7 @@ export default function Dashboard({ user, token, onLogout }) {
                       onClick={() => applyFilters({ search: '' })}
                       className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-ink text-xs font-bold p-0.5 cursor-pointer"
                       title="Wyczyść szukanie"
+                      aria-label="Wyczyść szukanie"
                     >
                       ✕
                     </button>
@@ -567,6 +685,7 @@ export default function Dashboard({ user, token, onLogout }) {
                 onChange={(e) => applyFilters({ status: e.target.value })}
                 className="app-select py-1.5 text-xs w-auto cursor-pointer"
                 title="Filtruj według statusu zgłoszenia"
+                aria-label="Filtruj według statusu zgłoszenia"
               >
                 <option value="">Wszystkie statusy</option>
                 {user?.role !== 'magazynier' && <option value="nowe">Nowe</option>}
@@ -581,10 +700,13 @@ export default function Dashboard({ user, token, onLogout }) {
                   onChange={(e) => applyFilters({ worker: e.target.value })}
                   className="app-select py-1.5 text-xs w-auto min-w-[180px] cursor-pointer"
                   title="Filtruj według przypisanego pracownika"
+                  aria-label="Filtruj według przypisanego pracownika"
                 >
                   <option value="">Wszyscy pracownicy</option>
                   <option value="nieprzypisane">Nieprzypisane</option>
-                  {workers.map((w) => (
+                  {workers
+                    .filter((w) => w.role === 'pracownik' || w.role === 'serwisant')
+                    .map((w) => (
                     <option key={w.id} value={w.id}>
                       {w.username} ({w.role})
                     </option>
@@ -597,6 +719,7 @@ export default function Dashboard({ user, token, onLogout }) {
                 onChange={(e) => applyFilters({ sort: e.target.value })}
                 className="app-select py-1.5 text-xs w-auto cursor-pointer"
                 title="Kolejność sortowania po dacie"
+                aria-label="Kolejność sortowania po dacie"
               >
                 <option value="desc">Data: od najnowszych</option>
                 <option value="asc">Data: od najstarszych</option>
@@ -626,6 +749,7 @@ export default function Dashboard({ user, token, onLogout }) {
                   disabled={page <= 1 || loading}
                   onClick={() => handlePageChange(page - 1)}
                   title="Poprzednia strona"
+                  aria-label="Poprzednia strona"
                 >
                   &laquo;
                 </button>
@@ -635,6 +759,7 @@ export default function Dashboard({ user, token, onLogout }) {
                   disabled={page >= totalPages || loading}
                   onClick={() => handlePageChange(page + 1)}
                   title="Następna strona"
+                  aria-label="Następna strona"
                 >
                   &raquo;
                 </button>
@@ -672,12 +797,19 @@ export default function Dashboard({ user, token, onLogout }) {
                   tickets.map((t) => (
                     <tr
                       key={t.id}
-                      onClick={() => setDetailsDrawerTicket(t)}
+                      onClick={(e) => handleTicketAreaClick(e, t)}
                       className="hover:bg-page transition-colors cursor-pointer"
                       title="Kliknij, aby otworzyć panel boczny ze szczegółami"
                     >
                       <td className="text-center font-bold text-ink">
-                        <span className="font-bold text-ink hover:text-primary">#{t.id}</span>
+                        <button
+                          type="button"
+                          onClick={() => setDetailsDrawerTicket(t)}
+                          aria-label={`Szczegóły zgłoszenia #${t.id}`}
+                          className="font-bold text-ink hover:text-primary hover:underline rounded px-1 outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                        >
+                          #{t.id}
+                        </button>
                       </td>
                       <td>
                         <div className="font-semibold text-ink">
@@ -721,12 +853,12 @@ export default function Dashboard({ user, token, onLogout }) {
                           )}
                         </div>
                       </td>
-                      <td onClick={(e) => e.stopPropagation()}>
+                      <td>
                         <StatusControl ticket={t} user={user} {...modalHandlers} />
                       </td>
                       <td>
                         <div className="text-xs text-ink font-medium whitespace-nowrap">
-                          {t.created_at ? new Date(t.created_at).toLocaleDateString('pl-PL') : '-'}
+                          {formatDate(t.created_at)}
                         </div>
                         <div className="text-[0.7rem] text-muted">
                           {t.created_at
@@ -737,10 +869,7 @@ export default function Dashboard({ user, token, onLogout }) {
                             : ''}
                         </div>
                         {user?.role === 'admin' && (
-                          <div
-                            className="mt-2 flex items-center gap-1.5 flex-wrap"
-                            onClick={(e) => e.stopPropagation()}
-                          >
+                          <div className="mt-2 flex items-center gap-1.5 flex-wrap">
                             <DeleteTicketButton
                               id={t.id}
                               deletingId={deletingId}
@@ -770,17 +899,26 @@ export default function Dashboard({ user, token, onLogout }) {
               </div>
             ) : (
               tickets.map((t) => (
+                // role="presentation": kliknięcie w kartę to tylko skrót dla myszy, z klawiatury działa przycisk #numer
                 <div
                   key={t.id}
-                  onClick={() => setDetailsDrawerTicket(t)}
+                  role="presentation"
+                  onClick={(e) => handleTicketAreaClick(e, t)}
                   className="bg-card rounded-xl border border-line p-4 shadow-xs space-y-3 hover:border-primary/50 transition-colors cursor-pointer"
                   title="Kliknij, aby otworzyć panel boczny ze szczegółami"
                 >
                   <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-line">
                     <div>
-                      <span className="text-base font-bold text-ink">#{t.id}</span>
+                      <button
+                        type="button"
+                        onClick={() => setDetailsDrawerTicket(t)}
+                        aria-label={`Szczegóły zgłoszenia #${t.id}`}
+                        className="text-base font-bold text-ink hover:text-primary hover:underline rounded px-1 -mx-1 outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                      >
+                        #{t.id}
+                      </button>
                       <div className="text-[0.7rem] text-muted mt-0.5">
-                        {t.created_at ? new Date(t.created_at).toLocaleString('pl-PL') : '-'}
+                        {formatDateTime(t.created_at)}
                       </div>
                     </div>
                     <StatusBadge status={t.status} />
@@ -835,15 +973,12 @@ export default function Dashboard({ user, token, onLogout }) {
                     </div>
                   </div>
 
-                  <div className="pt-1" onClick={(e) => e.stopPropagation()}>
+                  <div className="pt-1">
                     <StatusControl ticket={t} user={user} {...modalHandlers} />
                   </div>
 
                   {user?.role === 'admin' && (
-                    <div
-                      className="pt-2 border-t border-line flex items-center justify-end"
-                      onClick={(e) => e.stopPropagation()}
-                    >
+                    <div className="pt-2 border-t border-line flex items-center justify-end">
                       <DeleteTicketButton
                         id={t.id}
                         deletingId={deletingId}
@@ -894,9 +1029,9 @@ export default function Dashboard({ user, token, onLogout }) {
               key={detailsDrawerTicket.id}
               ticket={detailsDrawerTicket}
               user={user}
-              onClose={() => setDetailsDrawerTicket(null)}
+              onClose={handleCloseDrawer}
               {...modalHandlers}
-              onOpenTrackingModal={setTrackingModalTicket}
+              onOpenTrackingModal={handleOpenTrackingModal}
             />
           )}
 
@@ -905,8 +1040,9 @@ export default function Dashboard({ user, token, onLogout }) {
               key={assignModalTicket.id}
               ticket={assignModalTicket}
               workers={workers}
-              onClose={() => setAssignModalTicket(null)}
+              onClose={handleCloseAssignModal}
               onAssign={handleAssignWorker}
+              onWorkersLoaded={setWorkers}
             />
           )}
 
@@ -914,7 +1050,8 @@ export default function Dashboard({ user, token, onLogout }) {
             <RepairModal
               key={repairModalTicket.id}
               ticket={repairModalTicket}
-              onClose={() => setRepairModalTicket(null)}
+              userId={user?.id}
+              onClose={handleCloseRepairModal}
               onSubmit={handleRepairSubmit}
             />
           )}
@@ -923,8 +1060,9 @@ export default function Dashboard({ user, token, onLogout }) {
             <ShipModal
               key={shipModalTicket.id}
               ticket={shipModalTicket}
+              userId={user?.id}
               mode="ship"
-              onClose={() => setShipModalTicket(null)}
+              onClose={handleCloseShipModal}
               onShip={handleShipSubmit}
             />
           )}
@@ -934,7 +1072,7 @@ export default function Dashboard({ user, token, onLogout }) {
               key={rollbackModalData.ticket.id}
               ticket={rollbackModalData.ticket}
               rollbackActions={rollbackModalData.actions}
-              onClose={() => setRollbackModalData(null)}
+              onClose={handleCloseRollbackModal}
               onConfirm={handleRollbackSubmit}
             />
           )}
@@ -943,8 +1081,9 @@ export default function Dashboard({ user, token, onLogout }) {
             <ShipModal
               key={`edit-${trackingModalTicket.id}`}
               ticket={trackingModalTicket}
+              userId={user?.id}
               mode="edit"
-              onClose={() => setTrackingModalTicket(null)}
+              onClose={handleCloseTrackingModal}
               onSave={handleSaveTrackingNumber}
             />
           )}
@@ -953,7 +1092,7 @@ export default function Dashboard({ user, token, onLogout }) {
 
       {showOwnPasswordModal && (
         <PasswordModal
-          onClose={() => setShowOwnPasswordModal(false)}
+          onClose={handleCloseOwnPasswordModal}
           showAlert={showAlert}
         />
       )}

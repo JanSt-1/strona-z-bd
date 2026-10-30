@@ -68,18 +68,22 @@ export default function RollbackStatusModal({
         </div>
 
         <div>
-          <label htmlFor="targetStatusSelect" className="block font-semibold text-ink text-sm mb-1.5">
-            Wybierz status docelowy:
-          </label>
+          {rollbackActions.length === 1 ? (
+            <div className="block font-semibold text-ink text-sm mb-1.5">Status docelowy:</div>
+          ) : (
+            <label htmlFor="targetStatusSelect" className="block font-semibold text-ink text-sm mb-1.5">
+              Wybierz status docelowy:
+            </label>
+          )}
           {rollbackActions.length === 1 ? (
             <div className="p-3 bg-page border border-line rounded-lg text-sm font-semibold text-ink flex items-center gap-2">
-              <span>&rarr;</span>
+              <span aria-hidden="true">&rarr;</span>
               <span>{STATUS_LABELS[rollbackActions[0].na_status] || rollbackActions[0].na_status}</span>
             </div>
           ) : (
             <select
               id="targetStatusSelect"
-              autoFocus
+              data-autofocus
               value={targetStatus}
               onChange={(e) => setTargetStatus(e.target.value)}
               className="w-full bg-card text-ink border border-line rounded-lg p-2.5 text-sm outline-none focus:ring-2 focus:ring-primary cursor-pointer font-medium"

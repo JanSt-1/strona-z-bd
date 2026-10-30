@@ -17,14 +17,14 @@ export default function PasswordModal({ userToEdit = null, onClose, onPasswordCh
     if (isOwnPassword && !currentPassword) {
       return setError('Podaj aktualne hasło.');
     }
-    const cleanPass = password.trim();
-    if (!cleanPass) {
+    const cleanPass = password;
+    if (!password.trim()) {
       return setError('Podaj nowe hasło.');
     }
     if (cleanPass.length < 8) {
       return setError('Hasło musi mieć co najmniej 8 znaków.');
     }
-    if (cleanPass.length > 72) {
+    if (new TextEncoder().encode(cleanPass).length > 72) {
       return setError('Hasło nie może przekraczać 72 znaków.');
     }
     if (password !== confirm) {
@@ -34,8 +34,8 @@ export default function PasswordModal({ userToEdit = null, onClose, onPasswordCh
     setLoading(true);
     try {
       const data = isOwnPassword
-        ? await userApi.changeOwnPassword({ currentPassword, newPassword: password.trim() })
-        : await userApi.resetPassword(userToEdit.id, password.trim());
+        ? await userApi.changeOwnPassword({ currentPassword, newPassword: password })
+        : await userApi.resetPassword(userToEdit.id, password);
 
       if (!data) return;
 
@@ -69,11 +69,15 @@ export default function PasswordModal({ userToEdit = null, onClose, onPasswordCh
       <form onSubmit={handleSubmit} className="space-y-4">
         {isOwnPassword && (
           <div>
-            <label className="block text-ink font-semibold text-sm mb-1.5">Aktualne hasło *</label>
+            <label htmlFor="currentPassword" className="block text-ink font-semibold text-sm mb-1.5">
+              Aktualne hasło *
+            </label>
             <input
+              id="currentPassword"
               type="password"
+              autoComplete="current-password"
               required
-              autoFocus
+              data-autofocus
               placeholder="Wpisz dotychczasowe hasło..."
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
@@ -82,15 +86,17 @@ export default function PasswordModal({ userToEdit = null, onClose, onPasswordCh
           </div>
         )}
         <div>
-          <label className="block text-ink font-semibold text-sm mb-1.5">
+          <label htmlFor="newPassword" className="block text-ink font-semibold text-sm mb-1.5">
             Nowe hasło (min. 8 znaków) *
           </label>
           <input
+            id="newPassword"
             type="password"
+            autoComplete="new-password"
             required
             minLength={8}
             maxLength={72}
-            autoFocus={!isOwnPassword}
+            data-autofocus={isOwnPassword ? undefined : true}
             placeholder="Wpisz nowe hasło (min. 8 znaków)..."
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -98,11 +104,13 @@ export default function PasswordModal({ userToEdit = null, onClose, onPasswordCh
           />
         </div>
         <div>
-          <label className="block text-ink font-semibold text-sm mb-1.5">
+          <label htmlFor="confirmPassword" className="block text-ink font-semibold text-sm mb-1.5">
             Powtórz nowe hasło *
           </label>
           <input
+            id="confirmPassword"
             type="password"
+            autoComplete="new-password"
             required
             minLength={8}
             maxLength={72}

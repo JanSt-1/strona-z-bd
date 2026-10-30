@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import StatusBadge from './StatusBadge';
 import StatusControl from './StatusControl';
 import { ticketApi } from '../api';
+import { useDialog } from '../useDialog';
+import { STATUS_LABELS, HISTORY_ACTION_LABELS, formatDate, formatDateTime, getTicketActionState } from '../constants';
 
 const ACTION_ICONS = {
   utworzenie: '📝',
@@ -26,16 +28,14 @@ export default function TicketDetailsDrawer({
 }) {
   const [fetchedData, setFetchedData] = useState(null);
   const [loadingHistory, setLoadingHistory] = useState(Boolean(ticket?.id));
+  const [historyError, setHistoryError] = useState(null);
+
+  const dialogRef = useRef(null);
+  const titleId = useId();
+  // Escape zamyka panel tylko wtedy, gdy nie ma nad nim otwartego okna (np. "Cofnij status")
+  useDialog(dialogRef, onClose);
 
   useEffect(() => {
-    const originalOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeyDown);
-
     let isMounted = true;
     if (ticket?.id) {
       ticketApi
@@ -43,42 +43,59 @@ export default function TicketDetailsDrawer({
         .then((res) => {
           if (isMounted && res) setFetchedData(res);
         })
-        .catch(() => {})
+        .catch((err) => {
+          if (isMounted) setHistoryError(err?.message || 'Nie udało się pobrać historii zgłoszenia.');
+        })
         .finally(() => {
           if (isMounted) setLoadingHistory(false);
         });
     }
 
     return () => {
-      document.body.style.overflow = originalOverflow;
-      window.removeEventListener('keydown', handleKeyDown);
       isMounted = false;
     };
-  }, [ticket?.id, onClose]);
+  }, [ticket?.id]);
 
   if (!ticket) return null;
-  const currentTicket = fetchedData ? { ...ticket, ...fetchedData } : ticket;
-  const history = Array.isArray(fetchedData?.historia) ? fetchedData.historia : [];
+  // Po mutacji Dashboard podaje świeżo pobrane szczegóły (z historią) - wtedy mają pierwszeństwo przed danymi z montowania
+  const currentTicket = Array.isArray(ticket.historia)
+    ? ticket
+    : fetchedData
+      ? { ...ticket, ...fetchedData }
+      : ticket;
+  const history = Array.isArray(currentTicket.historia) ? currentTicket.historia : [];
+  const { trackingAction } = getTicketActionState(currentTicket);
   const curStatus = currentTicket.status || 'nowe';
 
   return createPortal(
+    // Kliknięcie w tło to wygoda dla myszy; z klawiatury panel zamyka Escape albo przycisk "Zamknij"
     <div
       className="drawer-overlay"
+      role="presentation"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="drawer-panel" onClick={(e) => e.stopPropagation()}>
+      <dialog
+        open
+        ref={dialogRef}
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="drawer-panel outline-none"
+      >
         {/* Pasek nagłówka panelu bocznego */}
         <div className="p-4 sm:p-5 border-b border-line bg-card flex items-start justify-between gap-3 shrink-0">
           <div>
             <div className="flex items-center gap-2.5 flex-wrap">
-              <span className="text-xl font-bold text-ink">Zgłoszenie #{ticket.id}</span>
+              <h2 id={titleId} className="text-xl font-bold text-ink">
+                Zgłoszenie #{ticket.id}
+              </h2>
               <StatusBadge status={curStatus} />
             </div>
             <div className="text-xs text-muted mt-1">
               Data przyjęcia:{' '}
-              {ticket.created_at ? new Date(ticket.created_at).toLocaleString('pl-PL') : '—'}
+              {formatDateTime(ticket.created_at)}
             </div>
           </div>
 
@@ -87,6 +104,7 @@ export default function TicketDetailsDrawer({
             onClick={onClose}
             className="text-muted hover:text-ink text-xl font-bold p-1 leading-none rounded-md hover:bg-page transition-colors cursor-pointer"
             title="Zamknij panel (Esc)"
+            aria-label="Zamknij panel szczegółów"
           >
             ✕
           </button>
@@ -106,8 +124,13 @@ export default function TicketDetailsDrawer({
           />
         </div>
 
-        {/* Przewijana treść panelu */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+        {/* Przewijana treść panelu: osobny cel fokusu (od razu po otwarciu), żeby strzałki i PageUp/PageDown przewijały ją z klawiatury */}
+        <section
+          aria-label={`Szczegóły zgłoszenia #${ticket.id}`}
+          tabIndex={0}
+          data-autofocus
+          className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+        >
           {/* Sekcja 1: Dane klienta i kontakt */}
           <div className="bg-page rounded-xl p-4 border border-line space-y-3">
             <h4 className="text-xs font-bold text-muted uppercase tracking-wider flex items-center gap-1.5">
@@ -205,7 +228,7 @@ export default function TicketDetailsDrawer({
               <div>
                 <span className="text-muted block text-[0.7rem] uppercase">Data zakupu</span>
                 <span className="font-medium text-ink">
-                  {currentTicket.data_zakupu || 'Nie podano'}
+                  {currentTicket.data_zakupu ? formatDate(currentTicket.data_zakupu) : 'Nie podano'}
                 </span>
               </div>
             </div>
@@ -255,7 +278,7 @@ export default function TicketDetailsDrawer({
                 {currentTicket.opis_naprawy_data && (
                   <div className="text-[0.7rem] text-ink font-medium mt-2 pt-1.5 border-t border-primary/30 flex items-center gap-1">
                     <span>🕒</span>
-                    <span>Zatwierdzono: {currentTicket.opis_naprawy_data}</span>
+                    <span>Zatwierdzono: {formatDateTime(currentTicket.opis_naprawy_data)}</span>
                   </div>
                 )}
               </div>
@@ -277,7 +300,7 @@ export default function TicketDetailsDrawer({
                 <span className="text-muted block text-[0.7rem] uppercase">Data wysłania</span>
                 <span className="font-medium text-ink">
                   {currentTicket.data_wyslania
-                    ? `📦 ${currentTicket.data_wyslania}`
+                    ? `📦 ${formatDateTime(currentTicket.data_wyslania)}`
                     : 'Jeszcze nie wysłano'}
                 </span>
               </div>
@@ -289,7 +312,7 @@ export default function TicketDetailsDrawer({
                   <span className="font-semibold text-ink">
                     {currentTicket.numer_listu || 'Brak'}
                   </span>
-                  {user?.role === 'admin' && onOpenTrackingModal && (
+                  {trackingAction && onOpenTrackingModal && (
                     <button
                       type="button"
                       className="btn-secondary py-0.5 px-1.5 text-[0.7rem]"
@@ -314,6 +337,10 @@ export default function TicketDetailsDrawer({
               <div className="text-xs text-muted italic py-3 text-center">
                 Ładowanie historii zdarzeń...
               </div>
+            ) : historyError ? (
+              <div className="bg-danger/10 border border-danger/30 text-danger p-3 rounded-lg text-xs">
+                {historyError}
+              </div>
             ) : history.length > 0 ? (
               <div className="relative pl-6 space-y-4 before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-line">
                 {history.map((h) => (
@@ -327,16 +354,16 @@ export default function TicketDetailsDrawer({
                         <span className="font-semibold text-ink">
                           {h.username ? `@${h.username}` : 'System'}
                         </span>
-                        <span className="text-muted text-[0.7rem]">{h.created_at}</span>
+                        <span className="text-muted text-[0.7rem]">{formatDateTime(h.created_at)}</span>
                       </div>
 
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="font-medium text-primary-dark uppercase text-[0.7rem]">
-                          {h.akcja}
+                        <span className="font-semibold text-primary-dark text-xs">
+                          {HISTORY_ACTION_LABELS[h.akcja] || HISTORY_ACTION_LABELS[h.akcja?.toLowerCase()] || h.akcja}
                         </span>
                         {h.z_statusu && h.na_status && (
                           <span className="text-muted text-[0.7rem] bg-card px-1.5 py-0.5 rounded border border-line">
-                            {h.z_statusu} &rarr; {h.na_status}
+                            {(STATUS_LABELS[h.z_statusu] || h.z_statusu)} &rarr; {(STATUS_LABELS[h.na_status] || h.na_status)}
                           </span>
                         )}
                       </div>
@@ -356,7 +383,7 @@ export default function TicketDetailsDrawer({
               </div>
             )}
           </div>
-        </div>
+        </section>
 
         {/* Dolny pasek panelu bocznego */}
         <div className="p-3 sm:p-4 border-t border-line bg-card flex justify-end items-center shrink-0">
@@ -364,7 +391,7 @@ export default function TicketDetailsDrawer({
             Zamknij panel
           </button>
         </div>
-      </div>
+      </dialog>
     </div>,
     document.body
   );

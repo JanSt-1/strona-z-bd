@@ -293,6 +293,7 @@
   inset: 0;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   background: color-mix(in srgb, var(--text-main) 50%, transparent);
   backdrop-filter: blur(4px);
   display: flex;
@@ -303,6 +304,14 @@
   overflow-y: auto;
 }
 
+/* .modal-card i .drawer-panel to <dialog open> - zerujemy domyślne style przeglądarki dla <dialog> */
+.modal-card,
+.drawer-panel {
+  position: relative;
+  inset: auto;
+  color: var(--text-main);
+}
+
 .modal-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -310,6 +319,7 @@
   width: 100%;
   max-width: 650px;
   max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
   overflow-y: auto;
   padding: var(--space-24);
   box-shadow: 0 20px 40px color-mix(in srgb, var(--text-main) 15%, transparent);
@@ -323,6 +333,7 @@
   inset: 0;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   background: color-mix(in srgb, var(--text-main) 45%, transparent);
   backdrop-filter: blur(2px);
   display: flex;
@@ -333,7 +344,11 @@
 
 .drawer-panel {
   background: var(--bg-card);
+  border: 0;
   border-left: 1px solid var(--border);
+  margin: 0;
+  padding: 0;
+  max-height: none;
   width: 100%;
   max-width: 700px;
   height: 100%;
